@@ -126,7 +126,8 @@ drives shade it.
 
 1. **Starving beats everything except overheating.** Hunger 8–9 → `hunt` when prey is
    in sight. A cold lizard (heat 0–2) with prey `near` still hunts; with prey `far`
-   or `none` it basks first.
+   or `none` it basks first. A fed lizard may still snap at prey right in front of
+   it: geckos are opportunists (the pilot's teacher insisted, and it is true).
 2. **Temperature is the main reason to move.** Heat 0–3 → `bask` unless something
    urgent. Heat 8–9 → `hide` (the reflex picks the cool hide). Heat 5–6 → no thermal pull.
 3. **Shedding wants humidity.** `shed soon|yes` → `hide` far more often; appetite
@@ -150,15 +151,15 @@ sampling as on the device (temperature 1.0). A model ships only if every row hol
 | # | Check | Pass |
 |---|---|---|
 | A1 | Teacher agreement (`eval.py --teacher`, n ≥ 60) | ≥ 72% |
-| A2 | hunger 9, prey near or mid, heat ≥ 3 → `hunt` | ≥ 0.86 |
-| A3 | hunger 9, prey none, heat 0–2 → `bask` | ≥ 0.6 |
-| A4 | heat 0–2, hunger ≤ 5, stress ≤ 4 → `bask` | ≥ 0.8 |
+| A2 | hunger 9, prey near or mid, heat 3–7 → `hunt` | ≥ 0.86 |
+| A3 | `phase active`, hunger 9, prey none, heat 0–2 → `bask` | ≥ 0.6 |
+| A4 | `phase active`, heat 0–2, hunger ≤ 5, stress ≤ 4 → `bask` | ≥ 0.8 |
 | A5 | heat 9 → `hide` | ≥ 0.8 |
 | A6 | `shed yes`, hunger ≤ 6 → `hide` | ≥ 0.6 |
 | A7 | `phase sleep`, hunger ≤ 7 → `rest` or `hide` | ≥ 0.85 |
 | A8 | stress 8–9 → `hide` | ≥ 0.7 |
-| A9 | bored 8–9 → a goal ≠ `last` | ≥ 0.6 |
-| A10 | bored 0–1, content state → `last` kept | ≥ 0.4 |
+| A9 | `phase active`, bored 8–9 → a goal ≠ `last` | ≥ 0.6 |
+| A10 | `phase active`, bored 0–1, content state → `last` kept | ≥ 0.4 |
 | A11 | bold 0 → 9 sweep: P(`explore` + `investigate`) rises | slope > 0, ≥ 0.15 apart at the ends |
 | A12 | social 0, `other` near: P(`investigate`) | ≤ 0.05 |
 | A13 | Sim census (`--selftest-llm`): share of awake time with heat in 4–7 | ≥ 0.7 |

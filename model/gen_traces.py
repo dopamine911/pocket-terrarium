@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
-"""Trace generator for the pocket-tank advisor model.
+"""Trace generator for the pocket-tank / pocket-terrarium advisor model.
 
-Runs a minimal headless tank sim, encodes per-fish state per schema.md (DRAFT),
-asks Ollama (gemma4:26b, structured output) for a goal, and appends
+Runs a minimal headless sim, encodes per-animal state per the schema, asks a
+teacher model (structured output) for a goal, and appends
 {"state": ..., "goal": ...} lines to a JSONL file.
 
   python3 gen_traces.py --count 10 --dry-run    # print encoded states, no network
   python3 gen_traces.py --count 1000            # query Ollama, append to out/traces.jsonl
+  python3 gen_traces.py --schema L1 --api openai --count 1000 --out out/l1_traces_a.jsonl
+        # the lizard line, taught by the lab's chat-teacher (key from $LAB_API_KEY)
 
 Stdlib only. Schema v2 is FROZEN (see schema.md); `--schema 3` emits the v3 line
 (no fish names, + trust 0-9, tanks of 2-6 fish); `--schema 4` (2026-09-14) drops
 the shadow - the predator left the game on 2026-09-13 - and adds `bored 0-9`,
 how stale the fish's current activity is, so the teacher can push a fish out of
 a rut (the bubble-column and follow-the-friend loops Strato saw on the device).
-Keep this encoder in exact sync with common/llm/advisor_core.c.
+`--schema L1` (2026-11-04) is pocket-terrarium's lizard line
+(model/schema-lizard.md): a Terrarium/Lizard sim beside Tank/Fish, the line
+normalised to a species pack (docs/species-pack.md) by encode_l1_snap, and the
+species-agnostic SYSTEM_PROMPT_L1. `--api openai` talks to an OpenAI-compatible
+server (the lab's llama-swap) instead of Ollama.
+Keep these encoders in exact sync with common/llm/advisor_core.c (L1: the parity
+fixture testdata/l1_parity.jsonl, make_l1_parity.py).
 """
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -27,9 +36,11 @@ import time
 import urllib.error
 import urllib.request
 
+from train_tokenizer import parse_schema
+
 TANK_W, TANK_H = 448, 368
 FISH_NAMES = ["mira", "bolt", "kelp", "nori", "pip", "sol"]
-SCHEMA = 2          # set by --schema; 3 = v3 line, 4 = v4 line (see schema.md)
+SCHEMA = 2          # set by --schema; 3 = v3 line, 4 = v4 line (see schema.md), "L1" = the lizard line (schema-lizard.md)
 GOALS = [
     "seek_food", "flee_shadow", "visit_bubbles", "follow_friend",
     "explore", "rest", "dart_play", "inspect_reef",
@@ -41,8 +52,12 @@ LEISURE = ["visit_bubbles", "follow_friend", "explore", "dart_play", "inspect_re
 BORED_PER_TICK, BORED_NEW_GOAL, BORED_NEW_ZONE, BORED_RELIEF_PER_TICK = 0.08, 4.0, 1.5, 0.15
 
 
+def is_l1():
+    return SCHEMA == "L1"
+
+
 def goals():
-    return GOALS_V4 if SCHEMA >= 4 else GOALS
+    return GOALS_L1 if is_l1() else GOALS_V4 if SCHEMA >= 4 else GOALS
 
 # Distance buckets in pixels (tank diagonal ~580).
 NEAR, MID, FAR = 70, 180, 380
@@ -138,8 +153,87 @@ SYSTEM_PROMPT_V4 = (
     "idle whim."
 )
 
+# L1 (2026-11-04): the lizard line, model/schema-lizard.md. Written from its
+# "Behaviour the teacher must express" (all nine rules, in order), the field
+# meanings and the seven goals; species-agnostic on purpose - every number in
+# the line is already normalised to the lizard's species pack, so the prompt
+# never names a species, a temperature or a time of day. Style as V4. Check with
+# pilot.py (pilot_l1.jsonl) and prompt_check.py --schema L1 before any long run.
+# History (chat-teacher; docs/retrain-lizard.md has the numbers): try 1 agreed
+# 87.8% on the pilot; try 2 added "a cold lizard too" to rule 4 (A7 fixed); try 4
+# synced rule 1 with the spec (a fed lizard may snap at prey in front of it) and
+# put rule 7's bold clause as "rests or digs instead of exploring, even when
+# curious" - full pilot 95.6%, prompt_check all A-rows OK but A10 (0.22) and the
+# content attractor (explore 0.67). Rule 6's "it has only just begun ... settles
+# into a pastime for a while" (this text) took A10 to 0.67 and content explore to
+# 0.56 on n=9 subsets with A9/A11/A12 and the need states holding; the full
+# prompt_check on this exact text is the next gate.
+SYSTEM_PROMPT_L1 = (
+    "You are the sparse instinct advisor for a small pet lizard in a terrarium. "
+    "You receive one line describing the lizard's drives and identity (0-9) and what "
+    "it senses (distances none/near/mid/far, directions as clock positions relative "
+    "to its heading, 12 = dead ahead, 6 = behind). Every number is already scaled to "
+    "this lizard's own species, so read each one as it stands. Choose the single most "
+    "fitting goal and an urgency 0-9. "
+    "The fields: zone (where it is); hunger (9 = starving); energy (0 = exhausted); "
+    "stress (9 = panicked); curiosity (9 = restless to look around); heat, its body "
+    "temperature (0-2 cold and sluggish, 3-4 cool, 5-6 comfortable, 7 warm, 8-9 "
+    "overheating); bold (risk-taking; a bold lizard roams open ground); social "
+    "(tolerance of other lizards; low = territorial); stage (hatch, juv, adult, "
+    "elder); trust (in its keeper); bored (how stale its current activity has become: "
+    "0 = just started, 9 = stuck in a rut); shed (no; soon = about to shed; yes = "
+    "shedding now, or an old skin stuck on it); prey (the nearest cricket or food "
+    "dish); other (the nearest other lizard); warm (the basking spot, where heat comes "
+    "from); shelter (the nearest hide; near 12 means it is inside one); wall (nearby "
+    "glass); last (the goal it is carrying out); phase (active = its waking hours; "
+    "settle = winding down toward its rest; sleep = its rest hours). "
+    "The goals: hunt (stalk and catch the prey in sight; with prey none it can only "
+    "wander where food was), bask (go to the warm spot and soak up heat - how a lizard "
+    "warms up), hide (go into a hide; it picks the right one itself: a cool hide when "
+    "hot, a humid hide when shedding, a warm one otherwise - how a lizard cools down, "
+    "calms down, sheds its skin and spends its rest), explore (a slow walk with tongue "
+    "flicks into a part of the terrarium it has not seen for a while - a real activity, "
+    "not a fallback), investigate (approach and tongue-flick something: decor, or the "
+    "other lizard), dig (scrabble at the substrate: play, and the cure for a rut), rest "
+    "(lie still where it is, eyes closing). "
+    "How a lizard chooses - tendencies that personality and the other drives shade: "
+    "1. Starving beats everything except overheating: hunger 8-9 with prey in sight "
+    "means hunt. But cold spoils a hunt: a cold lizard (heat 0-2) still hunts prey that "
+    "is near; with prey far or none it basks first. A fed lizard may still snap at prey "
+    "right in front of it. "
+    "2. Temperature is the main reason to move: heat 0-3 means bask unless something "
+    "urgent calls; heat 8-9 means hide; heat 5-6 is no pull either way. "
+    "3. Shedding wants humidity: with shed soon or yes it hides far more often than usual "
+    "(the humid hide is where the skin comes off) and its appetite drops - it hunts only "
+    "when quite hungry, and with shed yes and hunger below 7 it rarely hunts. "
+    "4. Phase sets the rhythm: in sleep it rests or hides unless starving - a cold lizard "
+    "too: it hides to keep warm rather than basking; in settle it finishes its business "
+    "first (eats if hungry, warms up if cold), then hides or rests; in active it is free. "
+    "5. Stress 7-9 means hide, more so for a timid (bold 0-2) or wary (trust 0-2) lizard. "
+    "6. Boredom moves it on: bored 7-9 means a goal different from last, usually "
+    "explore or dig; bored 0-2 means it has only just begun: it keeps last while it still "
+    "makes sense - a lizard settles into a pastime for a while. Boredom only "
+    "chooses among pastimes: it never outranks hunger, heat, shedding, stress, "
+    "tiredness or the phase. "
+    "7. Personality: bold 7-9 roams and investigates, and hunts prey from farther away; "
+    "bold 0-2 stays near shelter and rests or digs instead of exploring, even when "
+    "curious. A lizard with social 0-2 and the other "
+    "near avoids it (hides, or explores away) and never investigates it; social 7-9 "
+    "investigates the other now and then. "
+    "8. Stage: hatchlings are skittish - they hide at far less stress than adults - and "
+    "hunt hard when hungry; elders rest more. "
+    "9. Energy 0-2 means rest (or bask if also cold). "
+    "A content lizard - fed, comfortable, calm, in its active phase - spreads its time "
+    "across explore, investigate, dig and rest; no single pastime should dominate. "
+    "Apart from a snap at prey right in front of it, stop hunting when hunger is low. "
+    "Use the whole urgency range: 9 is life-or-death, "
+    "7-8 pressing, 4-6 a normal want, 1-3 mild, 0 an idle whim."
+)
+
 
 def system_prompt():
+    if is_l1():
+        return SYSTEM_PROMPT_L1
     return SYSTEM_PROMPT_V4 if SCHEMA >= 4 else SYSTEM_PROMPT_V3 if SCHEMA >= 3 else SYSTEM_PROMPT
 
 
@@ -448,6 +542,8 @@ def wall_field(f):
 
 
 def encode(tank, f):
+    if is_l1():
+        return encode_l1(tank, f)       # (tank: a Terrarium, f: a Lizard)
     nearest_food = min(tank.food, key=lambda p: dist(f, p)) if tank.food else None
     friend = min((o for o in tank.fish if o is not f), key=lambda o: dist(f, o))
     friend_s = sighting(f, friend)
@@ -480,7 +576,850 @@ def encode(tank, f):
     )
 
 
-def ask_ollama(host, model, state, timeout):
+# ---------------------------------------------------------------- schema L1
+# The lizard line (model/schema-lizard.md). The model never learns a species:
+# a pack (docs/species-pack.md) turns degrees C into `heat` 0-9 and its rates
+# drive the sim. encode_l1_snap() is THE Python L1 encoder: the parity fixture
+# (make_l1_parity.py -> testdata/l1_parity.jsonl) and the trace sim both go
+# through it, and common/llm/advisor_core.c must match it byte for byte (R4).
+GOALS_L1 = ["hunt", "bask", "hide", "explore", "investigate", "dig", "rest"]
+STAGES_L1 = ["hatch", "juv", "adult", "elder"]
+SHED_L1 = ["no", "soon", "yes"]
+PHASES_L1 = ["active", "settle", "sleep"]
+L1_FIELDS = ["zone", "hunger", "energy", "stress", "curiosity", "heat", "bold", "social", "stage",
+             "trust", "bored", "shed", "prey", "other", "warm", "shelter", "wall", "last", "phase"]
+L1_DRIVES = ["hunger", "energy", "stress", "curiosity", "trust", "bored"]   # floats 0..10 -> drive9
+L1_SIGHTS = ["prey", "other", "warm", "shelter"]
+
+
+@dataclasses.dataclass(frozen=True)
+class Pack:
+    """The part of species_t (docs/species-pack.md "The contract") the model
+    pipeline reads: the heat band, the schedule and the rates. Units as there:
+    degrees C, seconds of tended time, 0..10 drives."""
+    id: int
+    name: str
+    settle_s: float                 # SCHED_DAY: settle = the first settle_s after lights-out
+    t_cold: float
+    t_lo: float
+    t_hi: float
+    t_hot: float
+    tau_s: tuple                    # body warms/cools toward its surroundings, per stage
+    hunger_per_s: float
+    energy_per_s: float
+    energy_rest_per_s: float
+    curiosity_per_s: float
+    hunger_per_cricket: float
+    sleep_hunger_per_h: float       # asleep: hunger up, energy up, stress DOWN by these
+    sleep_energy_per_h: float
+    sleep_stress_per_h: float       # (a magnitude: the validation wants every rate > 0)
+    stage_s: tuple                  # tended age for juv, adult, elder (each starts a growth shed)
+    pop_cap: int
+    shed_every_s: tuple             # per stage: end of one shed -> next pre-shed
+    shed_soon_s: float
+    shed_window_s: float
+
+
+GECKO = Pack(id=1, name="LEOPARD GECKO", settle_s=600.0,
+             t_cold=20.0, t_lo=28.0, t_hi=32.0, t_hot=38.0, tau_s=(60.0, 90.0, 120.0, 150.0),
+             hunger_per_s=0.0045, energy_per_s=0.006, energy_rest_per_s=0.05, curiosity_per_s=0.004,
+             hunger_per_cricket=3.0, sleep_hunger_per_h=0.6, sleep_energy_per_h=2.0, sleep_stress_per_h=2.0,
+             stage_s=(1200.0, 5400.0, 28800.0), pop_cap=3,
+             shed_every_s=(900.0, 1800.0, 10800.0, 21600.0), shed_soon_s=300.0, shed_window_s=600.0)
+# A16's test pack: the gecko with its comfort band 6 C warmer. Same lines, same
+# model; only the normalisation differs (so the line distribution must not).
+TEST_WARM = dataclasses.replace(GECKO, id=250, name="TEST PACK +6C",
+                                t_cold=26.0, t_lo=34.0, t_hi=38.0, t_hot=44.0)
+PACKS = {p.id: p for p in (GECKO, TEST_WARM)}
+
+
+def heat_of(pack, body_c):
+    """body temperature (C) -> the model's heat as a float 0..10, before drive9
+    (docs/species-pack.md "Heat"): 0 at t_cold, 5 at t_lo, 7 at t_hi, 10 at t_hot."""
+    p = PACKS[pack] if isinstance(pack, int) else pack
+    if body_c <= p.t_cold:
+        return 0.0
+    if body_c < p.t_lo:
+        return 5.0 * (body_c - p.t_cold) / (p.t_lo - p.t_cold)
+    if body_c < p.t_hi:
+        return 5.0 + 2.0 * (body_c - p.t_lo) / (p.t_hi - p.t_lo)
+    if body_c < p.t_hot:
+        return 7.0 + 3.0 * (body_c - p.t_hi) / (p.t_hot - p.t_hi)
+    return 10.0
+
+
+def body_c_of(pack, heat):
+    """the inverse of heat_of on 0..10 (the sim and the fixture aim at a heat digit with it)"""
+    p = PACKS[pack] if isinstance(pack, int) else pack
+    heat = max(0.0, min(10.0, heat))
+    if heat < 5.0:
+        return p.t_cold + heat / 5.0 * (p.t_lo - p.t_cold)
+    if heat < 7.0:
+        return p.t_lo + (heat - 5.0) / 2.0 * (p.t_hi - p.t_lo)
+    return p.t_hi + (heat - 7.0) / 3.0 * (p.t_hot - p.t_hi)
+
+
+def drive9(v):
+    """float 0..10 -> digit 0..9: truncate and clamp (advisor_core.c drive9)"""
+    return 0 if v < 0 else 9 if v > 9 else int(v)
+
+
+def trait9(v):
+    """trait 0..1 -> digit 0..9, rounded as the C does: (int)(v * 9 + 0.5)"""
+    return int(v * 9 + 0.5)
+
+
+def clock_at(x, y, heading, ox, oy):
+    """clock position of (ox, oy) seen from (x, y) facing `heading`; 12 = dead
+    ahead. The C's arithmetic (clock_dir): wrap up into [0, 2pi), round half up."""
+    rel = math.atan2(oy - y, ox - x) - heading
+    while rel < 0:
+        rel += 2 * math.pi
+    hour = int(rel / (2 * math.pi) * 12 + 0.5) % 12
+    return 12 if hour == 0 else hour
+
+
+def sight_at(x, y, heading, pt):
+    """`<bucket> <clock>` or `none` (absent, or beyond far)"""
+    if pt is None:
+        return "none"
+    b = bucket(math.hypot(pt[0] - x, pt[1] - y))
+    return "none" if b is None else f"{b} {clock_at(x, y, heading, pt[0], pt[1])}"
+
+
+def encode_l1_snap(s):
+    """The L1 state line of one lizard snapshot (the parity fixture's `snap`).
+
+    s: pack (id), zone (1-6, precomputed), x, y, heading (radians), body_c (C),
+    hunger energy stress curiosity trust bored (0..10), bold social (0..1),
+    stage, shed, last, phase (words), prey other warm shelter ([x, y] or None),
+    in_shelter (bool: shelter reads `near 12` whatever the point), wall (the
+    nearest glass contact point or None: shown only within mid, else `clear`)."""
+    x, y, h = s["x"], s["y"], s["heading"]
+    wall = s["wall"]
+    wall_s = "clear"
+    if wall is not None:
+        b = bucket(math.hypot(wall[0] - x, wall[1] - y))
+        if b in ("near", "mid"):
+            wall_s = f"{b} {clock_at(x, y, h, wall[0], wall[1])}"
+    shelter_s = "near 12" if s["in_shelter"] else sight_at(x, y, h, s["shelter"])
+    return (
+        f"zone {s['zone']} hunger {drive9(s['hunger'])} energy {drive9(s['energy'])} "
+        f"stress {drive9(s['stress'])} curiosity {drive9(s['curiosity'])} "
+        f"heat {drive9(heat_of(s['pack'], s['body_c']))} "
+        f"bold {trait9(s['bold'])} social {trait9(s['social'])} stage {s['stage']} "
+        f"trust {drive9(s['trust'])} bored {drive9(s['bored'])} shed {s['shed']} "
+        f"prey {sight_at(x, y, h, s['prey'])} other {sight_at(x, y, h, s['other'])} "
+        f"warm {sight_at(x, y, h, s['warm'])} shelter {shelter_s} wall {wall_s} "
+        f"last {s['last']} phase {s['phase']}"
+    )
+
+
+_DIGITS = {str(i) for i in range(10)}
+_CLOCKS = {str(i) for i in range(1, 13)}
+_L1_VALUES = {"zone": {str(i) for i in range(1, 7)}, "stage": set(STAGES_L1), "shed": set(SHED_L1),
+              "last": set(GOALS_L1), "phase": set(PHASES_L1)}
+
+
+def check_l1_line(line):
+    """[] if `line` is a well-formed L1 state line - every field in order, every
+    value in its domain, single spaces - else the list of problems."""
+    w = line.split(" ")
+    if "" in w:
+        return ["empty word: double, leading or trailing space"]
+    i = 0
+    for key in L1_FIELDS:
+        if i >= len(w) or w[i] != key:
+            return [f"word {i}: expected '{key}', got {w[i] if i < len(w) else 'end of line'!r}"]
+        v = w[i + 1] if i + 1 < len(w) else None
+        nxt = w[i + 2] if i + 2 < len(w) else None
+        i += 2
+        if key in _L1_VALUES or key in L1_DRIVES or key in ("heat", "bold", "social"):
+            ok = v in _L1_VALUES.get(key, _DIGITS)
+        elif key in L1_SIGHTS:
+            ok = v == "none" or (v in ("near", "mid", "far") and nxt in _CLOCKS)
+            i += v != "none"
+        else:   # wall
+            ok = v == "clear" or (v in ("near", "mid") and nxt in _CLOCKS)
+            i += v != "clear"
+        if not ok:
+            return [f"{key}: bad value {v!r}" + (f" {nxt!r}" if key in L1_SIGHTS or key == "wall" else "")]
+    return [] if i == len(w) else [f"{len(w) - i} trailing words"]
+
+
+def check_l1_goal(goal):
+    """[] if `goal` is `<goal> urgency <0-9>` with one of the seven goals"""
+    w = goal.split(" ")
+    ok = len(w) == 3 and w[0] in GOALS_L1 and w[1] == "urgency" and w[2] in _DIGITS
+    return [] if ok else [f"bad goal line {goal!r}"]
+
+
+def parse_l1_line(line):
+    """an L1 line back into fields: digits as ints, words as words, the
+    sightings and the wall as (bucket, clock) or None"""
+    w = line.split()
+    d, i = {}, 0
+    while i < len(w):
+        k, v = w[i], w[i + 1]
+        if k in L1_SIGHTS or k == "wall":
+            if v in ("none", "clear"):
+                d[k], i = None, i + 2
+            else:
+                d[k], i = (v, int(w[i + 2])), i + 3
+        else:
+            d[k], i = (int(v) if v.isdigit() else v), i + 2
+    return d
+
+
+# ---- the L1 sim: a headless terrarium with enough dynamics to sweep the line's
+# state space and to let the teacher's decisions play out - not the C engine's
+# physics. Units are the pack's (seconds, degrees C, 0..10 drives); the floor is
+# the fish tank's box seen from above (px at the 1.8's scale), zones as the
+# schema's 3x2 grid. Everything thermal is in pack-relative heat units, so the
+# two packs produce the same lines through their own normalisation.
+L1_DT = 1.0                       # s per sim tick
+L1_ASK_EVERY_S = 20               # default s of sim time between two asks of the same lizard
+# boredom per SECOND (common/tank.h BORED_*; the fish sim above runs in frames)
+BORED_PER_S, BORED_ZONE_STALE_S, BORED_RELIEF_PER_S = 0.15, 20.0, 0.3
+# the shed (docs/shed.md)
+SHED_SOAK_S, SHED_DAMP, STUCK_STRESS_PER_S, STUCK_STRESS_MAX = 60.0, 0.35, 0.005, 6.0
+MOIST_DRY_PER_S, MIST_PASS, SLEEP_GROWTH_FRAC = 1.0 / 10800, 0.35, 0.25
+# the heat field in heat units, (lamp on, lamp off); the warm hide sits on a heat mat
+HIDE_HEAT = {"warm": (6.3, 5.6), "humid": (5.5, 4.2), "cool": (3.6, 2.6)}
+FLOOR_HEAT = ((6.1, 3.0), (3.2, 1.6))   # (warm wall, cool wall): lamp on, lamp off
+BASK_HEAT, BASK_R = 9.9, 50.0     # the lamp's spot: a lizard that stays on it overheats in ~4 min
+LAMP_TAU_S = 240.0                # the lamp and the floor warm up / cool down after the switch
+L1_LEISURE = ("bask", "explore", "investigate", "dig")   # + rest and hide in the active phase
+# the four boards' worlds (docs/BOARDS.md: 1.8, square, watch, the bowl as its box) with
+# weights; the same pixel buckets on each, so the bigger floors bring `wall clear` and prey
+# beyond far into the data
+L1_FLOORS = (((448, 368), 50), ((480, 480), 20), ((410, 502), 15), ((466, 466), 15))
+# keepers: feed every s, crickets per lizard per feed, mist rate /s (a drying hide, by day),
+# soak rate /s (a stuck shed)
+KEEPERS = {"diligent": (240.0, (2, 3), 1 / 400, 1 / 300),
+           "ok": (450.0, (1, 3), 1 / 1500, 1 / 900),
+           "neglectful": (1200.0, (1, 2), 1 / 8000, 0.0)}
+# edge cases pushed on a lizard before sampling (weights by repetition, as the fish's)
+L1_CASES = (["cold"] * 5 + ["hot"] * 4 + ["starve"] * 3 + ["starve_cold"] * 2 + ["famine"]
+            + ["shed_soon"] + ["shed_yes"] + ["stuck"] + ["night"] + ["stress"] * 3 + ["bored"] * 3
+            + ["fresh"] + ["territorial"] * 2 + ["social"] + ["lonely"] + ["persona"] * 3 + ["exhausted"]
+            + ["sated"] * 2 + ["curious"] + ["in_hide"] + ["wall"] + ["prey_near"] * 2)
+
+
+def _trait(rng, digit=None):
+    """a 0..1 trait that encodes as `digit` (uniform over 0-9 unless given)"""
+    d = rng.randint(0, 9) if digit is None else digit
+    return min(1.0, max(0.0, (d + rng.uniform(-0.45, 0.45)) / 9))
+
+
+def l1_zone(x, y, w, h):
+    col = min(2, int(x / (w / 3)))
+    row = min(1, int(y / (h / 2)))
+    return row * 3 + col + 1
+
+
+class Lizard:
+    def __init__(self, terr, rng):
+        self.x, self.y = rng.uniform(30, terr.w - 30), rng.uniform(30, terr.h - 30)
+        self.heading = rng.uniform(0, 2 * math.pi)
+        self.reroll_identity(terr, rng)
+        self.body_c = body_c_of(terr.pack, rng.uniform(3.5, 7.0))
+        self.hunger = rng.uniform(1, 7)
+        self.energy = rng.uniform(3, 9)
+        self.stress = rng.uniform(0, 3)
+        self.curiosity = rng.uniform(2, 8)
+        self.bored = rng.uniform(0, 3)
+        self.goal, self.goal_prev, self.urgency = rng.choice(GOALS_L1), None, 5
+        self.hide = None            # the hide it is inside
+        self.want_hide = None       # the hide it is heading for
+        self.target, self.target_t = None, 0.0     # explore point / investigate subject
+        self.last_prey = None
+        self.strike_cd = 0.0
+        self.zone_last, self.zone_seen = None, {}
+        self.shed = "normal"        # normal | soon | shedding | stuck  (the line: no | soon | yes | yes)
+        self.shed_t = self.damp_s = 0.0
+        self.growth = False         # this shed is a growth shed: the stage changes when it comes off clean
+        self.since_shed = rng.uniform(0, terr.pack.shed_every_s[self.stage_i])
+
+    @property
+    def stage(self):
+        return STAGES_L1[self.stage_i]
+
+    def reroll_identity(self, terr, rng):
+        """traits uniform over their digits, stage weighted toward adult, an age inside the stage"""
+        self.bold, self.social = _trait(rng), _trait(rng)
+        self.trust = rng.uniform(0, 10)
+        self.stage_i = rng.choices(range(4), weights=[15, 20, 45, 20])[0]
+        edges = (0.0,) + terr.pack.stage_s + (terr.pack.stage_s[-1] * 1.5,)
+        self.age = rng.uniform(edges[self.stage_i], edges[self.stage_i + 1])
+
+    def set_goal(self, goal, urgency=5):
+        """the advisor or the reflex changed the goal: a genuinely new one relieves
+        boredom; bouncing back to the one it just left does not (tank.c)"""
+        self.urgency = urgency
+        if goal == self.goal:
+            return
+        if goal != self.goal_prev:
+            self.bored = max(0.0, self.bored - BORED_NEW_GOAL)
+        self.goal_prev, self.goal = self.goal, goal
+        self.target, self.want_hide = None, None
+
+    def dist(self, p):
+        return math.hypot(p[0] - self.x, p[1] - self.y)
+
+    def tick(self, terr, rng, dt, ph):
+        p = terr.pack
+        self._move(terr, rng, dt)
+        # body temperature follows its surroundings (docs/species-pack.md "Heat")
+        env = body_c_of(p, terr.env_heat(self.x, self.y, self.hide))
+        self.body_c += (env - self.body_c) * (1 - math.exp(-dt / p.tau_s[self.stage_i]))
+        heat = heat_of(p, self.body_c)
+        asleep = ph == "sleep"
+        slow = 0.5 if self.shed in ("soon", "shedding") else 1.0     # pre-shed lizards go off their food
+        if asleep:
+            self.hunger += p.sleep_hunger_per_h / 3600 * dt * slow
+            self.energy += p.sleep_energy_per_h / 3600 * dt
+            self.stress -= p.sleep_stress_per_h / 3600 * dt
+        else:
+            self.hunger += p.hunger_per_s * dt * slow
+            if self.goal == "rest":
+                self.energy += p.energy_rest_per_s * dt * min(1.0, max(0.3, heat / 5))   # cold slows recovery
+            else:
+                self.energy -= p.energy_per_s * dt * (1.6 if self.goal in ("dig", "hunt") else 1.0)
+            self.curiosity += dt * (-0.012 if self.goal in ("explore", "investigate") else p.curiosity_per_s)
+            self.stress -= dt * (0.01 + 0.002 * self.trust + (0.03 if self.hide else 0.0))   # calms; faster when hidden
+            if heat >= 8:
+                self.stress += dt * 0.05 * (heat - 7.5)               # overheating
+            for o in terr.lizards:
+                if o is not self and self.dist((o.x, o.y)) < 60:
+                    self.stress += dt * 0.03 * (1 - self.social)      # crowding; worse for the territorial
+            if rng.random() < dt / 1200:
+                self.stress += rng.uniform(1.5, 4) * (1.3 - self.bold)    # a rap on the glass
+        if self.shed == "stuck" and self.stress < STUCK_STRESS_MAX:
+            self.stress = min(STUCK_STRESS_MAX, self.stress + STUCK_STRESS_PER_S * dt)
+        self._shed_tick(terr, rng, dt * (SLEEP_GROWTH_FRAC if asleep else 1.0))
+        # boredom: a pastime goes stale; a meal or the night's rest never does;
+        # a zone not seen for a while is a small relief (tank.c)
+        leisure = self.goal in L1_LEISURE or (self.goal in ("rest", "hide") and ph == "active")
+        self.bored += dt * (BORED_PER_S if leisure else -BORED_RELIEF_PER_S)
+        z = l1_zone(self.x, self.y, terr.w, terr.h)
+        if z != self.zone_last:
+            if self.zone_last is not None and terr.clock - self.zone_seen.get(z, -1e9) > BORED_ZONE_STALE_S:
+                self.bored -= BORED_NEW_ZONE
+            self.zone_last = z
+        self.zone_seen[z] = terr.clock
+        for k in ("hunger", "energy", "stress", "curiosity", "bored", "trust"):
+            setattr(self, k, min(10.0, max(0.0, getattr(self, k))))
+        self._reflex(terr, rng, dt, ph, heat)
+
+    def _shed_tick(self, terr, rng, tdt):
+        """docs/shed.md on tended time: normal -> soon -> shedding -> clean, or
+        stuck until a damp stay or a soak; reaching the next stage's age starts a
+        growth shed at once (or makes the shed under way the growth shed)"""
+        p = terr.pack
+        self.age += tdt
+        reached = self.stage_i < 3 and self.age >= p.stage_s[self.stage_i]
+        if self.shed == "normal":
+            self.since_shed += tdt
+            if reached or self.since_shed >= p.shed_every_s[self.stage_i]:
+                self.shed, self.shed_t, self.growth = "soon", 0.0, reached
+            return
+        self.growth = self.growth or reached
+        self.shed_t += tdt
+        if self.shed == "soon":
+            if self.shed_t >= p.shed_soon_s:
+                self.shed, self.shed_t, self.damp_s = "shedding", 0.0, 0.0
+            return
+        if self.hide == "humid" and terr.moisture >= SHED_DAMP:
+            self.damp_s += tdt
+        soak = self.shed == "stuck" and rng.random() < terr.soak_rate * tdt
+        if self.damp_s >= SHED_SOAK_S or soak:
+            self.shed, self.since_shed, self.shed_t, self.damp_s = "normal", 0.0, 0.0, 0.0
+            if self.growth:
+                self.stage_i = min(3, self.stage_i + 1)
+            self.growth = False
+            if soak:        # the mister: a little stress, a little trust from a hand it knows
+                self.stress = min(10.0, self.stress + 1.0)
+                if self.trust >= 6:
+                    self.trust = min(10.0, self.trust + 0.2)
+        elif self.shed == "shedding" and self.shed_t >= p.shed_window_s:
+            self.shed, self.damp_s = "stuck", 0.0
+
+    def _step_toward(self, terr, tx, ty, step, rng=None):
+        self.heading = math.atan2(ty - self.y, tx - self.x) % (2 * math.pi)
+        if rng is not None:
+            self.heading = (self.heading + rng.gauss(0, 0.05)) % (2 * math.pi)
+        self.x, self.y = terr.clamp(self.x + math.cos(self.heading) * step, self.y + math.sin(self.heading) * step)
+
+    def _explore_point(self, terr, rng):
+        """a point in one of the two zones seen least recently"""
+        z = rng.choice(sorted(range(1, 7), key=lambda k: self.zone_seen.get(k, -1e9))[:2])
+        col, row = (z - 1) % 3, (z - 1) // 3
+        return (rng.uniform(col * terr.w / 3 + 10, (col + 1) * terr.w / 3 - 10),
+                rng.uniform(row * terr.h / 2 + 10, (row + 1) * terr.h / 2 - 10))
+
+    def _move(self, terr, rng, dt):
+        """the reflex layer performing the goal (model/schema-lizard.md "Goal line")"""
+        heat = heat_of(terr.pack, self.body_c)
+        speed = 20.0 * (0.6 + self.urgency / 12.0) * (0.5 + heat / 6.0 if heat < 3 else 1.0)   # cold: x0.5 at 0
+        self.strike_cd = max(0.0, self.strike_cd - dt)
+        g = self.goal
+        if self.hide is not None and g != "hide":        # out of the hide first
+            self.hide = None
+            self._step_toward(terr, terr.w / 2, terr.h / 2, 14.0)
+        tgt, stop = None, 0.0
+        if g == "hunt":
+            prey = terr.nearest(self, terr.prey_points())
+            if prey is not None and self.dist(prey) < FAR:
+                self.last_prey = prey
+                if self.dist(prey) < 16:
+                    self._strike(terr, rng, prey, heat)
+                    return
+                tgt = prey
+                speed *= 0.5 if self.dist(prey) < 45 else 1.0     # stalk the last stretch
+            else:                                                 # nothing in sight: where food was
+                if self.last_prey is None or self.dist(self.last_prey) < 10:
+                    self.last_prey = self._explore_point(terr, rng)
+                tgt, speed = self.last_prey, speed * 0.5
+        elif g == "bask":
+            tgt, stop = terr.bask, 6.0
+        elif g == "hide":
+            if self.hide is not None:
+                return
+            if self.want_hide is None:      # humid if shedding, cool if hot, else warm
+                self.want_hide = "humid" if self.shed != "normal" else "cool" if heat >= 7 else "warm"
+            tgt = terr.hides[self.want_hide]
+            if self.dist(tgt) < 8:
+                self.hide, (self.x, self.y) = self.want_hide, tgt
+                return
+        elif g == "explore":
+            if self.target is None or isinstance(self.target, Lizard) or terr.clock > self.target_t \
+                    or self.dist(self.target) < 6:
+                self.target, self.target_t = self._explore_point(terr, rng), terr.clock + 40
+            tgt, speed, stop = self.target, speed * 0.6, 5.0
+        elif g == "investigate":
+            if self.target is None:
+                others = [o for o in terr.lizards if o is not self and self.dist((o.x, o.y)) < FAR]
+                o = min(others, key=lambda q: self.dist((q.x, q.y))) if others else None
+                self.target = o if o is not None and rng.random() < 0.3 + 0.6 * self.social \
+                    else rng.choice(terr.decor)
+            if isinstance(self.target, Lizard):
+                tgt = (self.target.x, self.target.y)
+                stop = 75.0 if self.social < 0.25 else 22.0      # the territorial: a stand-off, a tail wave
+                if self.social < 0.25 and self.dist(tgt) < 90:
+                    self.stress += 0.04 * dt
+                    self.target.stress += 0.04 * dt
+            else:
+                tgt, stop = self.target, 20.0
+            speed *= 0.7
+        if tgt is None or self.dist(tgt) <= stop + 0.5:   # dig, rest, or there: in place, the head turns now and then
+            if rng.random() < dt / 8:
+                self.heading = (self.heading + rng.uniform(-0.8, 0.8)) % (2 * math.pi)
+            return
+        self._step_toward(terr, tgt[0], tgt[1], min(speed * dt, self.dist(tgt) - stop), rng)
+
+    def _strike(self, terr, rng, prey, heat):
+        """a lunge at the prey in reach: cold spoils it, a pre-shed lizard often doesn't try"""
+        if self.strike_cd > 0:
+            return
+        self.strike_cd = 2.5
+        if self.shed in ("soon", "shedding") and rng.random() < 0.5:
+            return
+        p_hit = 0.6 * min(1.0, heat / 3.0)
+        if terr.dish is not None and prey == terr.dish:             # mealworms in a dish don't run
+            if rng.random() < 1.5 * p_hit:
+                terr.worms -= 1
+                self.hunger = max(0.0, self.hunger - terr.pack.hunger_per_cricket)
+            return
+        c = min(terr.crickets, key=lambda q: math.hypot(q[0] - prey[0], q[1] - prey[1]))
+        if rng.random() < p_hit:
+            terr.crickets.remove(c)
+            self.hunger = max(0.0, self.hunger - terr.pack.hunger_per_cricket)
+        else:
+            c[2] = 0.0                                              # missed: it hops off at once
+
+    def _reflex(self, terr, rng, dt, ph, heat):
+        """goal changes between advisor calls (tank.c's urgent paths), rare on purpose"""
+        prey = terr.nearest(self, terr.prey_points())
+        if self.energy < 0.8 and self.goal != "rest" and rng.random() < 0.02 * dt:
+            self.set_goal("rest", 6)
+        elif (self.stress >= 8 or heat >= 9) and self.goal != "hide" and rng.random() < 0.03 * dt:
+            self.set_goal("hide", 8)
+        elif self.hunger >= 7 and heat >= 3 and prey is not None and self.dist(prey) < NEAR \
+                and self.goal != "hunt" and rng.random() < 0.04 * dt:
+            self.set_goal("hunt", 7)
+        elif rng.random() < 0.002 * dt:
+            self.set_goal(rng.choice(GOALS_L1), rng.randint(2, 7))
+
+
+class Terrarium:
+    """Minimal headless terrarium: a pack, the warm-to-cool floor under a lamp,
+    three hides and the basking spot, crickets, a keeper, 1-3 lizards."""
+
+    def __init__(self, rng, pack=None, n_lizards=None):
+        self.rng = rng
+        self.pack = PACKS[pack] if pack is not None else (GECKO if rng.random() < 0.7 else TEST_WARM)
+        self.w, self.h = rng.choices([f for f, _ in L1_FLOORS], weights=[k for _, k in L1_FLOORS])[0]
+        self.warm_left = rng.random() < 0.5
+
+        def across(f):          # 0 at the warm wall .. 1 at the cool wall
+            return (f if self.warm_left else 1 - f) * self.w
+        self.bask = (across(rng.uniform(0.08, 0.25)), rng.uniform(0.2, 0.6) * self.h)
+        self.hides = {"warm": (across(rng.uniform(0.05, 0.2)), rng.uniform(0.65, 0.92) * self.h),
+                      "humid": (across(rng.uniform(0.4, 0.6)), rng.uniform(0.6, 0.92) * self.h),
+                      "cool": (across(rng.uniform(0.8, 0.95)), rng.uniform(0.5, 0.92) * self.h)}
+        self.decor = [(rng.uniform(30, self.w - 30), rng.uniform(30, self.h - 30)) for _ in range(rng.randint(2, 4))]
+        self.dish = (rng.uniform(40, self.w - 40), rng.uniform(40, self.h - 40)) if rng.random() < 0.4 else None
+        self.worms = rng.randint(0, 6) if self.dish else 0
+        self.crickets = []      # [x, y, seconds to the next hop]
+        self.moisture = rng.uniform(0.3, 1.0)      # the humid hide; mid-life terrariums (a fresh one starts at 0.6)
+        self.keeper = rng.choices(list(KEEPERS), weights=[45, 40, 15])[0]
+        self.feed_every, self.feed_n, self.mist_rate, self.soak_rate = KEEPERS[self.keeper]
+        self.clock = 0.0
+        self.feed_at = rng.uniform(0, self.feed_every)
+        self.light = rng.random() < 0.8
+        if self.light:
+            self.light_t, self.switch_at = rng.uniform(0, 4000), rng.uniform(300, 5000)
+        else:
+            self.light_t = rng.uniform(0, self.pack.settle_s + 500)
+            self.switch_at = max(0.0, self.pack.settle_s - self.light_t) + rng.uniform(60, 600)
+        self.lamp = 1.0 if self.light else 0.0
+        n = n_lizards or rng.choices([1, 2, 3], weights=[25, 40, 35])[0]
+        self.lizards = [Lizard(self, rng) for _ in range(min(n, self.pack.pop_cap))]
+
+    def phase(self):
+        """SCHED_DAY (docs/species-pack.md): active while the light is on, settle
+        for the first settle_s of the dark, sleep for the rest of it"""
+        if self.light:
+            return "active"
+        return "settle" if self.light_t < self.pack.settle_s else "sleep"
+
+    def clamp(self, x, y, m=6.0):
+        return min(self.w - m, max(m, x)), min(self.h - m, max(m, y))
+
+    def env_heat(self, x, y, hide=None):
+        """what the body warms or cools toward, in heat units: the hide's own, or
+        the floor's warm-to-cool gradient plus the lamp's spot"""
+        lamp = self.lamp
+        if hide is not None:
+            on, off = HIDE_HEAT[hide]
+            return off + lamp * (on - off)
+        f = x / self.w if self.warm_left else 1 - x / self.w
+        (w_on, c_on), (w_off, c_off) = FLOOR_HEAT
+        h = w_off + f * (c_off - w_off) + lamp * ((w_on + f * (c_on - w_on)) - (w_off + f * (c_off - w_off)))
+        d = math.hypot(x - self.bask[0], y - self.bask[1])
+        if d < BASK_R:
+            h += lamp * (BASK_HEAT - h) * (1 - (d / BASK_R) ** 2)
+        return h
+
+    def prey_points(self):
+        pts = [(c[0], c[1]) for c in self.crickets]
+        if self.dish is not None and self.worms > 0:
+            pts.append(self.dish)
+        return pts
+
+    @staticmethod
+    def nearest(lz, pts):
+        return min(pts, key=lz.dist) if pts else None
+
+    def tick(self, dt=L1_DT):
+        rng = self.rng
+        self.clock += dt
+        self.light_t += dt
+        if self.clock >= self.switch_at:        # the light flips; nights are ~15% of the time
+            self.light, self.light_t = not self.light, 0.0
+            self.switch_at = self.clock + (rng.uniform(2400, 5400) if self.light
+                                           else self.pack.settle_s + rng.uniform(120, 900))
+        self.lamp += ((1.0 if self.light else 0.0) - self.lamp) * (1 - math.exp(-dt / LAMP_TAU_S))
+        ph = self.phase()
+        # the keeper: crickets by day, a mist when the humid hide dries, a soak for a stuck shed
+        if self.light and self.clock >= self.feed_at:
+            self.feed_at = self.clock + self.feed_every * rng.uniform(0.6, 1.4)
+            for _ in range(min(8 - len(self.crickets), rng.randint(*self.feed_n) * len(self.lizards))):
+                self.crickets.append([rng.uniform(20, self.w - 20), rng.uniform(20, self.h - 20), rng.uniform(1, 5)])
+            if self.dish is not None and rng.random() < 0.3:
+                self.worms = min(8, self.worms + rng.randint(2, 5))
+        self.moisture = max(0.0, self.moisture - MOIST_DRY_PER_S * dt * (0.25 if ph == "sleep" else 1.0))
+        if self.light and self.moisture < 0.6 and rng.random() < self.mist_rate * dt:
+            self.moisture = min(1.0, self.moisture + MIST_PASS)
+        # crickets hop, flee a hunter, and now and then slip away into the decor
+        for c in list(self.crickets):
+            if rng.random() < dt / 1200.0:
+                self.crickets.remove(c)
+                continue
+            c[2] -= dt
+            if c[2] <= 0:
+                hunter = next((lz for lz in self.lizards if lz.goal == "hunt" and lz.dist(c) < 50), None)
+                if hunter is not None:
+                    a, d = math.atan2(c[1] - hunter.y, c[0] - hunter.x) + rng.uniform(-0.6, 0.6), rng.uniform(20, 50)
+                else:
+                    a, d = rng.uniform(0, 2 * math.pi), rng.uniform(8, 35)
+                c[0], c[1] = self.clamp(c[0] + math.cos(a) * d, c[1] + math.sin(a) * d, 8.0)
+                c[2] = rng.uniform(1.5, 6.0)
+        for lz in self.lizards:
+            lz.tick(self, rng, dt, ph)
+
+    def _at(self, lz, kind):
+        """a floor point `kind` (near/mid/far) away from lz, or None if there is no room there"""
+        lo, hi = {"near": (12, 65), "mid": (75, 175), "far": (185, 370)}[kind]
+        for _ in range(40):
+            d, a = self.rng.uniform(lo, hi), self.rng.uniform(0, 2 * math.pi)
+            x, y = lz.x + math.cos(a) * d, lz.y + math.sin(a) * d
+            if 8 <= x <= self.w - 8 and 8 <= y <= self.h - 8:
+                return x, y
+        return None
+
+    def place_prey(self, lz, kind):
+        """the only prey: one cricket `kind` away, or none at all (the dish emptied)"""
+        self.crickets.clear()
+        self.worms = 0
+        pt = self._at(lz, kind) if kind else None
+        if pt is not None:
+            self.crickets.append([pt[0], pt[1], self.rng.uniform(2, 6)])
+
+    def place_other(self, lz, kind):
+        """the nearest other lizard `kind` away, or every other lizard out of sight
+        (lz in a corner, they in the opposite one); a lone lizard stays alone"""
+        rng = self.rng
+        others = [o for o in self.lizards if o is not lz]
+        if kind is None:
+            cx, cy = rng.choice([0, 1]), rng.choice([0, 1])
+            lz.x, lz.y = abs(cx * self.w - rng.uniform(10, 40)), abs(cy * self.h - rng.uniform(10, 40))
+            lz.hide = None
+            for o in others:
+                o.x = abs((1 - cx) * self.w - rng.uniform(10, 40))
+                o.y = abs((1 - cy) * self.h - rng.uniform(10, 40))
+                o.hide = None
+            return
+        if not others:
+            return
+        o = min(others, key=lambda q: lz.dist((q.x, q.y)))
+        pt = self._at(lz, kind)
+        if pt is not None:
+            (o.x, o.y), o.hide = pt, None
+
+    def perturb(self, lz):
+        """push one lizard (or its terrarium) into an edge case before sampling"""
+        rng, p = self.rng, self.pack
+        case = rng.choice(L1_CASES)
+
+        def heat_to(lo, hi):
+            lz.body_c = body_c_of(p, rng.uniform(lo, hi))
+        if case == "cold":
+            heat_to(0.0, 3.99)
+        elif case == "hot":
+            heat_to(7.0, 10.0)
+        elif case == "starve":
+            lz.hunger = rng.uniform(8, 10)
+            self.place_prey(lz, rng.choice(["near", "mid", "far", None]))
+        elif case == "starve_cold":      # rule 1's edge: cold and starving, prey near / far / none
+            lz.hunger = rng.uniform(8, 10)
+            heat_to(0.0, 2.99)
+            self.place_prey(lz, rng.choice(["near", "far", None]))
+        elif case == "famine":
+            self.place_prey(lz, None)
+        elif case == "shed_soon":
+            lz.shed, lz.shed_t = "soon", rng.uniform(0, p.shed_soon_s)
+        elif case == "shed_yes":
+            lz.shed, lz.shed_t, lz.damp_s = "shedding", rng.uniform(0, p.shed_window_s), 0.0
+            lz.hunger = rng.uniform(0, 8)
+        elif case == "stuck":
+            lz.shed, lz.damp_s = "stuck", 0.0
+            lz.stress = max(lz.stress, rng.uniform(2, STUCK_STRESS_MAX))
+        elif case == "night":            # a short dark spell: settle, or deep in the sleep
+            self.light = False
+            self.light_t = rng.uniform(0, p.settle_s * 0.9) if rng.random() < 0.5 \
+                else p.settle_s + rng.uniform(0, 3600)
+            self.switch_at = self.clock + rng.uniform(40, 200)
+        elif case == "stress":
+            lz.stress = rng.uniform(7, 10)
+        elif case == "bored":            # a rut: content, on a pastime for too long
+            lz.bored = rng.uniform(4, 10)
+            lz.set_goal(rng.choice(L1_LEISURE + ("rest", "hide")), rng.randint(3, 6))
+            lz.bored = rng.uniform(4, 10)
+            lz.hunger, lz.energy, lz.stress = rng.uniform(0, 6), rng.uniform(4, 10), rng.uniform(0, 4)
+            heat_to(4.0, 7.0)
+        elif case == "fresh":
+            lz.bored, lz.hunger = rng.uniform(0, 1.5), rng.uniform(0, 5)
+        elif case == "territorial":
+            lz.social = _trait(rng, rng.randint(0, 2))
+            self.place_other(lz, rng.choice(["near", "near", "mid"]))
+        elif case == "social":
+            lz.social = _trait(rng, rng.randint(7, 9))
+            self.place_other(lz, rng.choice(["near", "mid"]))
+        elif case == "lonely":
+            self.place_other(lz, None)
+        elif case == "persona":
+            lz.reroll_identity(self, rng)
+            lz.curiosity = rng.uniform(0, 10)
+        elif case == "exhausted":
+            lz.energy = rng.uniform(0, 3)
+            if rng.random() < 0.3:
+                heat_to(0.0, 3.0)
+        elif case == "sated":
+            lz.hunger, lz.energy, lz.stress = rng.uniform(0, 3), rng.uniform(5, 10), rng.uniform(0, 3)
+            lz.curiosity = rng.uniform(0, 10)
+            heat_to(4.5, 7.0)
+        elif case == "curious":
+            lz.curiosity, lz.hunger = rng.uniform(8, 10), rng.uniform(0, 4)
+        elif case == "in_hide":
+            h = rng.choice(list(self.hides))
+            lz.goal, lz.want_hide, lz.hide = "hide", h, h
+            lz.x, lz.y = self.hides[h]
+        elif case == "wall":
+            side, m = rng.randrange(4), rng.uniform(3, 60)
+            lz.hide = None
+            if side == 0:
+                lz.x = m
+            elif side == 1:
+                lz.x = self.w - m
+            elif side == 2:
+                lz.y = m
+            else:
+                lz.y = self.h - m
+        elif case == "prey_near":
+            self.place_prey(lz, rng.choice(["near", "mid"]))
+            lz.hunger = rng.uniform(0, 10)
+        return case
+
+
+def l1_snapshot(terr, lz):
+    """the parity fixture's `snap` for one lizard: what the reflex layer hands the encoder"""
+    others = [o for o in terr.lizards if o is not lz]
+    other = min(others, key=lambda o: lz.dist((o.x, o.y))) if others else None
+    prey = terr.nearest(lz, terr.prey_points())
+    hide = terr.nearest(lz, list(terr.hides.values()))
+    w, h = float(terr.w), float(terr.h)
+    sides = [((w, lz.y), w - lz.x), ((0.0, lz.y), lz.x), ((lz.x, h), h - lz.y), ((lz.x, 0.0), lz.y)]
+    wall = min(sides, key=lambda s: s[1])[0]
+    return {"pack": terr.pack.id, "zone": l1_zone(lz.x, lz.y, w, h), "x": lz.x, "y": lz.y, "heading": lz.heading,
+            "body_c": lz.body_c, "hunger": lz.hunger, "energy": lz.energy, "stress": lz.stress,
+            "curiosity": lz.curiosity, "trust": lz.trust, "bored": lz.bored, "bold": lz.bold, "social": lz.social,
+            "stage": lz.stage, "shed": {"normal": "no", "soon": "soon"}.get(lz.shed, "yes"), "last": lz.goal,
+            "phase": terr.phase(), "prey": list(prey) if prey else None,
+            "other": [other.x, other.y] if other else None, "warm": list(terr.bask), "shelter": list(hide),
+            "in_shelter": lz.hide is not None, "wall": list(wall)}
+
+
+def encode_l1(terr, lz):
+    return encode_l1_snap(l1_snapshot(terr, lz))
+
+
+def new_world(rng):
+    return Terrarium(rng) if is_l1() else Tank(rng)
+
+
+def members(world):
+    return world.lizards if is_l1() else world.fish
+
+
+def warm_up(world):
+    """settle a new world out of its initial pose"""
+    for _ in range(300 if is_l1() else 200):
+        world.tick()
+
+
+def ticks_between(world):
+    """sim ticks before the next sample: the fish's 40 frames; L1 spreads them so
+    each lizard is asked about every L1_ASK_EVERY_S whatever the population
+    (a lone lizard sampled every 10 s gave near-duplicate states)"""
+    if is_l1():
+        return max(5, round(L1_ASK_EVERY_S / len(world.lizards)))
+    return 40
+
+
+def rule_goal(state, rng):
+    """A stand-in teacher for --dry-run (and pilot.py --api rules): the nine rules
+    of schema-lizard.md as plain code, so a dry run's lizards move roughly as
+    the teacher would move them. Not a label source - the teacher is."""
+    s = parse_l1_line(state)
+    heat, hunger, energy, stress, bored = s["heat"], s["hunger"], s["energy"], s["stress"], s["bored"]
+    prey = s["prey"][0] if s["prey"] else None
+    other = s["other"][0] if s["other"] else None
+    ph, shed, last = s["phase"], s["shed"], s["last"]
+
+    def out(g, u):
+        return f"{g} urgency {max(0, min(9, u))}"
+    if heat >= 8:
+        return out("hide", heat)
+    if hunger >= 8 and prey is not None and (heat >= 3 or prey == "near"):
+        return out("hunt", hunger)
+    if stress >= 7:
+        return out("hide", stress)
+    if hunger >= 8 and heat <= 2 and ph != "sleep":
+        return out("bask", 7)
+    if ph == "sleep":
+        return out("hide" if heat <= 2 or shed != "no" or rng.random() < 0.4 else "rest", 3)
+    if energy <= 2:
+        return out("bask" if heat <= 2 else "rest", 6)
+    if heat <= 3:
+        return out("bask", 8 - heat)
+    if shed == "yes" or (shed == "soon" and rng.random() < 0.7):
+        return out("hide", 6)
+    if ph == "settle":
+        if hunger >= 5 and prey is not None:
+            return out("hunt", hunger - 1)
+        return out(rng.choice(["hide", "rest"]), 3)
+    if hunger >= 6 and prey is not None and (prey != "far" or s["bold"] >= 7):
+        return out("hunt", hunger - 1)
+    if s["social"] <= 2 and other == "near":
+        return out(rng.choice(["hide", "explore"]), 5)
+    if s["stage"] == "hatch" and stress >= 4:
+        return out("hide", 5)
+    pastimes = ["explore", "investigate", "dig", "rest", "hide"]
+    if bored >= 7:
+        return out(rng.choice([g for g in ("explore", "dig") if g != last] or pastimes), 5)
+    if bored <= 2 and last in pastimes:
+        return out(last, 4)
+    weights = [2 + s["bold"] / 3, 1 + s["bold"] / 4 + (s["social"] / 3 if other else 0), 1.5,
+               1 + (2 if s["stage"] == "elder" else 0), 0.5 + (2 if s["bold"] <= 2 else 0)]
+    return out(rng.choices(pastimes, weights=weights)[0], rng.randint(2, 5))
+
+
+# teacher APIs: (default base URL, default model)
+API_DEFAULTS = {
+    "ollama": ("http://192.168.0.139:11434", "gemma4:26b"),
+    # the lab (PLAN.md P4): llama-swap on zaphod over Tailscale; chat-teacher = Gemma 4 31B, 4 slots x 4K
+    "openai": ("http://zaphod.tail740235.ts.net:8080/v1", "chat-teacher"),
+}
+LAB_KEY_ENV = "LAB_API_KEY"     # the OpenAI-compatible server's key: from the environment only
+
+
+def teacher_defaults(api, host=None, model=None):
+    h, m = API_DEFAULTS.get(api, (None, None))
+    return host or h, model or m
+
+
+def _curl_post(url, body, timeout, secret_header=None):
+    """POST a JSON body with curl and parse the JSON reply. A secret header
+    reaches curl through a pipe (-H @/dev/fd/N): never in argv (ps), never on disk.
+    Transport is curl, not urllib. Root cause found 2026-08-21: Little Snitch
+    had a per-process rule allowing this app's Python only to pypi.org /
+    pythonhosted.org (left over from the torch install) while curl had
+    "any outgoing" - python's sockets silently stalled. Rule fixed; curl kept
+    because it is robust to that class of drift and costs ~10ms per call."""
+    cmd = ["curl", "-s", "--max-time", str(int(timeout)), url, "-H", "Content-Type: application/json", "-d", "@-"]
+    fds = ()
+    if secret_header:
+        r, w = os.pipe()
+        os.write(w, (secret_header + "\n").encode())
+        os.close(w)
+        cmd += ["-H", f"@/dev/fd/{r}"]
+        fds = (r,)
+    try:
+        proc = subprocess.run(cmd, input=body, capture_output=True, timeout=timeout + 10, pass_fds=fds)
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"no reply in {timeout + 10:.0f} s") from None
+    finally:
+        for fd in fds:
+            os.close(fd)
+    if proc.returncode != 0 or not proc.stdout:
+        raise OSError(f"curl failed rc={proc.returncode}")
+    return json.loads(proc.stdout)
+
+
+def ollama_raw(host, model, state, timeout):
+    """the teacher's reply text from Ollama's /api/chat (and no usage)"""
     body = json.dumps({
         "model": model,
         "messages": [
@@ -493,18 +1432,11 @@ def ask_ollama(host, model, state, timeout):
         "keep_alive": "5m",
         "options": {"temperature": 0.7, "num_predict": 48, "num_ctx": 512},
     }).encode()
-    # Transport is curl, not urllib. Root cause found 2026-08-21: Little Snitch
-    # had a per-process rule allowing this app's Python only to pypi.org /
-    # pythonhosted.org (left over from the torch install) while curl had
-    # "any outgoing" - python's sockets silently stalled. Rule fixed; curl kept
-    # because it is robust to that class of drift and costs ~10ms per call.
-    proc = subprocess.run(
-        ["curl", "-s", "--max-time", str(int(timeout)),
-         f"{host}/api/chat", "-H", "Content-Type: application/json", "-d", "@-"],
-        input=body, capture_output=True, timeout=timeout + 10)
-    if proc.returncode != 0 or not proc.stdout:
-        raise OSError(f"curl failed rc={proc.returncode}")
-    content = json.loads(proc.stdout)["message"]["content"]
+    return _curl_post(f"{host}/api/chat", body, timeout)["message"]["content"], {}
+
+
+def ask_ollama(host, model, state, timeout):
+    content, _ = ollama_raw(host, model, state, timeout)
     obj = json.loads(content)
     goal = obj["goal"] if obj.get("goal") in goals() else None
     if goal is None:
@@ -514,33 +1446,154 @@ def ask_ollama(host, model, state, timeout):
     return f"{goal} urgency {urgency}"
 
 
+def openai_raw(host, model, state, timeout):
+    """the teacher's reply text and token usage from an OpenAI-compatible
+    /chat/completions (the lab's llama-swap). No `tools` in the request: the lab's
+    known Qwen bug is tools together with a JSON response format."""
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt()},
+            {"role": "user", "content": state},
+        ],
+        "response_format": {"type": "json_schema",
+                            "json_schema": {"name": "decision", "strict": True, "schema": output_schema()}},
+        "temperature": 0.7,
+        "max_tokens": 48,
+        # harmless on chat-teacher (the server runs --reasoning off); without it a
+        # thinking Gemma spends all 48 tokens thinking and returns nothing (PLAN.md P4)
+        "chat_template_kwargs": {"enable_thinking": False},
+        "stream": False,
+    }).encode()
+    key = os.environ.get(LAB_KEY_ENV)
+    resp = _curl_post(f"{host.rstrip('/')}/chat/completions", body, timeout,
+                      f"Authorization: Bearer {key}" if key else None)
+    if "error" in resp:
+        err = resp["error"]
+        raise OSError(f"server: {err.get('message', err) if isinstance(err, dict) else err}"[:200])
+    return resp["choices"][0]["message"].get("content") or "", resp.get("usage") or {}
+
+
+def parse_decision(content):
+    """the teacher's JSON reply -> ("<goal> urgency <u>", None), or (None, "bad_json" | "bad_goal");
+    a missing or out-of-range urgency is 5, as the device parser has it"""
+    try:
+        obj = json.loads(content)
+    except (TypeError, ValueError):
+        return None, "bad_json"
+    if not isinstance(obj, dict) or obj.get("goal") not in goals():
+        return None, "bad_goal"
+    u = obj.get("urgency")
+    u = u if isinstance(u, int) and not isinstance(u, bool) and 0 <= u <= 9 else 5
+    return f"{obj['goal']} urgency {u}", None
+
+
+_RULES_RNG = random.Random(0)
+
+
+def teacher_call(api, host, model, state, timeout):
+    """One decision with its details (pilot.py): {"goal": "<goal> urgency <u>" or
+    None, "fail": None | "bad_json" | "bad_goal", "raw": the reply text, "usage":
+    token counts (openai), "secs": wall time}. Transport errors raise.
+    api "rules" (L1 only) asks rule_goal instead of a model: no network."""
+    t0 = time.time()
+    if api == "openai":
+        raw, usage = openai_raw(host, model, state, timeout)
+    elif api == "ollama":
+        raw, usage = ollama_raw(host, model, state, timeout)
+    elif api == "rules":
+        g = rule_goal(state, _RULES_RNG).split()
+        raw, usage = json.dumps({"goal": g[0], "urgency": int(g[2])}), {}
+    else:
+        raise ValueError(f"unknown api {api!r}")
+    goal, fail = parse_decision(raw)
+    return {"goal": goal, "fail": fail, "raw": raw, "usage": usage, "secs": time.time() - t0}
+
+
+def ask_teacher(api, host, model, state, timeout):
+    """the decision as a goal line, or None for an unusable reply; transport errors raise"""
+    if api == "ollama":
+        return ask_ollama(host, model, state, timeout)
+    return teacher_call(api, host, model, state, timeout)["goal"]
+
+
+def apply_goal(agent, goal):
+    """an advisor decision feeds back into the sim (a lizard also takes the urgency)"""
+    w = goal.split()
+    if is_l1():
+        agent.set_goal(w[0], int(w[2]))
+    else:
+        agent.set_goal(w[0])
+
+
+def l1_stats(states, labels):
+    """a dry run's coverage: how often each edge the acceptance needs turns up"""
+    n = len(states)
+    rows = [parse_l1_line(s) for s in states]
+
+    def share(pred):
+        return f"{100 * sum(1 for r in rows if pred(r)) / n:.1f}%"
+
+    def spread(key, fn=lambda v: v):
+        c = {}
+        for r in rows:
+            k = fn(r[key])
+            c[k] = c.get(k, 0) + 1
+        return " ".join(f"{k}:{100 * v / n:.0f}%" for k, v in sorted(c.items(), key=lambda kv: str(kv[0])))
+    print(f"\n{n} states", file=sys.stderr)
+    for key in ("phase", "heat", "hunger", "energy", "stress", "curiosity", "bored", "shed", "stage", "zone"):
+        print(f"  {key:9s} {spread(key)}", file=sys.stderr)
+    for key in ("prey", "other", "warm", "shelter", "wall"):
+        empty = "clear" if key == "wall" else "none"
+        print(f"  {key:9s} {spread(key, lambda v: v[0] if v else empty)}", file=sys.stderr)
+    print(f"  edges     heat 0-2 {share(lambda r: r['heat'] <= 2)}, heat 8-9 {share(lambda r: r['heat'] >= 8)}, "
+          f"hunger 8-9 {share(lambda r: r['hunger'] >= 8)} (with prey near/mid "
+          f"{share(lambda r: r['hunger'] >= 8 and r['prey'] and r['prey'][0] != 'far')}), "
+          f"stress 7-9 {share(lambda r: r['stress'] >= 7)}, bored 7-9 {share(lambda r: r['bored'] >= 7)}, "
+          f"inside a hide {share(lambda r: r['shelter'] == ('near', 12))}, social 0-2 with other near "
+          f"{share(lambda r: r['social'] <= 2 and r['other'] and r['other'][0] == 'near')}", file=sys.stderr)
+    c = {}
+    for g in labels:
+        c[g] = c.get(g, 0) + 1
+    print("  rule stand-in goals: " + " ".join(f"{g}:{100 * k / n:.0f}%"
+                                               for g, k in sorted(c.items(), key=lambda kv: -kv[1])), file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--count", type=int, required=True, help="number of (state, goal) pairs")
-    ap.add_argument("--dry-run", action="store_true", help="print states, skip Ollama")
-    ap.add_argument("--host", default="http://192.168.0.139:11434", help="Ollama base URL")
-    ap.add_argument("--model", default="gemma4:26b")
+    ap.add_argument("--dry-run", action="store_true", help="print states, ask no teacher")
+    ap.add_argument("--api", choices=("ollama", "openai"), default="ollama",
+                    help="teacher API: Ollama /api/chat, or OpenAI-compatible /chat/completions "
+                         f"(the lab; key from ${LAB_KEY_ENV})")
+    ap.add_argument("--host", default=None, help="teacher base URL (default: ollama "
+                    f"{API_DEFAULTS['ollama'][0]}, openai {API_DEFAULTS['openai'][0]})")
+    ap.add_argument("--model", default=None, help="teacher model (default: ollama "
+                    f"{API_DEFAULTS['ollama'][1]}, openai {API_DEFAULTS['openai'][1]})")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "out", "traces.jsonl"))
     ap.add_argument("--seed", type=int, default=None)
-    ap.add_argument("--ticks-between", type=int, default=40, help="sim ticks between samples")
+    ap.add_argument("--ticks-between", type=int, default=None,
+                    help=f"sim ticks between samples (default 40 frames; L1 {L1_ASK_EVERY_S} s / the lizards)")
     ap.add_argument("--perturb", type=float, default=0.45, help="edge-case perturbation probability")
     ap.add_argument("--timeout", type=float, default=30.0, help="per-request timeout, seconds")
     ap.add_argument("--max-minutes", type=float, default=None,
                     help="hard wall-clock cap; stop cleanly when exceeded")
-    ap.add_argument("--schema", type=int, choices=(2, 3, 4), default=2,
+    ap.add_argument("--schema", type=parse_schema, choices=(2, 3, 4, "L1"), default=2,
                     help="state-line schema: 2 = frozen, 3 = shipped (no names, trust, 2-6 fish), "
-                         "4 = next cycle (no shadow, + bored)")
+                         "4 = next cycle (no shadow, + bored), L1 = the lizard line (schema-lizard.md)")
     ap.add_argument("--repopulate", type=int, default=250,
-                    help="v3: rebuild the tank with a new random population every N samples")
+                    help="v3/v4/L1: rebuild the world with a new random population every N samples")
+    ap.add_argument("--stats", action="store_true", help="L1 dry run: the coverage of the edges, to stderr")
     args = ap.parse_args()
     global SCHEMA
     SCHEMA = args.schema
+    host, model = teacher_defaults(args.api, args.host, args.model)
+    fixed_ticks = args.ticks_between
     deadline = time.time() + args.max_minutes * 60 if args.max_minutes else None
 
     rng = random.Random(args.seed)
-    tank = Tank(rng)
-    for _ in range(200):  # warm up so the tank isn't in its initial pose
-        tank.tick()
+    tank = new_world(rng)
+    warm_up(tank)
 
     out = None
     if not args.dry_run:
@@ -549,18 +1602,24 @@ def main():
 
     written = failures = 0
     fish_idx = 0
+    repop_at = 0            # L1: `written` at the last repopulation
+    seen, labels = [], []
     try:
         while written < args.count:
             if deadline and time.time() > deadline:
                 print(f"[max-minutes reached] stopping at {written} pairs", file=sys.stderr)
                 break
-            if SCHEMA >= 3 and written and written % args.repopulate == 0 and fish_idx % len(tank.fish) == 0:
-                tank = Tank(rng)                       # a different population size
-                for _ in range(200):
-                    tank.tick()
-            for _ in range(args.ticks_between):
+            # (fish: as it always was - which keeps a tank whose size does not divide the
+            # count's multiples of --repopulate for several periods; L1: every --repopulate)
+            due = written - repop_at >= args.repopulate if is_l1() else written and written % args.repopulate == 0
+            if (is_l1() or SCHEMA >= 3) and due and fish_idx % len(members(tank)) == 0:
+                tank = new_world(rng)                  # a different population (L1: pack, keeper, layout too)
+                warm_up(tank)
+                repop_at = written
+            for _ in range(fixed_ticks or ticks_between(tank)):
                 tank.tick()
-            f = tank.fish[fish_idx % len(tank.fish)]
+            pop = members(tank)
+            f = pop[fish_idx % len(pop)]
             fish_idx += 1
             if rng.random() < args.perturb:
                 tank.perturb(f)
@@ -569,15 +1628,20 @@ def main():
             if args.dry_run:
                 print(state)
                 written += 1
+                if is_l1():         # no teacher: the rule stand-in moves the lizards instead
+                    goal = rule_goal(state, rng)
+                    apply_goal(f, goal)
+                    seen.append(state)
+                    labels.append(goal.split()[0])
                 continue
 
             try:
-                goal = ask_ollama(args.host, args.model, state, args.timeout)
+                goal = ask_teacher(args.api, host, model, state, args.timeout)
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, OSError) as e:
                 failures += 1
                 print(f"[warn] {type(e).__name__}: {e}", file=sys.stderr)
                 if failures >= 5 and written == 0:
-                    sys.exit(f"aborting: {failures} consecutive failures reaching {args.host}")
+                    sys.exit(f"aborting: {failures} consecutive failures reaching {host}")
                 continue
             if goal is None:
                 failures += 1
@@ -587,12 +1651,14 @@ def main():
             out.write(json.dumps({"state": state, "goal": goal}) + "\n")
             out.flush()
             written += 1
-            f.set_goal(goal.split()[0])  # advisor decision feeds back into the sim
+            apply_goal(f, goal)  # advisor decision feeds back into the sim
             if written % 50 == 0:
                 print(f"{written}/{args.count}")
     finally:
         if out:
             out.close()
+    if args.dry_run and args.stats and seen:
+        l1_stats(seen, labels)
     if not args.dry_run:
         print(f"done: {written} pairs -> {args.out}")
 

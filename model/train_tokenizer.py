@@ -18,8 +18,9 @@ firmware will too (simpler than BPE). Training doc: <BOS> state -> goal.
 Usage: python3 train_tokenizer.py [--out out/tokenizer.bin] [--verify out/v2_clean.jsonl]
        python3 train_tokenizer.py --schema 3          # out/tokenizer_v3.bin (no names, + trust)
        python3 train_tokenizer.py --schema 4          # out/tokenizer_v4.bin (no shadow, + bored)
+       python3 train_tokenizer.py --schema L1         # out/tokenizer_l1.bin (the lizard line, vocab 59)
 The schema is chosen by --schema, or by the POCKET_SCHEMA environment variable
-when imported (train.py / probe_dist.py): POCKET_SCHEMA=3 python train.py ...
+when imported (train.py / probe_dist.py): POCKET_SCHEMA=L1 python train.py ...
 """
 
 import argparse
@@ -31,10 +32,36 @@ import struct
 BOS_ID, EOS_ID, UNK_ID = 1, 2, 0
 SEP = " -> "
 
-SCHEMA = int(os.environ.get("POCKET_SCHEMA", "2"))
+
+def parse_schema(s):
+    """a schema name as --schema / POCKET_SCHEMA spell it: 2, 3, 4 (the fish lines) or L1 (the lizard line)"""
+    s = str(s).strip()
+    if s.upper() == "L1":
+        return "L1"
+    if s in ("2", "3", "4"):
+        return int(s)
+    raise argparse.ArgumentTypeError(f"unknown schema {s!r} (2, 3, 4 or L1)")
+
+
+SCHEMA = parse_schema(os.environ.get("POCKET_SCHEMA", "2"))
+
+# The lizard line's 56 words (model/schema-lizard.md "Vocabulary", in its table's
+# order; with the three specials, 59 ids). No word plays two roles: the sighting
+# is `shelter` because `hide` is a goal, the phase `sleep` because `rest` is one.
+LEXICON_L1 = (["zone", "hunger", "energy", "stress", "curiosity", "heat", "bold", "social", "stage", "trust",
+               "bored", "shed", "prey", "other", "warm", "shelter", "wall", "last", "phase", "urgency"]
+              + [str(i) for i in range(0, 13)]                 # drives 0-9, clock 1-12
+              + ["none", "near", "mid", "far", "clear"]
+              + ["hatch", "juv", "adult", "elder"]
+              + ["no", "soon", "yes"]
+              + ["active", "settle", "sleep"]
+              + ["hunt", "bask", "hide", "explore", "investigate", "dig", "rest"]
+              + ["->"])
 
 
 def lexicon_for(schema):
+    if schema == "L1":
+        return list(LEXICON_L1)
     head = (["fish", "mira", "bolt", "kelp", "nori", "zone"] if schema == 2
             else ["zone"])                                   # v3: names carry no signal - dropped
     ident = (["hunger", "energy", "stress", "curiosity", "bold", "social", "stage",
@@ -56,7 +83,7 @@ def lexicon_for(schema):
 
 
 def set_schema(schema):
-    """switch the module's lexicon (v2: vocab 58, v3: vocab 54)"""
+    """switch the module's lexicon (v2: vocab 58, v3: 54, v4: 54, L1: 59)"""
     global SCHEMA, LEXICON, VOCAB, VOCAB_SIZE, _WORD_TO_ID
     SCHEMA = schema
     LEXICON = lexicon_for(schema)
@@ -105,24 +132,34 @@ def verify(paths):
     return n, bad
 
 
+def schema_tag(schema):
+    """the schema in file names: v2, v3, v4, l1"""
+    return "l1" if schema == "L1" else f"v{schema}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     here = os.path.dirname(os.path.abspath(__file__))
-    ap.add_argument("--schema", type=int, choices=(2, 3, 4), default=SCHEMA)
+    ap.add_argument("--schema", type=parse_schema, choices=(2, 3, 4, "L1"), default=SCHEMA)
     ap.add_argument("--out", default=None)
     ap.add_argument("--verify", default=None)
     args = ap.parse_args()
     set_schema(args.schema)
+    tag = schema_tag(args.schema)
     if args.out is None:
-        args.out = os.path.join(here, "out", "tokenizer.bin" if args.schema == 2 else f"tokenizer_v{args.schema}.bin")
+        args.out = os.path.join(here, "out", "tokenizer.bin" if args.schema == 2 else f"tokenizer_{tag}.bin")
     if args.verify is None:
-        args.verify = os.path.join(here, "out", f"v{args.schema}_traces*.jsonl")
+        args.verify = os.path.join(here, "out", f"{tag}_traces*.jsonl")
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     write_bin(args.out)
     sample = ("fish mira zone 2 hunger 7 -> seek_food urgency 8" if args.schema == 2
+              else "zone 2 hunger 7 energy 5 stress 2 curiosity 8 heat 3 bold 4 social 2 stage adult trust 6 "
+                   "bored 3 shed no prey near 12 other mid 3 warm far 10 shelter near 7 wall near 3 last explore "
+                   "phase active -> bask urgency 7" if args.schema == "L1"     # the worst case: 48 of 64 positions
               else "zone 2 hunger 7 trust 5 -> seek_food urgency 8")
     assert decode(encode(sample)) == sample, "round-trip failed"
-    print(f"wrote {args.out}: schema v{args.schema}, vocab_size={VOCAB_SIZE}, sample = {len(encode(sample, bos=True))} tokens")
+    assert UNK_ID not in encode(sample), "the sample has a word outside the lexicon"
+    print(f"wrote {args.out}: schema {tag}, vocab_size={VOCAB_SIZE}, sample = {len(encode(sample, bos=True))} tokens")
     n, bad = verify(glob.glob(args.verify))
     print(f"verified {n} traces: {'closed vocabulary OK' if not bad else 'UNKNOWN WORDS ' + str(bad)}")
 
