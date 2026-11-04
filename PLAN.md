@@ -181,16 +181,13 @@ flowchart LR
 - Found: the fish's real stage ages are 2 h / 12 h / 96 h (the gecko keeps 20 min / 90 min / 8 h);
   stuck-shed stress is a rising floor (the engine's stress decays ~0.18/s); the spray is not drawn yet
 
-**P2b — the world switch, and lizards move like lizards (in progress)**
-- [ ] Build-time world (`PT_WORLD`: aquarium | terrarium) in sim and firmware: picks the model and tokenizer files,
-      the packs, the goal set, the locomotion and the selftest list; the aquarium build stays today's fish tank
-      (its own fish species pack with the 2 h / 12 h / 96 h stages and no sheds; a freshwater habitat)
-- [ ] Goals: the lizard goals beside the fish goals (one enum, each world uses its own set); until the lizard model
-      exists the terrarium build maps the v4 fish model's answers onto lizard goals (deleted in P6)
-- [ ] Swimming isolated as the aquarium world's locomotion (depth picking, buoyancy, schooling); not deleted
-- [ ] Walking on the floor: trot, turn on the spot, stop-and-go (from `crab_tick`); pack speeds and drive rates live
-- [ ] Hides entered and left, hidden and peeking; the 7 goals → motion; `hide` while shedding goes to the humid hide
-- [ ] Director `age`/stage commands go through the shed gate (or say they bypass it)
+**P2b — the world switch, and lizards move like lizards (done, 16db118)**
+- [x] `common/world.h` `PT_WORLD`: sim `make WORLD=aquarium|terrarium`, firmware `POCKET_TANK_WORLD` +
+      `sdkconfig.aquarium`; fish pack (2 h / 12 h / 96 h, no sheds) + freshwater habitat keep the aquarium bin as pocket-tank
+- [x] One goal enum (fish 8 + lizard 7); the temporary fish-model bridge in `advisor_core.c` (DELETE IN P6)
+- [x] THE WALK (`tank.c`): floor band ±5 px, stop-and-go, turns on the spot, hides as a state with peeking, 7 goals → motion
+- [x] `check-all`: terrarium 50/50 and aquarium 59/59 on all four boards; both firmware worlds build
+- Keeper-free terrarium: heat 4–7 for 99% of lit time, 3/3 growth sheds clean, asleep in a hide or still 96%
 
 **P2c — food and hands**
 - [ ] Crickets: spawn on feed tap, hop/flee AI, hide in decor; strike hit/miss; mealworm dish
@@ -199,13 +196,17 @@ flowchart LR
 **P2d — tuning** against A13–A15 once a lizard model exists
 
 ### P3 — Render (`common/render.c`)
-- [ ] Terrarium scene in the scene cache: wall, gradient, substrate, lamp glow
-- [ ] `draw_lizard(plan, geom, morph, pose)`: spine-chain body (from `draw_veg` ~1491), 4 legs with gait,
-      tail thickness = fat reserve, eyes with eyelid blink, tongue flick
-- [ ] Pose cache like the crab's; profile on the 1.8 (`render_prof_us`)
-- [ ] Shed visuals: dull skin, peeling patches, stuck bits on toes and tail tip
-- [ ] Gecko pack art: morphs (normal, tangerine, albino, blizzard, mack snow), banded hatchling → spotted adult
-- [ ] Icons (`assets/icons` via `tools/gen_icons.py`): redraw the fish-specific milestones, shop items and tools; add the mister
+**P3a — the art, standalone (done, 16db118)**: `render_lizard.c` (12 poses, 5 morphs, stage patterns, shed looks,
+body cache: ~0.4 ms cached / ~2.5–3 ms on a body build on the device, estimated), `render_scene_desert.c`, the mister
+icon, `sim --lizard-sheet`.
+
+**P3b — into the tank**
+- [ ] Draw lizards and the desert in `render_tank` (terrarium); render-stack rules for hides and peeking
+- [ ] Engine fields the pose needs: walk/dig phase, blink, tongue, fat reserve; `LZ_HALF_LEN` 20 → `lizard_half_len` (42 adult)
+- [ ] Scene bake spread over frames (~300 ms on the board today); smoother turns (4 yaw steps per half-turn)
+- [ ] Size: compile the other world and the networking out (`#if PT_WORLD` / `PT_NET`, per-world sources and sounds);
+      the app partition is 5% free (repartition to one 5 MB slot is the reserve option, OTA being off)
+- [ ] Icons: redraw the fish-specific milestones and shop items
 
 ### P4 — Model (ai-lab)
 
