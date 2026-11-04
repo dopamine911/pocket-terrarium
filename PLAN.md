@@ -100,7 +100,8 @@ Spec: `docs/shed.md`. The cycle normal → soon → shedding → clean or stuck,
 pack timers. The keeper keeps the humid hide damp with a third tool, the
 **mister**; a lizard that spends 60 s in a damp humid hide while shedding sheds
 clean, otherwise it sticks (stress up to 6, growth held) until a damp stay or a
-3-second soak with the mister clears it. Stages advance at a clean shed.
+3-second soak with the mister clears it. **Every stage change is preceded by a shed**:
+reaching a stage's age starts a growth shed at once, and the stage changes when it comes off clean.
 
 ---
 

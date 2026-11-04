@@ -43,7 +43,7 @@ typedef struct {
     float       sleep_hunger_per_h, sleep_energy_per_h, sleep_stress_per_h;
 
     /* life */
-    float       stage_s[3];         /* tended age to reach juv, adult, elder */
+    float       stage_s[3];         /* tended age to reach juv, adult, elder: starts a growth shed (docs/shed.md) */
     uint8_t     pop_cap;            /* <= POP_CAP */
     float       shed_every_s[4];    /* per stage (docs/shed.md) */
     float       shed_soon_s, shed_window_s;
@@ -115,7 +115,7 @@ about how a pastime feels, not about the species.
 | energy_per_s / energy_rest_per_s | 0.006 / 0.05 | |
 | curiosity_per_s | 0.004 | |
 | sleep_*_per_h | hunger +0.6, energy +2.0, stress −2.0 | the fish's numbers, hunger slower |
-| stage_s | juv 1,200, adult 5,400, elder 28,800 | the fish's 20 min / 90 min / 8 h; stages change at a shed (`docs/shed.md`) |
+| stage_s | juv 1,200, adult 5,400, elder 28,800 | the fish's 20 min / 90 min / 8 h; reaching one starts a growth shed and the stage changes when it comes off clean (`docs/shed.md`) |
 | pop_cap | 3 | solitary; three already crowds a low-social lizard |
 | shed_every_s (hatch, juv, adult, elder) | 900, 1,800, 10,800, 21,600 | from the end of one shed to the next pre-shed; hatchlings shed often |
 | shed_soon_s / shed_window_s | 300 / 600 | |
