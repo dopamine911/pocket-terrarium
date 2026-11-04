@@ -1,0 +1,110 @@
+# Shed — DRAFT
+
+Lizards grow by shedding their skin. In pocket-terrarium the shed is an upkeep
+loop like wiping the glass and trimming the plants: it comes round on a timer,
+the lizard shows it is coming, and the keeper's part is keeping the humid hide
+damp. Done well, the shed comes off clean and the lizard grows. Neglected, it
+sticks, and the lizard is uncomfortable until it is helped.
+
+Timings come from the species pack (`docs/species-pack.md`); the numbers below
+are the leopard gecko's. All times are tended time (the progression clock):
+awake time counts in full, sleep at a quarter (`SLEEP_GROWTH_FRAC`, `progression.h:87`).
+
+## The cycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> normal
+  normal --> soon: shed_every_s after the last shed ended
+  soon --> shedding: after shed_soon_s
+  shedding --> clean: enough time in a damp humid hide
+  shedding --> stuck: the window ran out
+  stuck --> clean: soaked, or a stay in a damp humid hide
+  clean --> normal: the skin eaten (WHOLE) or left as patches (PATCHES)
+```
+
+| State | Model sees | Lasts | What the keeper sees |
+|---|---|---|---|
+| normal | `shed no` | `shed_every_s[stage]` (gecko 900 / 1,800 / 10,800 / 21,600 s) | — |
+| soon | `shed soon` | `shed_soon_s` (300 s) | skin paling, eyes dull blue-grey, eats less |
+| shedding | `shed yes` | up to `shed_window_s` (600 s) | skin loosening from the nose back |
+| stuck | `shed yes` | until helped | white rings left on toes and tail tip |
+| clean | `shed no` | a moment | the old skin off in one piece; the gecko eats it |
+
+`soon` and `shedding` raise hunger more slowly (× 0.5) and make strikes less
+likely to be attempted, as real pre-shed lizards go off their food. The model
+also reads `shed soon|yes` and leans toward `hide` (schema rule 3).
+
+## Coming off clean
+
+A shed comes off clean when, during `shedding`, the lizard spends
+**`SHED_SOAK_S` = 60 s in total** inside a humid hide whose **moisture is at
+least `SHED_DAMP` = 0.35**. Time inside counts while it is damp enough; it does
+not have to be one stay. A dry humid hide does nothing.
+
+A lizard with `shed yes` that the model sends to `hide` goes to the humid hide
+(`model/schema-lizard.md`, goal `hide`), so a well-kept terrarium sheds clean
+without the keeper doing anything at the moment of the shed. The work is the
+upkeep before it.
+
+## Stuck shed
+
+If the window ends without enough damp time, the shed sticks:
+- `stress` is pushed up `STUCK_STRESS_PER_S` = 0.005 /s (about +18 an hour) while it lasts, but never past 6
+  by this alone: uncomfortable, not panicked.
+- The model keeps seeing `shed yes`, so the lizard keeps seeking the humid hide.
+- Growth: a lizard whose tended age has passed its next stage (`stage_s`) moves up at its next **clean**
+  shed, not before. A stuck shed holds it back until it comes off.
+
+Two ways off:
+1. **A stay in a damp humid hide**: another `SHED_SOAK_S` of damp time clears it.
+2. **A soak**: with the mister in hand, hold on the lizard for `SOAK_HOLD_S` = 3 s.
+   It clears at once, costs the lizard a little stress (+1) and, on a trusting
+   lizard (trust ≥ 6), earns a little trust (+0.2): being helped by a hand it knows.
+
+## Moisture
+
+Each humid hide has `moisture` 0..1, saved with the terrarium.
+- Dries at `MOIST_DRY_PER_S` = 1/10,800 awake (full to dry in ~3 h), a quarter of that asleep.
+- Each mister pass over the hide adds `MIST_PASS` = 0.35, up to 1.
+- Shown on the hide: the substrate at its mouth darkens with moisture; at 0 it looks pale and dusty.
+- A fresh terrarium starts at 0.6.
+
+## The mister (a third tool)
+
+The tool row under a lizard's card gains a third tool next to the sponge and
+the scissors: `TOOL_MISTER`. The rules are the existing tools' (`tank.h:1148`):
+picked from the card, a DONE chip top left, back in the box after `TOOL_IDLE_S`
+(120 s), and while it is in hand the glass takes its strokes and nothing else.
+
+| Gesture with the mister | Effect |
+|---|---|
+| a stroke or tap over a humid hide | +`MIST_PASS` moisture (once per stroke), a spray drawn |
+| a stroke over the open terrarium | a spray drawn, nothing else (a fine mist settles and dries) |
+| hold on a lizard 3 s | stuck shed: the soak. Otherwise: sprayed, stress +1 (they dislike it) |
+
+The tool hit test today splits the row in halves (`render.c:7553`); with three
+tools it splits in thirds.
+
+## Milestones
+
+| Badge | Earned |
+|---|---|
+| FIRST SHED | a lizard's first clean shed |
+| HELPING HAND | a stuck shed cleared by a soak |
+| CLEAN RUN | five clean sheds in a row (tank-wide) |
+| FIRST MIST | the keeper's first mister pass (tank-wide) |
+
+## Saved (P5's save format)
+
+Per lizard: shed state, seconds left in it, damp seconds accrued, clean-shed
+count. Per terrarium: each humid hide's moisture, the clean-run counter.
+
+## Tests (P2)
+
+Through the sim, never by reading constants:
+- a damp hide and a lizard that uses it: the shed comes off clean and the stage advances;
+- a dry hide: the shed sticks, stress rises to its floor, the stage holds;
+- a stuck shed cleared both ways (a damp stay, a soak);
+- moisture falls over three awake hours to 0 and four times slower asleep;
+- a sleep across a whole shed cycle (the timers run at the sleep rate and the state is right on waking).
