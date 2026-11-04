@@ -46,7 +46,7 @@ export LAB_API_KEY="$(python3 -c 'import os, yaml; print(yaml.safe_load(open(os.
 ```bash
 cd model
 python3 gen_traces.py --schema L1 --dry-run --count 30 --seed 1            # 30 lines, no network
-python3 gen_traces.py --schema L1 --dry-run --count 6000 --seed 3 --stats > /dev/null   # coverage, stderr
+python3 gen_traces.py --schema L1 --dry-run --count 2000 --seed 41 --stats > /dev/null   # coverage, stderr
 python3 make_l1_parity.py --check                                          # the fixture is current
 (cd ../sim && /tmp/terr-make.sh check)                                     # incl. --selftest-l1-encode (P2a)
 python3 train_tokenizer.py --schema L1                                     # out/tokenizer_l1.bin, vocab 59
@@ -56,13 +56,35 @@ python3 prompt_check.py --schema L1 --api openai --workers 4 --out out/prompt_ch
 python3 pilot.py --api openai --workers 4                                  # 0.5: 111 calls, ~1 min
 ```
 
-`--stats` on the dry run (the rule stand-in moves the lizards, so the shares are
-indicative; the teacher's own decisions shape the real run; gecko at 0.0045 hunger/s
-and 3.0 a cricket): active 81% / settle 9% / sleep 10%; heat 0–2 13%, 8–9 5%;
-hunger 8–9 17% (with prey near/mid 5%); stress 7–9 10%; bored 7–9 29%; shed soon
-14%, yes 19%; inside a hide 42%; social 0–2 with the other near 11%; `other none`
-22%; `wall clear` 2% (the glass is the four sides, as for the fish: only the bigger
-boards' floors leave room for it).
+The sim's world is the C engine's as built (P2a): the four boards' glass and
+floor, the desert habitat (`common/habitat/desert.c`) at its absolute temperatures
+for every pack - floor 31 → 25 °C lit, 5 °C cooler dark, the lamp's pool 35 °C
+within 70 px of the basking spot at 0.28 of the floor, the warm / humid / cool
+hides at 0, 0.55 and 1 of the floor (30/30, 28/25, 24/21 °C lit/dark; inside
+within 28 px), the humid hide starting at 0.6 and drying in 3 tended hours - read
+as `tank_env_c_lit` reads it, the body following it as `body_follow` does, the
+zone grid and the wall's contact point as `advisor_core_l1_snap` builds them. A16's
+test pack (15% of terrariums) lives in the same desert, so it is cold but in the
+pool. The lizards roam the whole glass as P2a's do (P2b brings walking).
+
+`--stats` on that dry run (2000 lines, seed 41; the rule stand-in moves the
+lizards, so the shares are indicative - the teacher's decisions shape the real
+run). No bucket under 2%; eight seeds keep the thinnest, starving with prey
+near/mid/far, at 2.4–4.5%:
+
+| Bucket | Share | Bucket | Share |
+|---|---|---|---|
+| heat 0–2 | 15.3% | hunger 8–9, prey near | 2.9% |
+| heat 3–4 | 36.8% | hunger 8–9, prey mid | 2.7% |
+| heat 5–6 | 40.2% | hunger 8–9, prey far | 2.8% |
+| heat 7 | 3.9% | hunger 8–9, prey none | 9.8% |
+| heat 8–9 | 3.9% | bored 7–9 | 29.5% |
+| shed no / soon / yes | 70.5 / 13.3 / 16.1% | other near, social 0–2 | 8.1% |
+| phase active / settle / sleep | 81.1 / 9.4 / 9.5% | other near, social 7–9 | 5.0% |
+| stage hatch / juv / adult / elder | 9.9 / 14.2 / 53.9 / 22.1% | | |
+
+The floor line puts the places low: zones 4–5 hold 71% of the lines and `wall`
+is near 73%, mid 25%, clear 2% (the floor is glass to the wall rule, as for the fish).
 
 prompt_check's L1 panel pins one thing on a content lizard (fed, comfortable,
 calm, active) and prints what the student will inherit: A2–A12, and for the
@@ -214,31 +236,52 @@ prompt_check 464, pilot 111, the diagnostic 12).
 ## 1. The night (unattended; ~5–6 h)
 
 Four workers = the four slots; each worker is sequential because the teacher's
-decision feeds back into its sim. The pilot measured ~160 decisions/min with 4
-parallel requests (PLAN measured 126.7/min with fish states): 45k pairs in ~5–6 h.
+decision feeds back into its sim. The pilot measured ~150–160 decisions/min with
+4 parallel requests (PLAN measured 126.7/min with fish states): 45,000 pairs in
+~4.7–5.9 h. The key goes into the environment first (above); `--api openai`
+defaults to the lab's host and `chat-teacher`.
 
 ```bash
 cd model
+mkdir -p out
 for w in a b c d; do
-  seed=$((41 + $(printf '%d' "'$w") - 97))
-  nohup python3 gen_traces.py --schema L1 --api openai --count 12000 --max-minutes 420 \
+  seed=$((41 + $(printf '%d' "'$w") - 97))            # a b c d -> 41 42 43 44
+  nohup python3 gen_traces.py --schema L1 --api openai --count 11250 --max-minutes 420 \
       --seed $seed --out out/l1_traces_$w.jsonl > out/l1_gen_$w.log 2>&1 &
+  echo $! > out/l1_gen_$w.pid
 done
 ```
+4 × 11,250 = 45,000 pairs; `--max-minutes 420` stops a slow night cleanly at 7 h
+with what it has. Each log prints every 50 pairs (`50/11250`), warnings as
+`[warn] ...`.
 
-Defaults that matter: `--repopulate 250` (a new terrarium: pack 1 or 250, 1–3
-lizards, keeper, layout, board floor), `--perturb 0.45` (the edge cases: cold,
-hot, starving with prey near/mid/far/none, cold and starving, famine, shed
-soon/yes/stuck, a dark spell for settle/sleep, stress, a rut, fresh, territorial
-and social pairs, lonely, persona, exhausted, sated, curious, inside a hide, at
-the glass), each lizard asked about every 20 s of sim time.
-
-Peek at ~200 lines of one worker before bed:
+Watching it:
 ```bash
-python3 fold_traces.py --schema L1 out/l1_traces_a.jsonl --out /tmp/l1_peek.jsonl
+wc -l out/l1_traces_*.jsonl                                       # pairs so far
+for w in a b c d; do kill -0 "$(cat out/l1_gen_$w.pid)" 2>/dev/null && echo "$w running" || echo "$w STOPPED"; done
+python3 fold_traces.py --schema L1 out/l1_traces_a.jsonl --out /tmp/l1_peek.jsonl   # the first ~200: no goal over 40%
+kill $(cat out/l1_gen_*.pid)                                      # stop all (the files keep every pair written)
 ```
-No goal over 40%; the coverage block prints the teacher's rate on each
-acceptance slice (A2–A9, A12) in the data itself.
+The fold's coverage block prints the teacher's rate on each acceptance slice
+(A2–A9, A12) in the data itself.
+
+**A worker died** (its pid gone, its log ending in neither `done:` nor `[max-minutes reached]`):
+restart it with a NEW seed - the old seed replays the same terrariums from the
+start - for the pairs it still owes, appending to its own file (gen_traces
+appends; a half-written last line is dropped by the fold, exact repeats are
+de-duplicated). Seeds 51–54 are the first restarts of a–d, 61–64 the second:
+```bash
+w=b; seed=52                                          # (a 51, b 52, c 53, d 54; then 61-64)
+left=$((11250 - $(wc -l < out/l1_traces_$w.jsonl)))
+nohup python3 gen_traces.py --schema L1 --api openai --count $left --max-minutes 300 \
+    --seed $seed --out out/l1_traces_$w.jsonl >> out/l1_gen_$w.log 2>&1 &
+echo $! > out/l1_gen_$w.pid
+```
+(`--max-minutes`: what is left of the night.) A worker that cannot reach the teacher
+at its start stops after five failures (`aborting: 5 consecutive failures`): the lab
+is down or the key is not in the environment - fix that and start it again. Later in
+the night a worker rides out an outage (a `[warn]` per failed ask, at most `--timeout`
+30 s each) and carries on when the lab is back.
 
 ## 2. Fold and verify
 
@@ -288,7 +331,7 @@ prompt_check and fold's coverage block pin them): A2 for heat 3–7, A3/A4/A9/A1
 - `out/l1_gen_*.log` fills with `[warn] OSError: curl failed` or `TimeoutError`:
   another client holds the slots; drop to 2–3 workers. A `server: ...` warning
   is the lab's own error text (401: the key is not in the environment).
-- A worker dies: the others keep going; re-run it with a new seed. Files append;
-  fold de-duplicates.
+- A worker dies: the others keep going; restart it as in "A worker died" above (a new
+  seed, the pairs it still owes, its own file).
 - A skewed label mix: the prompt, not the sim - edit one sentence, re-run
   prompt_check, regenerate only that worker's file.

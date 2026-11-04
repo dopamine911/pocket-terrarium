@@ -773,38 +773,134 @@ def parse_l1_line(line):
 
 
 # ---- the L1 sim: a headless terrarium with enough dynamics to sweep the line's
-# state space and to let the teacher's decisions play out - not the C engine's
-# physics. Units are the pack's (seconds, degrees C, 0..10 drives); the floor is
-# the fish tank's box seen from above (px at the 1.8's scale), zones as the
-# schema's 3x2 grid. Everything thermal is in pack-relative heat units, so the
-# two packs produce the same lines through their own normalisation.
+# state space and to let the teacher's decisions play out. Its WORLD is the C
+# engine's as built (P2a, 2026-11-04), so the night's states are the device's:
+#  - the four boards' glass and floor (tank.h TANK_W / TANK_BOT; tank.c
+#    tank_glass_x0 / x1 / top / clamp: a rectangle, round corners, the bowl's circle);
+#  - the desert habitat in absolute degrees C for every pack (common/habitat/desert.c),
+#    laid out on the floor line (tank.h PLACE_Y = TANK_BOT - 24, PLACE_MARGIN, HIDE_R)
+#    and read as tank.c tank_env_c_lit reads it; the body follows it (tank.c body_follow);
+#  - heat's effects (tank.h HEAT_SLOW, HEAT_HOT), the stuck shed's stress floor and the
+#    shed and the humid hide's drying on tended time (tank.c stuck_floor, shed_step,
+#    tank_shed_clock);
+#  - the zone grid and the wall's contact point (advisor_core.c zone_of, wall_contact).
+# Its lizards roam the whole glass, as P2a's do (they still swim like the fish; P2b
+# brings walking), and run the pack's drive rates (the engine's from P2b on).
+# Units: seconds, degrees C, 0..10 drives, px.
 L1_DT = 1.0                       # s per sim tick
 L1_ASK_EVERY_S = 20               # default s of sim time between two asks of the same lizard
 # boredom per SECOND (common/tank.h BORED_*; the fish sim above runs in frames)
 BORED_PER_S, BORED_ZONE_STALE_S, BORED_RELIEF_PER_S = 0.15, 20.0, 0.3
-# the shed (docs/shed.md)
+# the shed (tank.h SHED_SOAK_S, SHED_DAMP, STUCK_*, MIST_PASS; progression.h SLEEP_GROWTH_FRAC)
 SHED_SOAK_S, SHED_DAMP, STUCK_STRESS_PER_S, STUCK_STRESS_MAX = 60.0, 0.35, 0.005, 6.0
-MOIST_DRY_PER_S, MIST_PASS, SLEEP_GROWTH_FRAC = 1.0 / 10800, 0.35, 0.25
-# the heat field in heat units, (lamp on, lamp off); the warm hide sits on a heat mat
-HIDE_HEAT = {"warm": (6.3, 5.6), "humid": (5.5, 4.2), "cool": (3.6, 2.6)}
-FLOOR_HEAT = ((6.1, 3.0), (3.2, 1.6))   # (warm wall, cool wall): lamp on, lamp off
-BASK_HEAT, BASK_R = 9.9, 50.0     # the lamp's spot: a lizard that stays on it overheats in ~4 min
-LAMP_TAU_S = 240.0                # the lamp and the floor warm up / cool down after the switch
+MIST_PASS, SLEEP_GROWTH_FRAC = 0.35, 0.25
+# the places on the floor line (tank.h: PLACE_Y = TANK_BOT - PLACE_DY) and a hide's reach (HIDE_R)
+PLACE_DY, PLACE_MARGIN, HIDE_R = 24.0, 30.0, 28.0
+# heat's effects (tank.h): under HEAT_SLOW it is slower (x HEAT_SLOW_MIN at heat 0); from
+# HEAT_HOT on, stress is pulled toward 4 + 2 x (heat - 8) at HEAT_HOT_PULL a second
+HEAT_SLOW, HEAT_SLOW_MIN, HEAT_HOT, HEAT_HOT_PULL = 3.0, 0.5, 8.0, 0.15
 L1_LEISURE = ("bask", "explore", "investigate", "dig")   # + rest and hide in the active phase
-# the four boards' worlds (docs/BOARDS.md: 1.8, square, watch, the bowl as its box) with
-# weights; the same pixel buckets on each, so the bigger floors bring `wall clear` and prey
-# beyond far into the data
-L1_FLOORS = (((448, 368), 50), ((480, 480), 20), ((410, 502), 15), ((466, 466), 15))
 # keepers: feed every s, crickets per lizard per feed, mist rate /s (a drying hide, by day),
 # soak rate /s (a stuck shed)
 KEEPERS = {"diligent": (240.0, (2, 3), 1 / 400, 1 / 300),
            "ok": (450.0, (1, 3), 1 / 1500, 1 / 900),
            "neglectful": (1200.0, (1, 2), 1 / 8000, 0.0)}
 # edge cases pushed on a lizard before sampling (weights by repetition, as the fish's)
-L1_CASES = (["cold"] * 5 + ["hot"] * 4 + ["starve"] * 3 + ["starve_cold"] * 2 + ["famine"]
+L1_CASES = (["cold"] * 5 + ["hot"] * 4 + ["starve"] * 4 + ["starve_cold"] * 2 + ["famine"]
             + ["shed_soon"] + ["shed_yes"] + ["stuck"] + ["night"] + ["stress"] * 3 + ["bored"] * 3
             + ["fresh"] + ["territorial"] * 2 + ["social"] + ["lonely"] + ["persona"] * 3 + ["exhausted"]
             + ["sated"] * 2 + ["curious"] + ["in_hide"] + ["wall"] + ["prey_near"] * 2)
+# the packs a terrarium holds: the gecko, now and then A16's test pack - in the same desert
+# at the same absolute temperatures, so it is cold everywhere but in the lamp's pool
+L1_PACK_MIX = ((GECKO, 85), (TEST_WARM, 15))
+
+
+@dataclasses.dataclass(frozen=True)
+class Board:
+    """One board's world (tank.h TANK_W, TANK_H, TANK_BOT; tank.c tank_glass_*):
+    the glass is the frame's rectangle, the rectangle with round corners
+    (TANK_CORNER_R) or the bowl's circle (TANK_RAD), the floor at TANK_BOT."""
+    name: str
+    w: float
+    h: float
+    bot: float
+    corner_r: float = 0.0
+    rad: float = 0.0
+
+    def _half(self, d):                 # the bowl: half the chord d px off the centre line (glass_half)
+        r2 = self.rad * self.rad - d * d
+        return math.sqrt(r2) if r2 > 0 else 0.0
+
+    def _inset(self, v, length):        # the corners: the glass's inset v px along a side (corner_inset)
+        r = self.corner_r
+        d = r - v if v < r else v - (length - r) if v > length - r else 0.0
+        if d <= 0:
+            return 0.0
+        return r if d >= r else r - math.sqrt(r * r - d * d)
+
+    def x0(self, y):
+        return self.rad - self._half(y - self.rad) if self.rad else self._inset(y, self.h) if self.corner_r else 0.0
+
+    def x1(self, y):
+        return self.rad + self._half(y - self.rad) if self.rad else \
+            self.w - self._inset(y, self.h) if self.corner_r else self.w
+
+    def top(self, x):
+        return self.rad - self._half(x - self.rad) if self.rad else self._inset(x, self.w) if self.corner_r else 0.0
+
+    def clamp(self, x, y, m):
+        """tank_glass_clamp: (x, y) brought to at least m inside the glass and above the floor"""
+        if self.rad:
+            y = min(y, self.bot - m)
+            dx, dy = x - self.rad, y - self.rad
+            d, lim = math.hypot(dx, dy), self.rad - m
+            if d > lim and d > 0:
+                x, y = self.rad + dx * lim / d, self.rad + dy * lim / d
+                if y > self.bot - m:            # where the glass meets the floor: along the floor to the glass
+                    y = self.bot - m
+                    half = max(0.0, self._half(y - self.rad) - m)
+                    x = self.rad - half if dx < 0 else self.rad + half
+            return x, y
+        x, y = min(self.w - m, max(m, x)), min(self.h - m, max(m, y))
+        if self.corner_r:                       # out of a corner: back along its radius (corner_clamp)
+            r = self.corner_r
+            cx = r if x < r else self.w - r if x > self.w - r else None
+            cy = r if y < r else self.h - r if y > self.h - r else None
+            if cx is not None and cy is not None:
+                d, lim = math.hypot(x - cx, y - cy), r - m
+                if d > lim and d > 0:
+                    x, y = cx + (x - cx) * lim / d, cy + (y - cy) * lim / d
+        return x, y
+
+
+# the four boards (docs/BOARDS.md; tank.h), weighted toward the 1.8
+L1_BOARDS = ((Board("1.8", 448, 368, 368), 50), (Board("square", 480, 480, 480, corner_r=40), 20),
+             (Board("watch", 410, 502, 502, corner_r=100), 15), (Board("round", 466, 466, 396, rad=233), 15))
+
+
+@dataclasses.dataclass(frozen=True)
+class Habitat:
+    """habitat_t (common/habitat.h): lit, the floor runs straight from floor_warm_c at
+    its warm (left, u 0) end to floor_cool_c at its cool end, and the lamp's pool
+    rises to bask_c at the basking spot from the floor's own at bask_r_px; dark, the
+    floor is night_drop_c cooler and the lamp is out. hides: (kind, u, lit C, dark C)."""
+    id: int
+    name: str
+    floor_warm_c: float
+    floor_cool_c: float
+    night_drop_c: float
+    bask_u: float
+    bask_c: float
+    bask_r_px: float
+    hides: tuple
+    moist_start: float
+    moist_dry_per_s: float
+
+
+DESERT = Habitat(id=1, name="DESERT", floor_warm_c=31.0, floor_cool_c=25.0, night_drop_c=5.0,   # habitat/desert.c
+                 bask_u=0.28, bask_c=35.0, bask_r_px=70.0,
+                 hides=(("warm", 0.0, 30.0, 30.0), ("humid", 0.55, 28.0, 25.0), ("cool", 1.0, 24.0, 21.0)),
+                 moist_start=0.6, moist_dry_per_s=1.0 / 10800)
 
 
 def _trait(rng, digit=None):
@@ -813,25 +909,26 @@ def _trait(rng, digit=None):
     return min(1.0, max(0.0, (d + rng.uniform(-0.45, 0.45)) / 9))
 
 
-def l1_zone(x, y, w, h):
+def l1_zone(x, y, w, bot):
+    """advisor_core.c zone_of: the 3x2 grid, columns by TANK_W, rows by TANK_BOT"""
     col = min(2, int(x / (w / 3)))
-    row = min(1, int(y / (h / 2)))
+    row = min(1, int(y / (bot / 2)))
     return row * 3 + col + 1
 
 
 class Lizard:
     def __init__(self, terr, rng):
-        self.x, self.y = rng.uniform(30, terr.w - 30), rng.uniform(30, terr.h - 30)
+        self.x, self.y = terr.clamp(rng.uniform(30, terr.w - 30), rng.uniform(30, terr.bot - 30))
         self.heading = rng.uniform(0, 2 * math.pi)
         self.reroll_identity(terr, rng)
-        self.body_c = body_c_of(terr.pack, rng.uniform(3.5, 7.0))
+        self.body_c = (terr.pack.t_lo + terr.pack.t_hi) / 2    # a new arrival: mid-band (tank.c tank_lizard_fresh)
         self.hunger = rng.uniform(1, 7)
         self.energy = rng.uniform(3, 9)
         self.stress = rng.uniform(0, 3)
         self.curiosity = rng.uniform(2, 8)
         self.bored = rng.uniform(0, 3)
         self.goal, self.goal_prev, self.urgency = rng.choice(GOALS_L1), None, 5
-        self.hide = None            # the hide it is inside
+        self.hide = terr.hide_at(self.x, self.y)    # the hide it is inside: within HIDE_R of its point (tank_hide_at)
         self.want_hide = None       # the hide it is heading for
         self.target, self.target_t = None, 0.0     # explore point / investigate subject
         self.last_prey = None
@@ -871,17 +968,19 @@ class Lizard:
     def tick(self, terr, rng, dt, ph):
         p = terr.pack
         self._move(terr, rng, dt)
-        # body temperature follows its surroundings (docs/species-pack.md "Heat")
-        env = body_c_of(p, terr.env_heat(self.x, self.y, self.hide))
-        self.body_c += (env - self.body_c) * (1 - math.exp(-dt / p.tau_s[self.stage_i]))
+        self.hide = terr.hide_at(self.x, self.y)
+        # the body follows where it is, exactly over dt at its stage's tau (tank.c body_follow):
+        # the habitat's degrees C there with the light as it is (tank_env_c)
+        env = terr.env_c(self.x, self.y, terr.light)
+        self.body_c = env + (self.body_c - env) * math.exp(-dt / p.tau_s[self.stage_i])
         heat = heat_of(p, self.body_c)
         asleep = ph == "sleep"
-        slow = 0.5 if self.shed in ("soon", "shedding") else 1.0     # pre-shed lizards go off their food
-        if asleep:
-            self.hunger += p.sleep_hunger_per_h / 3600 * dt * slow
+        if asleep:          # (a shed's slower hunger is its appetite awake: tank.c tank_tick_sleep)
+            self.hunger += p.sleep_hunger_per_h / 3600 * dt
             self.energy += p.sleep_energy_per_h / 3600 * dt
             self.stress -= p.sleep_stress_per_h / 3600 * dt
         else:
+            slow = 0.5 if self.shed in ("soon", "shedding") else 1.0     # tank.h SHED_HUNGER_X: off its food
             self.hunger += p.hunger_per_s * dt * slow
             if self.goal == "rest":
                 self.energy += p.energy_rest_per_s * dt * min(1.0, max(0.3, heat / 5))   # cold slows recovery
@@ -889,21 +988,22 @@ class Lizard:
                 self.energy -= p.energy_per_s * dt * (1.6 if self.goal in ("dig", "hunt") else 1.0)
             self.curiosity += dt * (-0.012 if self.goal in ("explore", "investigate") else p.curiosity_per_s)
             self.stress -= dt * (0.01 + 0.002 * self.trust + (0.03 if self.hide else 0.0))   # calms; faster when hidden
-            if heat >= 8:
-                self.stress += dt * 0.05 * (heat - 7.5)               # overheating
+            to = 4 + 2 * (heat - HEAT_HOT)                                # overheating pulls stress up (tank.c)
+            if heat >= HEAT_HOT and self.stress < to:
+                self.stress += HEAT_HOT_PULL * (to - self.stress) * dt
             for o in terr.lizards:
                 if o is not self and self.dist((o.x, o.y)) < 60:
                     self.stress += dt * 0.03 * (1 - self.social)      # crowding; worse for the territorial
             if rng.random() < dt / 1200:
                 self.stress += rng.uniform(1.5, 4) * (1.3 - self.bold)    # a rap on the glass
-        if self.shed == "stuck" and self.stress < STUCK_STRESS_MAX:
-            self.stress = min(STUCK_STRESS_MAX, self.stress + STUCK_STRESS_PER_S * dt)
         self._shed_tick(terr, rng, dt * (SLEEP_GROWTH_FRAC if asleep else 1.0))
+        if self.shed == "stuck":            # a stuck shed's floor under the stress (tank.c stuck_floor)
+            self.stress = max(self.stress, min(STUCK_STRESS_MAX, STUCK_STRESS_PER_S * self.shed_t))
         # boredom: a pastime goes stale; a meal or the night's rest never does;
         # a zone not seen for a while is a small relief (tank.c)
         leisure = self.goal in L1_LEISURE or (self.goal in ("rest", "hide") and ph == "active")
         self.bored += dt * (BORED_PER_S if leisure else -BORED_RELIEF_PER_S)
-        z = l1_zone(self.x, self.y, terr.w, terr.h)
+        z = l1_zone(self.x, self.y, terr.w, terr.bot)
         if z != self.zone_last:
             if self.zone_last is not None and terr.clock - self.zone_seen.get(z, -1e9) > BORED_ZONE_STALE_S:
                 self.bored -= BORED_NEW_ZONE
@@ -944,7 +1044,7 @@ class Lizard:
                 if self.trust >= 6:
                     self.trust = min(10.0, self.trust + 0.2)
         elif self.shed == "shedding" and self.shed_t >= p.shed_window_s:
-            self.shed, self.damp_s = "stuck", 0.0
+            self.shed, self.shed_t, self.damp_s = "stuck", 0.0, 0.0    # (shed_t: tended seconds stuck so far)
 
     def _step_toward(self, terr, tx, ty, step, rng=None):
         self.heading = math.atan2(ty - self.y, tx - self.x) % (2 * math.pi)
@@ -956,18 +1056,17 @@ class Lizard:
         """a point in one of the two zones seen least recently"""
         z = rng.choice(sorted(range(1, 7), key=lambda k: self.zone_seen.get(k, -1e9))[:2])
         col, row = (z - 1) % 3, (z - 1) // 3
-        return (rng.uniform(col * terr.w / 3 + 10, (col + 1) * terr.w / 3 - 10),
-                rng.uniform(row * terr.h / 2 + 10, (row + 1) * terr.h / 2 - 10))
+        return terr.clamp(rng.uniform(col * terr.w / 3 + 10, (col + 1) * terr.w / 3 - 10),
+                          rng.uniform(row * terr.bot / 2 + 10, (row + 1) * terr.bot / 2 - 10))
 
     def _move(self, terr, rng, dt):
         """the reflex layer performing the goal (model/schema-lizard.md "Goal line")"""
         heat = heat_of(terr.pack, self.body_c)
-        speed = 20.0 * (0.6 + self.urgency / 12.0) * (0.5 + heat / 6.0 if heat < 3 else 1.0)   # cold: x0.5 at 0
+        speed = 20.0 * (0.6 + self.urgency / 12.0)
+        if heat < HEAT_SLOW:                                    # cold: sluggish (tank.c, x0.5 at heat 0)
+            speed *= HEAT_SLOW_MIN + (1 - HEAT_SLOW_MIN) * heat / HEAT_SLOW
         self.strike_cd = max(0.0, self.strike_cd - dt)
         g = self.goal
-        if self.hide is not None and g != "hide":        # out of the hide first
-            self.hide = None
-            self._step_toward(terr, terr.w / 2, terr.h / 2, 14.0)
         tgt, stop = None, 0.0
         if g == "hunt":
             prey = terr.nearest(self, terr.prey_points())
@@ -984,15 +1083,10 @@ class Lizard:
                 tgt, speed = self.last_prey, speed * 0.5
         elif g == "bask":
             tgt, stop = terr.bask, 6.0
-        elif g == "hide":
-            if self.hide is not None:
-                return
+        elif g == "hide":           # in once within HIDE_R of the hide's point; it settles at the middle
             if self.want_hide is None:      # humid if shedding, cool if hot, else warm
                 self.want_hide = "humid" if self.shed != "normal" else "cool" if heat >= 7 else "warm"
-            tgt = terr.hides[self.want_hide]
-            if self.dist(tgt) < 8:
-                self.hide, (self.x, self.y) = self.want_hide, tgt
-                return
+            tgt, stop = terr.hides[self.want_hide], 2.0
         elif g == "explore":
             if self.target is None or isinstance(self.target, Lizard) or terr.clock > self.target_t \
                     or self.dist(self.target) < 6:
@@ -1054,26 +1148,31 @@ class Lizard:
 
 
 class Terrarium:
-    """Minimal headless terrarium: a pack, the warm-to-cool floor under a lamp,
-    three hides and the basking spot, crickets, a keeper, 1-3 lizards."""
+    """Minimal headless terrarium on one of the four boards: a pack in the desert
+    habitat (absolute degrees C), its three hides and basking spot on the floor
+    line, crickets, a keeper, 1-3 lizards."""
 
-    def __init__(self, rng, pack=None, n_lizards=None):
+    def __init__(self, rng, pack=None, n_lizards=None, board=None):
         self.rng = rng
-        self.pack = PACKS[pack] if pack is not None else (GECKO if rng.random() < 0.7 else TEST_WARM)
-        self.w, self.h = rng.choices([f for f, _ in L1_FLOORS], weights=[k for _, k in L1_FLOORS])[0]
-        self.warm_left = rng.random() < 0.5
-
-        def across(f):          # 0 at the warm wall .. 1 at the cool wall
-            return (f if self.warm_left else 1 - f) * self.w
-        self.bask = (across(rng.uniform(0.08, 0.25)), rng.uniform(0.2, 0.6) * self.h)
-        self.hides = {"warm": (across(rng.uniform(0.05, 0.2)), rng.uniform(0.65, 0.92) * self.h),
-                      "humid": (across(rng.uniform(0.4, 0.6)), rng.uniform(0.6, 0.92) * self.h),
-                      "cool": (across(rng.uniform(0.8, 0.95)), rng.uniform(0.5, 0.92) * self.h)}
-        self.decor = [(rng.uniform(30, self.w - 30), rng.uniform(30, self.h - 30)) for _ in range(rng.randint(2, 4))]
-        self.dish = (rng.uniform(40, self.w - 40), rng.uniform(40, self.h - 40)) if rng.random() < 0.4 else None
+        self.pack = PACKS[pack] if pack is not None else \
+            rng.choices([q for q, _ in L1_PACK_MIX], weights=[k for _, k in L1_PACK_MIX])[0]
+        self.board = board or rng.choices([b for b, _ in L1_BOARDS], weights=[k for _, k in L1_BOARDS])[0]
+        self.w, self.bot = self.board.w, self.board.bot
+        self.habitat = DESERT
+        # the floor line and its places (tank.c floor_span, tank_floor_x, tank_hide_point, tank_bask_point)
+        self.place_y = self.bot - PLACE_DY
+        self.fx0 = self.board.x0(self.place_y) + PLACE_MARGIN
+        self.fx1 = self.board.x1(self.place_y) - PLACE_MARGIN
+        self.hides = {kind: (self.floor_x(u), self.place_y) for kind, u, _, _ in self.habitat.hides}
+        self.hide_c = {kind: (lit, dark) for kind, _, lit, dark in self.habitat.hides}
+        self.bask = (self.floor_x(self.habitat.bask_u), self.place_y)
+        self.decor = [self.clamp(rng.uniform(30, self.w - 30), rng.uniform(30, self.bot - 30), 20.0)
+                      for _ in range(rng.randint(2, 4))]
+        self.dish = self.clamp(rng.uniform(40, self.w - 40), rng.uniform(40, self.bot - 40), 30.0) \
+            if rng.random() < 0.4 else None
         self.worms = rng.randint(0, 6) if self.dish else 0
         self.crickets = []      # [x, y, seconds to the next hop]
-        self.moisture = rng.uniform(0.3, 1.0)      # the humid hide; mid-life terrariums (a fresh one starts at 0.6)
+        self.moisture = self.habitat.moist_start       # the humid hide: a new terrarium's (habitat moist_start)
         self.keeper = rng.choices(list(KEEPERS), weights=[45, 40, 15])[0]
         self.feed_every, self.feed_n, self.mist_rate, self.soak_rate = KEEPERS[self.keeper]
         self.clock = 0.0
@@ -1084,7 +1183,6 @@ class Terrarium:
         else:
             self.light_t = rng.uniform(0, self.pack.settle_s + 500)
             self.switch_at = max(0.0, self.pack.settle_s - self.light_t) + rng.uniform(60, 600)
-        self.lamp = 1.0 if self.light else 0.0
         n = n_lizards or rng.choices([1, 2, 3], weights=[25, 40, 35])[0]
         self.lizards = [Lizard(self, rng) for _ in range(min(n, self.pack.pop_cap))]
 
@@ -1095,23 +1193,40 @@ class Terrarium:
             return "active"
         return "settle" if self.light_t < self.pack.settle_s else "sleep"
 
-    def clamp(self, x, y, m=6.0):
-        return min(self.w - m, max(m, x)), min(self.h - m, max(m, y))
+    def floor_x(self, u):
+        return self.fx0 + (self.fx1 - self.fx0) * u
 
-    def env_heat(self, x, y, hide=None):
-        """what the body warms or cools toward, in heat units: the hide's own, or
-        the floor's warm-to-cool gradient plus the lamp's spot"""
-        lamp = self.lamp
-        if hide is not None:
-            on, off = HIDE_HEAT[hide]
-            return off + lamp * (on - off)
-        f = x / self.w if self.warm_left else 1 - x / self.w
-        (w_on, c_on), (w_off, c_off) = FLOOR_HEAT
-        h = w_off + f * (c_off - w_off) + lamp * ((w_on + f * (c_on - w_on)) - (w_off + f * (c_off - w_off)))
-        d = math.hypot(x - self.bask[0], y - self.bask[1])
-        if d < BASK_R:
-            h += lamp * (BASK_HEAT - h) * (1 - (d / BASK_R) ** 2)
-        return h
+    def floor_u(self, x):
+        return min(1.0, max(0.0, (x - self.fx0) / (self.fx1 - self.fx0)))
+
+    def clamp(self, x, y, m=6.0):
+        return self.board.clamp(x, y, m)
+
+    def inside(self, x, y, m):
+        cx, cy = self.board.clamp(x, y, m)
+        return abs(cx - x) < 1e-9 and abs(cy - y) < 1e-9
+
+    def hide_at(self, x, y):
+        """tank.c tank_hide_at: the first hide whose point is within HIDE_R, else None"""
+        for kind, (hx, hy) in self.hides.items():
+            if math.hypot(x - hx, y - hy) < HIDE_R:
+                return kind
+        return None
+
+    def env_c(self, x, y, lit):
+        """tank.c tank_env_c_lit: degrees C at (x, y) - inside a hide its own; else the
+        floor's warm-to-cool line, the night's drop when dark, the lamp's pool when lit"""
+        k = self.hide_at(x, y)
+        if k is not None:
+            return self.hide_c[k][0] if lit else self.hide_c[k][1]
+        h = self.habitat
+        c = h.floor_warm_c + (h.floor_cool_c - h.floor_warm_c) * self.floor_u(x)
+        if not lit:
+            return c - h.night_drop_c
+        d, r = math.hypot(x - self.bask[0], y - self.bask[1]), h.bask_r_px
+        if d < r:
+            c += (h.bask_c - c) * (1 - d * d / (r * r))
+        return c
 
     def prey_points(self):
         pts = [(c[0], c[1]) for c in self.crickets]
@@ -1131,16 +1246,18 @@ class Terrarium:
             self.light, self.light_t = not self.light, 0.0
             self.switch_at = self.clock + (rng.uniform(2400, 5400) if self.light
                                            else self.pack.settle_s + rng.uniform(120, 900))
-        self.lamp += ((1.0 if self.light else 0.0) - self.lamp) * (1 - math.exp(-dt / LAMP_TAU_S))
         ph = self.phase()
         # the keeper: crickets by day, a mist when the humid hide dries, a soak for a stuck shed
         if self.light and self.clock >= self.feed_at:
             self.feed_at = self.clock + self.feed_every * rng.uniform(0.6, 1.4)
             for _ in range(min(8 - len(self.crickets), rng.randint(*self.feed_n) * len(self.lizards))):
-                self.crickets.append([rng.uniform(20, self.w - 20), rng.uniform(20, self.h - 20), rng.uniform(1, 5)])
+                cx, cy = self.clamp(rng.uniform(20, self.w - 20), rng.uniform(20, self.bot - 20), 8.0)
+                self.crickets.append([cx, cy, rng.uniform(1, 5)])
             if self.dish is not None and rng.random() < 0.3:
                 self.worms = min(8, self.worms + rng.randint(2, 5))
-        self.moisture = max(0.0, self.moisture - MOIST_DRY_PER_S * dt * (0.25 if ph == "sleep" else 1.0))
+        # the humid hide dries on tended time (tank.c tank_shed_clock: asleep at SLEEP_GROWTH_FRAC)
+        self.moisture = max(0.0, self.moisture - self.habitat.moist_dry_per_s * dt
+                            * (SLEEP_GROWTH_FRAC if ph == "sleep" else 1.0))
         if self.light and self.moisture < 0.6 and rng.random() < self.mist_rate * dt:
             self.moisture = min(1.0, self.moisture + MIST_PASS)
         # crickets hop, flee a hunter, and now and then slip away into the decor
@@ -1161,12 +1278,12 @@ class Terrarium:
             lz.tick(self, rng, dt, ph)
 
     def _at(self, lz, kind):
-        """a floor point `kind` (near/mid/far) away from lz, or None if there is no room there"""
+        """a point inside the glass `kind` (near/mid/far) away from lz, or None if there is no room there"""
         lo, hi = {"near": (12, 65), "mid": (75, 175), "far": (185, 370)}[kind]
         for _ in range(40):
             d, a = self.rng.uniform(lo, hi), self.rng.uniform(0, 2 * math.pi)
             x, y = lz.x + math.cos(a) * d, lz.y + math.sin(a) * d
-            if 8 <= x <= self.w - 8 and 8 <= y <= self.h - 8:
+            if self.inside(x, y, 8.0):
                 return x, y
         return None
 
@@ -1185,19 +1302,17 @@ class Terrarium:
         others = [o for o in self.lizards if o is not lz]
         if kind is None:
             cx, cy = rng.choice([0, 1]), rng.choice([0, 1])
-            lz.x, lz.y = abs(cx * self.w - rng.uniform(10, 40)), abs(cy * self.h - rng.uniform(10, 40))
-            lz.hide = None
+            lz.x, lz.y = self.clamp(abs(cx * self.w - rng.uniform(10, 40)), abs(cy * self.bot - rng.uniform(10, 40)))
             for o in others:
-                o.x = abs((1 - cx) * self.w - rng.uniform(10, 40))
-                o.y = abs((1 - cy) * self.h - rng.uniform(10, 40))
-                o.hide = None
+                o.x, o.y = self.clamp(abs((1 - cx) * self.w - rng.uniform(10, 40)),
+                                      abs((1 - cy) * self.bot - rng.uniform(10, 40)))
             return
         if not others:
             return
         o = min(others, key=lambda q: lz.dist((q.x, q.y)))
         pt = self._at(lz, kind)
         if pt is not None:
-            (o.x, o.y), o.hide = pt, None
+            o.x, o.y = pt
 
     def perturb(self, lz):
         """push one lizard (or its terrarium) into an edge case before sampling"""
@@ -1212,11 +1327,11 @@ class Terrarium:
             heat_to(7.0, 10.0)
         elif case == "starve":
             lz.hunger = rng.uniform(8, 10)
-            self.place_prey(lz, rng.choice(["near", "mid", "far", None]))
+            self.place_prey(lz, rng.choice(["near", "near", "mid", "mid", "far", "far", None]))   # (none comes naturally)
         elif case == "starve_cold":      # rule 1's edge: cold and starving, prey near / far / none
             lz.hunger = rng.uniform(8, 10)
             heat_to(0.0, 2.99)
-            self.place_prey(lz, rng.choice(["near", "far", None]))
+            self.place_prey(lz, rng.choice(["near", "mid", "far", None]))
         elif case == "famine":
             self.place_prey(lz, None)
         elif case == "shed_soon":
@@ -1265,19 +1380,19 @@ class Terrarium:
             lz.curiosity, lz.hunger = rng.uniform(8, 10), rng.uniform(0, 4)
         elif case == "in_hide":
             h = rng.choice(list(self.hides))
-            lz.goal, lz.want_hide, lz.hide = "hide", h, h
+            lz.goal, lz.want_hide = "hide", h
             lz.x, lz.y = self.hides[h]
-        elif case == "wall":
-            side, m = rng.randrange(4), rng.uniform(3, 60)
-            lz.hide = None
+        elif case == "wall":            # this close to one side of the glass (the floor counts, as in wall_contact)
+            side, m = rng.randrange(4), rng.uniform(6, 60)
             if side == 0:
-                lz.x = m
+                lz.x = self.board.x0(lz.y) + m
             elif side == 1:
-                lz.x = self.w - m
+                lz.x = self.board.x1(lz.y) - m
             elif side == 2:
-                lz.y = m
+                lz.y = self.board.top(lz.x) + m
             else:
-                lz.y = self.h - m
+                lz.y = self.bot - m
+            lz.x, lz.y = self.clamp(lz.x, lz.y)
         elif case == "prey_near":
             self.place_prey(lz, rng.choice(["near", "mid"]))
             lz.hunger = rng.uniform(0, 10)
@@ -1285,21 +1400,24 @@ class Terrarium:
 
 
 def l1_snapshot(terr, lz):
-    """the parity fixture's `snap` for one lizard: what the reflex layer hands the encoder"""
+    """the parity fixture's `snap` for one lizard, as advisor_core.c advisor_core_l1_snap builds it"""
     others = [o for o in terr.lizards if o is not lz]
     other = min(others, key=lambda o: lz.dist((o.x, o.y))) if others else None
     prey = terr.nearest(lz, terr.prey_points())
-    hide = terr.nearest(lz, list(terr.hides.values()))
-    w, h = float(terr.w), float(terr.h)
-    sides = [((w, lz.y), w - lz.x), ((0.0, lz.y), lz.x), ((lz.x, h), h - lz.y), ((lz.x, 0.0), lz.y)]
+    hide = terr.nearest(lz, list(terr.hides.values()))          # tank_nearest_hide: the first of equals
+    b = terr.board
+    gx0, gx1, gy0 = b.x0(lz.y), b.x1(lz.y), b.top(lz.x)          # wall_contact: the glass at its height and column
+    sides = [((gx1, lz.y), gx1 - lz.x), ((gx0, lz.y), lz.x - gx0), ((lz.x, b.bot), b.bot - lz.y),
+             ((lz.x, gy0), lz.y - gy0)]
     wall = min(sides, key=lambda s: s[1])[0]
-    return {"pack": terr.pack.id, "zone": l1_zone(lz.x, lz.y, w, h), "x": lz.x, "y": lz.y, "heading": lz.heading,
-            "body_c": lz.body_c, "hunger": lz.hunger, "energy": lz.energy, "stress": lz.stress,
-            "curiosity": lz.curiosity, "trust": lz.trust, "bored": lz.bored, "bold": lz.bold, "social": lz.social,
-            "stage": lz.stage, "shed": {"normal": "no", "soon": "soon"}.get(lz.shed, "yes"), "last": lz.goal,
+    return {"pack": terr.pack.id, "zone": l1_zone(lz.x, lz.y, b.w, b.bot), "x": lz.x, "y": lz.y,
+            "heading": lz.heading, "body_c": lz.body_c, "hunger": lz.hunger, "energy": lz.energy,
+            "stress": lz.stress, "curiosity": lz.curiosity, "trust": lz.trust, "bored": lz.bored,
+            "bold": lz.bold, "social": lz.social, "stage": lz.stage,
+            "shed": {"normal": "no", "soon": "soon"}.get(lz.shed, "yes"), "last": lz.goal,
             "phase": terr.phase(), "prey": list(prey) if prey else None,
             "other": [other.x, other.y] if other else None, "warm": list(terr.bask), "shelter": list(hide),
-            "in_shelter": lz.hide is not None, "wall": list(wall)}
+            "in_shelter": terr.hide_at(lz.x, lz.y) is not None, "wall": list(wall)}
 
 
 def encode_l1(terr, lz):
@@ -1553,6 +1671,24 @@ def l1_stats(states, labels):
           f"stress 7-9 {share(lambda r: r['stress'] >= 7)}, bored 7-9 {share(lambda r: r['bored'] >= 7)}, "
           f"inside a hide {share(lambda r: r['shelter'] == ('near', 12))}, social 0-2 with other near "
           f"{share(lambda r: r['social'] <= 2 and r['other'] and r['other'][0] == 'near')}", file=sys.stderr)
+
+    def prey_is(kind):
+        return lambda r: r["hunger"] >= 8 and (r["prey"][0] if r["prey"] else "none") == kind
+
+    def other_near(lo, hi):
+        return lambda r: r["other"] is not None and r["other"][0] == "near" and lo <= r["social"] <= hi
+    buckets = ([(f"heat {a}-{b}" if a != b else f"heat {a}", lambda r, a=a, b=b: a <= r["heat"] <= b)
+                for a, b in ((0, 2), (3, 4), (5, 6), (7, 7), (8, 9))]
+               + [(f"shed {v}", lambda r, v=v: r["shed"] == v) for v in SHED_L1]
+               + [(f"phase {v}", lambda r, v=v: r["phase"] == v) for v in PHASES_L1]
+               + [(f"hunger 8-9, prey {k}", prey_is(k)) for k in ("near", "mid", "far", "none")]
+               + [("bored 7-9", lambda r: r["bored"] >= 7),
+                  ("other near, social 0-2", other_near(0, 2)), ("other near, social 7-9", other_near(7, 9))]
+               + [(f"stage {v}", lambda r, v=v: r["stage"] == v) for v in STAGES_L1])
+    print("  coverage (share of lines; < 2% flagged):", file=sys.stderr)
+    for name, pred in buckets:
+        k = sum(1 for r in rows if pred(r))
+        print(f"    {name:26s} {k:6d}  {100 * k / n:5.1f}%{'   <-- under 2%' if k < 0.02 * n else ''}", file=sys.stderr)
     c = {}
     for g in labels:
         c[g] = c.get(g, 0) + 1
