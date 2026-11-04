@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "tank.h"
 #include "battery.h"
+#include "version.h"   /* PT_NET (MSF_SHOWN) */
 
 /* fb is TANK_W x TANK_H, RGB565, stride in PIXELS (usually TANK_W). */
 /* PAGE space (2026-10-01): the full-screen pages (milestones, shop, settings,
@@ -628,7 +629,8 @@ bool render_collection_arrow(bool right, int *x, int *y);
 /* THE ICON FOOT (0.4, Strato 2026-11-01): UPGRADES (the sand dollar over the balance), SETTINGS (a cog; the bowl's in
  * the cap), MY TANKS (two tanks on a shelf), VISITORS (a plane), CLOSE (an X) - squares MSP_FOOT_SQ on a side */
 enum { MSF_UPG, MSF_SET, MSF_TANKS, MSF_VIS, MSF_CLOSE, MSF_N };
-void render_ms_foot_box(int which, int *x, int *y);   /* a foot square's top left, page coordinates */
+#define MSF_SHOWN(b) (PT_NET || (b) != MSF_VIS)          /* VISITORS only with the network (version.h PT_NET) */
+void render_ms_foot_box(int which, int *x, int *y);   /* a foot square's top left, page coordinates (a square not shown: meaningless) */
 #define CRAB_CARD_W 336          /* the strawberry crab's (0.3.9): the urchin's size */
 #define CRAB_CARD_H 194
 bool render_crab_collect_hit(const tank_t *t, float x, float y);   /* the crab card's COLLECT (a sand dollar held up, 0.3.9.4) */

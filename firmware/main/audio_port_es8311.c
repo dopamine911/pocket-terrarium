@@ -17,6 +17,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "progression.h"   /* SAVE_NVS_NS */
 #include <string.h>
 
 static const char *TAG = "audio";
@@ -156,7 +157,7 @@ static void player(void *arg) {
  * level (0 off, 1 quiet, 2 normal), read as the percent that sounds the same */
 static void load_volume(void) {
     nvs_handle_t h; uint8_t v;
-    if (nvs_open("tank", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
     if (nvs_get_u8(h, "sndp", &v) == ESP_OK && v <= 100) s_volume = v;
     else if (nvs_get_u8(h, "snd", &v) == ESP_OK && v <= 2) s_volume = audio_volume_from_level(v);
     nvs_close(h);
@@ -230,7 +231,7 @@ void audio_port_set_volume(int pct) {
     if (s_ok) { xSemaphoreTake(s_mx, portMAX_DELAY); audio_set_volume(s_volume); xSemaphoreGive(s_mx); }
     mute_edge(was);
     nvs_handle_t h;                            /* "snd" too, the nearest old level: a board taken back to 0.3.x keeps a near volume */
-    if (nvs_open("tank", NVS_READWRITE, &h) == ESP_OK) {
+    if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_u8(h, "sndp", (uint8_t)s_volume); nvs_set_u8(h, "snd", s_volume == 0 ? 0 : s_volume < 75 ? 1 : 2);
         nvs_commit(h); nvs_close(h);
     }

@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pt_boards import BOARDS, board_of_image, name_of, build_of_image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_BUILD = os.path.expanduser("~/.cache/pocket-tank/fw-build")
+DEFAULT_BUILD = os.path.expanduser("~/.cache/pocket-terrarium/fw-build")
 
 # ESP Web Tools (10.4.0) has no manifest option for "install without erasing"
 # on a device that does not speak Improv: with new_install_prompt_erase the

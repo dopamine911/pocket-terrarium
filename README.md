@@ -1,3 +1,25 @@
+# pocket-terrarium
+
+A proof-of-concept port of [pocket-tank](https://github.com/mediacutlet/pocket-tank)
+(v0.4.0, by StratoBuilds) from an aquarium to a lizard terrarium: leopard geckos
+first, then more species as packs. The plan and its status: [PLAN.md](PLAN.md).
+
+Today it is still the fish tank, with these differences from upstream:
+
+- **No networking** (`PT_NET 0` in `common/version.h`): no Wi-Fi updates, no
+  provisioning, no tank link, gifts, passports or visitors.
+- **Its own storage identity**: NVS namespace `terr`, its own shelf and board
+  markers, sim state in `~/.cache/pocket-terrarium`. It never reads a
+  pocket-tank's save, and a pocket-tank never takes its images.
+- Builds on ESP-IDF 5.5 as well as 5.4.
+
+pocket-tank is licensed under the PolyForm Noncommercial License 1.0.0
+([LICENSE](LICENSE), [NOTICE](NOTICE)); so is this port.
+
+Everything below is upstream's README, unchanged.
+
+---
+
 # pocket-tank 🐟
 
 **A tiny language model keeps a fish tank alive on an $8 chip.**

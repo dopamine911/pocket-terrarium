@@ -6,7 +6,7 @@
  * seconds at a time), so a test walks the flow deterministically.
  *
  *   the store       POCKET_TANK_WIFI (a file: ssid on line 1, password on 2),
- *                   else ~/.cache/pocket-tank/wifi.txt
+ *                   else ~/.cache/pocket-terrarium/wifi.txt
  *   the scan        nine networks in 1.2 s, two pages' worth; "Ghost" is out
  *                   of range on connect, a password starting "wrong" is refused
  *   the check       POCKET_TANK_FAKE_UPDATE: "0.9.9" (default: an update is
@@ -23,7 +23,7 @@
 static const char *creds_path(void) {
     static char p[512];
     if (getenv("POCKET_TANK_WIFI")) return getenv("POCKET_TANK_WIFI");
-    snprintf(p, sizeof p, "%s/.cache/pocket-tank/wifi.txt", getenv("HOME") ? getenv("HOME") : ".");
+    snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/wifi.txt", getenv("HOME") ? getenv("HOME") : ".");
     return p;
 }
 static void chomp(char *s) { size_t n = strlen(s); while (n && (s[n - 1] == '\n' || s[n - 1] == '\r')) s[--n] = 0; }

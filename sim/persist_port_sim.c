@@ -1,5 +1,5 @@
 /* persist_port_sim.c — sim implementation of the progression ports:
- * ~/.cache/pocket-tank/tank.sav + wall clock. */
+ * ~/.cache/pocket-terrarium/tank.sav + wall clock (never pocket-tank's ~/.cache/pocket-tank: the same save format). */
 #include "progression.h"
 #include "version.h"
 #include <stdio.h>
@@ -13,7 +13,7 @@
 static const char *path(void) {
     static char p[512];
     if (getenv("POCKET_TANK_SAVE")) return getenv("POCKET_TANK_SAVE");
-    snprintf(p, sizeof p, "%s/.cache/pocket-tank/tank.sav", getenv("HOME") ? getenv("HOME") : ".");
+    snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/tank.sav", getenv("HOME") ? getenv("HOME") : ".");
     return p;
 }
 bool persist_port_load(void *buf, size_t max, size_t *got) {
@@ -98,7 +98,7 @@ static bool alive(void) {
 static const char *store_path(void) {
     static char p[512];
     if (getenv("POCKET_TANK_STORAGE")) return getenv("POCKET_TANK_STORAGE");
-    snprintf(p, sizeof p, "%s/.cache/pocket-tank/storage.bin", getenv("HOME") ? getenv("HOME") : ".");
+    snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/storage.bin", getenv("HOME") ? getenv("HOME") : ".");
     return p;
 }
 static FILE *store(void) {
@@ -136,7 +136,7 @@ static const char *frame_path(const char *key) {
     static char p[600];
     const char *d = getenv("POCKET_TANK_FRAME");
     if (d) snprintf(p, sizeof p, "%s/%s", d, key);
-    else snprintf(p, sizeof p, "%s/.cache/pocket-tank/frame/%s", getenv("HOME") ? getenv("HOME") : ".", key);
+    else snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/frame/%s", getenv("HOME") ? getenv("HOME") : ".", key);
     return p;
 }
 bool shelf_port_frame_get(const char *key, void *buf, size_t max, size_t *got) {

@@ -2,6 +2,7 @@
 #include "display_port.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "progression.h"   /* SAVE_NVS_NS */
 #include "esp_log.h"
 
 static const char *TAG = "brightness";
@@ -11,13 +12,13 @@ static bool level_ok(int pct) { return pct >= 5 && pct <= 100 && pct % 5 == 0; }
 
 void brightness_init(void) {
     nvs_handle_t h; uint8_t v;
-    if (nvs_open("tank", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
     if (nvs_get_u8(h, "bright", &v) == ESP_OK && level_ok(v)) s_pct = v;
     nvs_close(h);
 }
 void brightness_save(void) {
     nvs_handle_t h;
-    if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return;
+    if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_u8(h, "bright", (uint8_t)s_pct); nvs_commit(h); nvs_close(h);
 }
 int brightness_level(void) { return s_pct; }

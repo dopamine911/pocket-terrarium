@@ -56,7 +56,7 @@ static void pk_free(void *p) { heap_caps_free(p); }
  * The staged tank autosaves over "save" like any other; `restore` copies "bk"
  * back and reboots progression from it. */
 static bool nvs_copy(const char *from, const char *to) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
     size_t len = 0; bool ok = false;
     if (nvs_get_blob(h, from, NULL, &len) == ESP_OK && len > 0) {
         void *buf = malloc(len);
@@ -67,12 +67,12 @@ static bool nvs_copy(const char *from, const char *to) {
     nvs_close(h); return ok;
 }
 static bool nvs_has(const char *key) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READONLY, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
     size_t len = 0; bool ok = nvs_get_blob(h, key, NULL, &len) == ESP_OK && len > 0;
     nvs_close(h); return ok;
 }
 static void nvs_drop(const char *key) {
-    nvs_handle_t h; esp_err_t e = nvs_open("tank", NVS_READWRITE, &h);
+    nvs_handle_t h; esp_err_t e = nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h);
     if (e == ESP_OK) { e = nvs_erase_key(h, key); if (e == ESP_OK) e = nvs_commit(h); nvs_close(h); }
     if (e != ESP_OK) ESP_LOGW(TAG, "drop %s failed: %s", key, esp_err_to_name(e));
     else if (nvs_has(key)) ESP_LOGW(TAG, "drop %s: still there after the erase", key);
@@ -84,17 +84,17 @@ static void nvs_drop(const char *key) {
 static const char *const BOOK_KEY[3] = { COLL_NVS_KEY, KIN_NVS_KEY, GIFT_NVS_KEY };
 static const char *const BOOK_BK[3] = { "bkvis", "bkkin", "bkgft" };
 static void nvs_quiet_erase(const char *key) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (nvs_erase_key(h, key) == ESP_OK) nvs_commit(h);
     nvs_close(h);
 }
 static bool books_parked(void) {
     nvs_handle_t h; uint8_t v = 0;
-    if (nvs_open("tank", NVS_READONLY, &h) == ESP_OK) { if (nvs_get_u8(h, "bkbooks", &v) != ESP_OK) v = 0; nvs_close(h); }
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) { if (nvs_get_u8(h, "bkbooks", &v) != ESP_OK) v = 0; nvs_close(h); }
     return v != 0;
 }
 static void books_mark(bool on) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (on) nvs_set_u8(h, "bkbooks", 1); else nvs_erase_key(h, "bkbooks");
     nvs_commit(h); nvs_close(h);
 }
@@ -320,6 +320,8 @@ static void wifi_set_raw(const char *args) {
 }
 static void imp_dump(void);
 static void run(tank_t *t, char *line) {
+    if (!PT_NET && (!strncmp(line, "wifi", 4) || !strncmp(line, "ota", 3) || !strncmp(line, "link", 4))) {
+        ESP_LOGW(TAG, "%s: networking is off in this build (version.h PT_NET)", line); return; }
     if (!strncmp(line, "wifi set ", 9)) { wifi_set_raw(line + 9); return; }
     if (!strcmp(line, "improv")) { imp_dump(); return; }     /* the handshake's flight recorder */
     if (!strncmp(line, "ota tap ", 8)) {                     /* update mode, hands-free: a tap at (x, y) in tank coordinates */
@@ -1190,6 +1192,7 @@ static void improv_handle(void) {
     (void)n;
     s_imp_last = esp_timer_get_time();
     imp_ev('R', cmd, 0);
+    if (!PT_NET) { uint8_t e = 2; improv_send(2, &e, 1); return; }   /* no network in this build (version.h PT_NET): every RPC is "unknown" */
     if (cmd == 1) {
         int sl = a[0]; const char *sp = (const char *)a + 1; int pl = a[1 + sl]; const char *pp = (const char *)a + 2 + sl;
         char ssid[NET_SSID_MAX + 1], pass[NET_PASS_MAX + 1];

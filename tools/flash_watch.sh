@@ -9,7 +9,7 @@
 #   tools/flash_watch.sh --full        # a blank board: clear nvs, the model, bootloader + table + app
 #   WATCH_SERIAL=AA:BB:CC:DD:EE:FF tools/flash_watch.sh    # the board, by its USB serial (or set it once in tools/boards.local.sh)
 #
-# Its own build directory and sdkconfig (~/.cache/pocket-tank/fw-build-206):
+# Its own build directory and sdkconfig (~/.cache/pocket-terrarium/fw-build-206):
 # the tank's fw-build is never touched. No preflight: this board holds no tank
 # anyone would miss yet. docs/board-amoled-2.06-watch.md has the rest.
 set -euo pipefail
@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 [ -f tools/boards.local.sh ] && . tools/boards.local.sh   # your boards' USB serials (not tracked)
 SERIAL=${WATCH_SERIAL:-}
 [ -n "$SERIAL" ] || { echo "flash_watch: set WATCH_SERIAL=<the board's USB serial> (in tools/boards.local.sh, or the environment)"; exit 1; }
-B=${TANK_BUILD:-~/.cache/pocket-tank/fw-build-206}   # another checkout (a worktree) builds in its own dir: a build dir is tied to its source path
+B=${TANK_BUILD:-~/.cache/pocket-terrarium/fw-build-206}   # another checkout (a worktree) builds in its own dir: a build dir is tied to its source path
 . ~/esp/esp-idf/export.sh > /dev/null 2>&1 || { echo "flash_watch: ESP-IDF export failed"; exit 1; }
 [ -f firmware/keys/ota_signing_key.pem ] || { echo "flash_watch: no firmware/keys/ota_signing_key.pem - tools/ota_key.sh"; exit 1; }
 LOG=$(mktemp); trap 'rm -f "$LOG"' EXIT

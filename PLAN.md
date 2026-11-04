@@ -9,7 +9,7 @@ four Waveshare boards.
 one species. Everything species-specific lives in a pack. The first pack is the
 leopard gecko; bearded dragon, monitor and chameleon follow as more packs.
 
-Status: planning. Nothing forked yet.
+Status: P0 done (2026-11-04). Next: P1 specs.
 
 ---
 
@@ -172,11 +172,30 @@ flowchart LR
   P6 --> P7[P7 boards]
 ```
 
-### P0 — Fork and strip (small)
-- [ ] `git clone` pocket-tank here, `upstream` remote, product strings renamed
-- [ ] Build the PC sim unchanged first (`sim/Makefile`, LVGL clone) as the baseline
-- [ ] Compile out OTA, tank-link, passports, gifts, the visitors collection (R1, R2); confirm the sim and firmware still build
-- [ ] New `PT_BOARD` ids, NVS namespace `terr`, `SAVE_MAGIC`, model trailer tag `lizard_v1`
+### P0 — Fork and strip (done 2026-11-04)
+- [x] pocket-tank v0.4.0 merged into this repo with its history; `upstream` = mediacutlet/pocket-tank
+- [x] Baseline: sim `make check` 58/58 on Linux; firmware builds on ESP-IDF **5.5.2** (upstream CI pins 5.4.1)
+      after one fix: the ESP-NOW send callback's 5.5 signature (`LP_SENT_TO`, `link_port_espnow.h`)
+- [x] **`PT_NET 0`** (`common/version.h`): no update mode, Improv provisioning, internet clock or saved network
+      (`main.c`); director `wifi`/`ota`/`link` refused and Improv RPCs answered "unknown" (`director.c`); UPDATES and
+      LINK not drawn on settings and their boxes dead (`render.c`); no VISITORS square on the keeper page
+      (`MSF_SHOWN`). Link/gift/passport/collection code stays compiled (upstream merges) but nothing reaches it.
+- [x] Identity: NVS namespace `terr` (save + every firmware key beside it), shelf journal `terrframe`, shelf slot
+      magic `TRS1`, book magic `TRV1`, board marker `TRBOARD`, sim state in `~/.cache/pocket-terrarium`, tool build
+      dirs likewise. A board that ran pocket-tank keeps its tank save in NVS `tank` untouched.
+- Kept on purpose: `SAVE_MAGIC` "PTK2" (the 17 save fixtures keep testing the layout until P5's new format),
+  `PT_BOARD` ids (they name hardware), `project(pocket_tank)` (tools and CI name `pocket_tank.bin`),
+  `PT_MODEL_TAG` "v3m" (it describes the shipped fish model; becomes `lizard_v1` in P6 with the new model).
+- Risk: the `storage` partition is shared. Our shelf never reads pocket-tank's slots or books, but MY TANKS can
+  write over them. Flashing this onto a board that holds parked pocket-tank tanks can lose those (not the live one).
+- Not done: the GitHub workflows still target upstream's release/installer flow; they need rework before any tag.
+- Verified: sim `make check` 58/58 on all four layouts (1.8, round, watch, square); settings page shows CLOSE only
+  and the keeper page four squares (page shots); firmware builds; the hardware image boots in QEMU to `app_main`
+  with the terrarium banner and stops at the absent panel's I2C, as any hardware image there does.
+  Upstream rot found, not ours: the QEMU overlay (`sdkconfig.qemu`) no longer links (`touch_port_stub.c` lacks
+  the 0.4 touch-lock functions), and a signed image aborts in QEMU ("no signatures found").
+- This machine: no `libsdl2-dev`; the sim builds against headers unpacked to `~/.cache/pocket-terrarium/sdl2`
+  (`make SDL_CFLAGS=... SDL_LIBS=-l:libSDL2-2.0.so.0`). `sudo apt install libsdl2-dev` makes plain `make` work.
 
 ### P1 — Specs (docs, no code)
 - [ ] `model/schema-lizard.md`: fields, ranges, vocabulary, goals; frozen before generating traces

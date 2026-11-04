@@ -59,7 +59,7 @@ def is_signed(path):
 
 def main():
     a = argparse.ArgumentParser()
-    a.add_argument("--build-dir", default=os.path.expanduser("~/.cache/pocket-tank/fw-build") if os.path.isdir(os.path.expanduser("~/.cache/pocket-tank/fw-build")) else os.path.join(ROOT, "firmware", "build"))
+    a.add_argument("--build-dir", default=os.path.expanduser("~/.cache/pocket-terrarium/fw-build") if os.path.isdir(os.path.expanduser("~/.cache/pocket-terrarium/fw-build")) else os.path.join(ROOT, "firmware", "build"))
     a.add_argument("--base-url", required=True, help="where the .bin will be served from (no trailing slash)")
     a.add_argument("--out", default=os.path.join(ROOT, "ota"))
     a.add_argument("--note", default=None)

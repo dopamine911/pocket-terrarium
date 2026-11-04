@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SHELF_MAGIC  0x31535450u                  /* "PTS1" */
+#define SHELF_MAGIC  0x31535254u                  /* "TRS1" (pocket-terrarium; pocket-tank's are "PTS1": never read as ours) */
 #define SHELF_LAYOUT 1
 #define NOW_MAGIC    0x574f4e50u                  /* "PNOW" */
 #define SWAP_MAGIC   0x50415753u                  /* "SWAP" */

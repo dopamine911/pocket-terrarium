@@ -29,7 +29,7 @@
  *                          3 quick taps = startle; 2 taps = the light, in
  *                          settings' MANUAL mode, the default)
  *   ./fishsim --fresh      ignore the save (new tank: random pair)
- *   ./fishsim --forms      the 0.4 forms: four grown fish of mixed genes, no setup, R for an arrival (own save, ~/.cache/pocket-tank/forms.sav)
+ *   ./fishsim --forms      the 0.4 forms: four grown fish of mixed genes, no setup, R for an arrival (own save, ~/.cache/pocket-terrarium/forms.sav)
  *   ./fishsim --genes pfx  headless: the 0.4 forms, a board per pattern + tank frames (PPMs)
  *   ./fishsim --fresh-shot pfx  headless: a tank minutes after a fresh install, two fry (PPM; the booklet)
  *   ./fishsim --page-shot pfx   headless: the settings and keeper pages (and the keeper page with visitors collected)
@@ -1126,7 +1126,7 @@ static long sh_slot_at(uint32_t id) {
     for (long k = 0; k < SHELF_SLOTS_MAX && at < 0; k++) {
         uint32_t h[4];
         if (fseek(f, k * SHELF_SLOT_SIZE, SEEK_SET) || fread(h, 4, 4, f) != 4) break;
-        if (h[0] == 0x31535450u && h[3] == id) at = k * SHELF_SLOT_SIZE;
+        if (h[0] == 0x31535254u && h[3] == id) at = k * SHELF_SLOT_SIZE;   /* (shelf.c SHELF_MAGIC, "TRS1") */
     }
     fclose(f); return at;
 }
@@ -2395,8 +2395,8 @@ static int saves_load(const char *what, const uint8_t *bytes, size_t len, const 
 
 static int selftest_saves(void) {
     setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-saves.sav", 1);   /* never touch the real save */
-    if (strcmp(SAVE_NVS_NS, "tank") || strcmp(SAVE_NVS_KEY, "save")) {
-        printf("FAIL: the device's save moved to %s/%s - every keeper's tank stays behind in tank/save\n", SAVE_NVS_NS, SAVE_NVS_KEY); return 1; }
+    if (strcmp(SAVE_NVS_NS, "terr") || strcmp(SAVE_NVS_KEY, "save")) {   /* (pocket-terrarium: never pocket-tank's "tank") */
+        printf("FAIL: the device's save moved to %s/%s - every keeper's terrarium stays behind in terr/save\n", SAVE_NVS_NS, SAVE_NVS_KEY); return 1; }
     const char *dir = "testdata/saves";
     DIR *d = opendir(dir); if (!d) d = opendir(dir = "sim/testdata/saves");
     if (!d) { printf("FAIL: no testdata/saves (run from sim/ or the repo root)\n"); return 1; }
@@ -2721,13 +2721,13 @@ static int selftest_update(void) {
     /* the settings page's UPDATES button, and the UPDATES page's taps */
     { int v = 0, r;
       render_settings_touch(&tank, PG_X(SET_UPD_X + 40), PG_Y(SET_FOOT_Y + 12), true, &v); r = render_settings_touch(&tank, PG_X(SET_UPD_X + 40), PG_Y(SET_FOOT_Y + 12), false, &v);
-      EXPECT(r == SET_TAP_UPDATES, "settings: the UPDATES button -> %d", r);
+      EXPECT(r == (PT_NET ? SET_TAP_UPDATES : SET_TAP_NONE), "settings: the UPDATES button%s -> %d", PT_NET ? "" : "'s box (none drawn: PT_NET 0)", r);
       render_settings_touch(&tank, PG_X(SETP_SEG_X(0)), PG_Y(SET_ROW5_Y + 10), true, &v); r = render_settings_touch(&tank, PG_X(SETP_SEG_X(0)), PG_Y(SET_ROW5_Y + 10), false, &v);
       EXPECT(r != SET_TAP_UPDATES && r != SET_TAP_CLOSE, "settings: the last row read as a foot button (%d)", r);
       render_settings_touch(&tank, PG_X(SETP_SEG_X(0)), PG_Y(SET_ROW5_Y + 10), true, &v); render_settings_touch(&tank, PG_X(SETP_SEG_X(0)), PG_Y(SET_ROW5_Y + 10), false, &v);   /* (and back) */
       /* LINK (0.4, the tank link): the settings button, and link mode's holds */
       render_settings_touch(&tank, PG_X(SET_LINK_X + SET_LINK_W / 2), PG_Y(SET_LINK_Y + 15), true, &v); r = render_settings_touch(&tank, PG_X(SET_LINK_X + SET_LINK_W / 2), PG_Y(SET_LINK_Y + 15), false, &v);
-      EXPECT(r == SET_TAP_LINK, "settings: the LINK button -> %d", r);
+      EXPECT(r == (PT_NET ? SET_TAP_LINK : SET_TAP_NONE), "settings: the LINK button%s -> %d", PT_NET ? "" : "'s box (none drawn: PT_NET 0)", r);
       { link_view_t lv; memset(&lv, 0, sizeof lv); float lx, ly, dx, dy, wx = TANK_W / 2.0f, wy = TANK_BOT * 0.8f; int got = 0, fired = 0;
         render_link_leave();
         render_link_where(LINK_RIGHT, &lx, &ly);
@@ -6595,7 +6595,7 @@ static int selftest_hold(void) {
     #undef HFAIL
 }
 
-/* --save-shot <prefix>: the saved tank (HOME's .cache/pocket-tank/tank.sav), as it boots, after a few seconds - <prefix>_save.ppm */
+/* --save-shot <prefix>: the saved tank (HOME's .cache/pocket-terrarium/tank.sav), as it boots, after a few seconds - <prefix>_save.ppm */
 static int save_shot(const char *prefix) {
     static uint16_t fb[TANK_W * TANK_H];
     tank_init(&tank, 1); progression_boot(&tank);
@@ -10675,6 +10675,7 @@ static int selftest_shop(void) {
             static const int WANT[MSF_N] = { MS_TAP_SHOP, MS_TAP_SETTINGS, MS_TAP_TANKS, MS_TAP_VISITORS, MS_TAP_CLOSE };
             static const char *const NAME[MSF_N] = { "UPGRADES", "SETTINGS", "MY TANKS", "VISITORS", "CLOSE" };
             for (int b = 0; b < MSF_N; b++) {
+                if (!MSF_SHOWN(b)) continue;                                   /* (VISITORS: only with the network, PT_NET) */
                 int bx, by; render_ms_foot_box(b, &bx, &by);
                 const float mx = bx + MSP_FOOT_SQ / 2.0f;
                 if (ms_tap(mx, by + MSP_FOOT_SQ / 2.0f) != WANT[b] || ms_tap(mx, by + 2) != WANT[b]) { printf("FAIL: the foot's %s did not answer its tap (square %d,%d)\n", NAME[b], bx, by); return 1; }
@@ -10695,7 +10696,7 @@ static int selftest_shop(void) {
             const int yb = MSP_FOOT_Y + MSP_CLOSE_H - 1 + PAGE_Y;                 /* the row's last line, in the frame */
             bool ok_at[2] = { true, true };
             for (int d = 0; d < 2; d++) for (int b = 0; b < MSF_N; b++) {
-                if (PAGE_BOWL && b == 1) continue;                                /* (the bowl's SETTINGS is in the cap) */
+                if ((PAGE_BOWL && b == 1) || !MSF_SHOWN(b)) continue;             /* (the bowl's SETTINGS is in the cap; VISITORS: PT_NET) */
                 const float y = (float)(yb + d), xl = (float)(xs[b][0] + PAGE_X), xr = (float)(xs[b][0] + xs[b][1] - 1 + PAGE_X);
                 for (int side = 0; side < 2; side++) {
                     const float x = side ? xr : xl; bool in;
@@ -13192,11 +13193,11 @@ int main(int argc, char **argv) {
     }
     if (zoom < 1) zoom = 1; if (zoom > 8) zoom = 8;
     if (fresh) {
-        char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f '%s/.cache/pocket-tank/tank.sav'", getenv("HOME") ? getenv("HOME") : ".");
+        char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f '%s/.cache/pocket-terrarium/tank.sav'", getenv("HOME") ? getenv("HOME") : ".");
         (void)system(cmd);
     }
     if (forms) {                           /* a save of its own, started over each time: the keeper's sim tank is left alone */
-        char p[512]; snprintf(p, sizeof p, "%s/.cache/pocket-tank/forms.sav", getenv("HOME") ? getenv("HOME") : ".");
+        char p[512]; snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/forms.sav", getenv("HOME") ? getenv("HOME") : ".");
         remove(p); setenv("POCKET_TANK_SAVE", p, 1);
     }
     progression_boot(&tank);               /* restore, or a new random pair */
@@ -13205,7 +13206,7 @@ int main(int argc, char **argv) {
         printf("forms (0.4): four grown fish, every body / fin set / pattern, each carrying secrets; R = an arrival (its genes print), 1 / 2 / 3 step, 5 rolls\n");
     }
     { uint32_t r = progression_loaded_release();
-      printf("pocket-tank v%s %s (build %s); the save was written by %s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), r ? "" : "a build before release numbers (or there was none)\n");
+      printf("pocket-terrarium (on pocket-tank v%s %s, build %s); the save was written by %s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), r ? "" : "a build before release numbers (or there was none)\n");
       if (r) printf("v%d.%d.%d.%d\n", (int)(r >> 24), (int)(r >> 16 & 255), (int)(r >> 8 & 255), (int)(r & 255)); }
     print_roster(&tank);
     notice_sync(&tank);                    /* nothing old gets announced */
@@ -13248,7 +13249,7 @@ int main(int argc, char **argv) {
         lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
     }
     { char title[64];
-      snprintf(title, sizeof title, zoom > 1 ? "pocket-tank sim %dx%d x%d" : "pocket-tank sim %dx%d", TANK_W, TANK_H, zoom);
+      snprintf(title, sizeof title, zoom > 1 ? "pocket-terrarium sim %dx%d x%d" : "pocket-terrarium sim %dx%d", TANK_W, TANK_H, zoom);
       lv_sdl_window_set_title(disp, title); }
     if (win && (zoom > 1 || fullscreen)) {
         int ww = 0, wh = 0; SDL_GetWindowSize(win, &ww, &wh);

@@ -33,8 +33,11 @@
 /* where the device keeps the tank: NVS namespace + blob key. Part of the
  * SAVE LAYOUT LOCK (progression.c): every keeper's tank is stored under
  * these two names, so renaming either loses it at the next update.
- * --selftest-saves pins the spelling. */
-#define SAVE_NVS_NS  "tank"
+ * --selftest-saves pins the spelling. pocket-terrarium: "terr", not
+ * pocket-tank's "tank" - a board that ran pocket-tank keeps that tank (and its
+ * settings) untouched beside ours, and neither firmware ever reads the other's.
+ * Every firmware key that lives beside the save opens this namespace too. */
+#define SAVE_NVS_NS  "terr"
 #define SAVE_NVS_KEY "save"
 bool    persist_port_load(void *buf, size_t max, size_t *got); /* the saved blob, whatever length a build
                                                             * wrote: *got = its stored length; a NEWER build's longer

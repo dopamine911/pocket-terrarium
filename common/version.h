@@ -78,8 +78,18 @@ static inline const char *pt_board_words(const char *id) {
     return !strcmp(id, "amoled18") ? "1.8 INCH" : !strcmp(id, "round175c") ? "1.75 ROUND" :
            !strcmp(id, "watch206") ? "2.06 WATCH" : !strcmp(id, "square216") ? "2.16 SQUARE" : NULL;
 }
-#define PT_BOARD_MAGIC   "PTBOARD"             /* the image's board marker begins with these 8 bytes (with the NUL) */
+#define PT_BOARD_MAGIC   "TRBOARD"             /* the image's board marker begins with these 8 bytes (with the NUL); pocket-terrarium's,
+                                                  so a pocket-tank refuses our image over the air and we refuse its ("PTBOARD") */
 #define PT_BOARD_MARKER_OFFSET 0x120           /* ... at this offset in the app image: the image header (24) + the
                                                   first segment's header (8) + esp_app_desc_t (256) */
+
+/* pocket-terrarium: the networked features, off (PLAN.md D4: the port is a
+ * proof of concept). 0 = Wi-Fi never starts: no update check, no Improv
+ * provisioning, no clock from the internet; no tank link (ESP-NOW), so no
+ * visits, gifts or passports; no VISITORS square on the keeper page. The code
+ * stays compiled so upstream merges stay easy; only its entry points are shut.
+ * Turning it back on needs our own OTA manifest + key and a link identity of
+ * our own, or a terrarium would update into a pocket-tank and trade with one. */
+#define PT_NET 0
 
 #endif

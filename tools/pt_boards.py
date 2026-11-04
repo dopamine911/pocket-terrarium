@@ -17,7 +17,7 @@ BOARDS = [
     ("square216", "Waveshare ESP32-S3-Touch-AMOLED-2.16",  "sdkconfig.square"),
 ]
 IDS = [b[0] for b in BOARDS]
-MAGIC = b"PTBOARD\0"
+MAGIC = b"TRBOARD\0"           # pocket-terrarium's (common/version.h PT_BOARD_MAGIC; pocket-tank's is PTBOARD)
 MARKER_OFFSET = 0x120          # the image header (24) + the first segment's header (8) + esp_app_desc_t (256)
 
 

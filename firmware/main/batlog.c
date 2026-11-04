@@ -42,12 +42,12 @@ void batlog_clear(void) { s_n = s_head = 0; seal(); }
    An empty ring at boot is seeded from it, once ("bed"), so the printout
    still derives the night's mA between bedtime and the boot row. */
 static void bed_store(const sample_t *s) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (nvs_set_blob(h, "bed", s, sizeof *s) == ESP_OK) nvs_commit(h);
     nvs_close(h);
 }
 static bool bed_take(sample_t *s) {
-    nvs_handle_t h; if (nvs_open("tank", NVS_READWRITE, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
     size_t len = sizeof *s;
     bool ok = nvs_get_blob(h, "bed", s, &len) == ESP_OK && len == sizeof *s;
     if (ok) { nvs_erase_key(h, "bed"); nvs_commit(h); }

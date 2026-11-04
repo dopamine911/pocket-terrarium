@@ -41,7 +41,7 @@
  * tank over it: pages 2..10 lost, the first page kept). A book counts as a used slot, and one is made only with two
  * free (one stays free for swaps). A tank removed, a reset, or a book whose tank is gone (the boot) erases it.
  * Parked (the director's stash): its owner's top bit set, so neither the staged tank nor the sweep touches it. */
-#define SHELF_BOOK_MAGIC   0x31565450u           /* "PTV1" */
+#define SHELF_BOOK_MAGIC   0x31565254u           /* "TRV1" (pocket-terrarium; pocket-tank's "PTV1" books are never ours to sweep) */
 #define SHELF_BOOK_GROUPS  3
 #define SHELF_BOOK_RECS    36                    /* records a group: 3 pages of 12 */
 #define SHELF_BOOK_HDR     32                    /* a sector's head: magic owner print seq | group count rec | 8 zero | crc */

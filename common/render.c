@@ -8413,12 +8413,14 @@ static void ms_step(const tank_t *t, int dir) {
 static void fs_button(ctx_t *c, int x, int y) { button(c, x, y, FS_SQ, FS_SQ, 0x1c2f36, MSP_TEAL, "", 2); }
 void render_ms_foot_box(int which, int *x, int *y) {
     if (PAGE_BOWL && which == MSF_SET) { *x = (PAGE_W - FS_SQ) / 2; *y = MSP_SET_Y - 6; return; }   /* (the bowl's cog: in the cap) */
-    const int n = PAGE_BOWL ? MSF_N - 1 : MSF_N, i = PAGE_BOWL && which > MSF_SET ? which - 1 : which;
+    const int n = MSF_N - (PAGE_BOWL ? 1 : 0) - (PT_NET ? 0 : 1);   /* (no VISITORS square without the network, PT_NET) */
+    const int i = which - (PAGE_BOWL && which > MSF_SET ? 1 : 0) - (!PT_NET && which > MSF_VIS ? 1 : 0);
     const int x0 = MSP_FOOT_UPG_X, x1 = MSP_FOOT_CLOSE_X + MSP_CLOSE_W - FS_SQ;
     *x = x0 + (x1 - x0) * i / (n - 1); *y = MSP_FOOT_TOP;
 }
 static void ms_foot(const tank_t *t, ctx_t *c) {
     for (int b = 0; b < MSF_N; b++) {
+        if (!MSF_SHOWN(b)) continue;
         int x, y; render_ms_foot_box(b, &x, &y);
         fs_button(c, x, y);
         /* THE FOOT'S ICONS (0.4, 11-01: Strato's footer-icons-v4, working-assets/): 36 px sprites from 4 px in - the cog, two tanks on a
@@ -8826,7 +8828,7 @@ int render_milestones_tap(const tank_t *t, float x, float y) {
         static const int TAP[MSF_N] = { MS_TAP_SHOP, MS_TAP_SETTINGS, MS_TAP_TANKS, MS_TAP_VISITORS, MS_TAP_CLOSE };
         int best = -1; float bd = 1e9f;
         for (int b = 0; b < MSF_N; b++) {
-            if (PAGE_BOWL && b == MSF_SET) continue;
+            if ((PAGE_BOWL && b == MSF_SET) || !MSF_SHOWN(b)) continue;
             int bx, by; render_ms_foot_box(b, &bx, &by);
             float d = fabsf(x - (bx + FS_SQ / 2.0f));
             if (d < bd) { bd = d; best = b; }
@@ -9728,6 +9730,7 @@ void render_settings(const tank_t *t, uint16_t *fb, int stride, int bright_pct, 
     draw_text_8px(&c, SET_LABEL_X + (PAGE_BOWL ? 96 : 0), PAGE_H - 8 - 6, MSP_DIM, ver);
 #endif
     button(&c, SET_CLOSE_X, SET_FOOT_Y, MSP_CLOSE_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, "CLOSE", 2);
+#if PT_NET
     /* UPDATES (2026-09-30, docs/OTA.md): bottom left, the same size as CLOSE */
     button(&c, SET_UPD_X, SET_FOOT_Y, SET_UPD_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, "UPDATES", 2);
     /* LINK (0.4, the tank link): the glyph - two tanks, a door between - and the word */
@@ -9735,6 +9738,7 @@ void render_settings(const tank_t *t, uint16_t *fb, int stride, int bright_pct, 
     { int gw = 20 + 8 + text_w("LINK", 2), gx = SET_LINK_X + (SET_LINK_W - gw) / 2;
       link_glyph(&c, gx, SET_LINK_Y + (MSP_CLOSE_H - 12) / 2, 0xffffff);
       draw_text(&c, gx + 28, SET_LINK_Y + (MSP_CLOSE_H - 14) / 2, 2, 0xffffff, "LINK"); }
+#endif
 }
 static int set_segment(float x, int n) {
     if (x < SET_SEG_X - 10) return -1;
@@ -9750,8 +9754,9 @@ enum { SET_HIT_LIGHT_PREV = 100, SET_HIT_LIGHT_NEXT };
 int render_settings_tap(float x, float y, int *value) {
     x -= PAGE_X; y -= PAGE_Y;                    /* the page's own coordinates */
     if (x >= SET_CLOSE_X - 8 && y >= SET_FOOT_Y - 4) return SET_TAP_CLOSE;
-    if (x < SET_UPD_X + SET_UPD_W + 8 && y >= SET_FOOT_Y - 4) return SET_TAP_UPDATES;
-    if (x >= SET_LINK_X - 8 && x < SET_LINK_X + SET_LINK_W + 8 && y >= SET_LINK_Y - 6 && y < SET_LINK_Y + MSP_CLOSE_H + 10) return SET_TAP_LINK;
+    /* without the network (PT_NET) UPDATES and LINK are not drawn: their boxes stay dead, never a row's band */
+    if (x < SET_UPD_X + SET_UPD_W + 8 && y >= SET_FOOT_Y - 4) return PT_NET ? SET_TAP_UPDATES : SET_TAP_NONE;
+    if (x >= SET_LINK_X - 8 && x < SET_LINK_X + SET_LINK_W + 8 && y >= SET_LINK_Y - 6 && y < SET_LINK_Y + MSP_CLOSE_H + 10) return PT_NET ? SET_TAP_LINK : SET_TAP_NONE;
     /* the row bands: from a little above each segment down to the next row
        (fingers report low); the last one stops at the foot's */
     int seg = set_segment(x, 3), two = set_segment(x, 2);

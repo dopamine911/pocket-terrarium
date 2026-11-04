@@ -130,21 +130,22 @@ bool shelf_port_read(uint32_t off, void *buf, size_t n) {
 }
 bool shelf_port_write(uint32_t off, const void *buf, size_t n) { const esp_partition_t *p = shelf_part(); return p && esp_partition_write(p, SHELF_BASE + off, buf, n) == ESP_OK; }
 bool shelf_port_erase(uint32_t off, size_t n) { const esp_partition_t *p = shelf_part(); return p && esp_partition_erase_range(p, SHELF_BASE + off, n) == ESP_OK; }
+#define SHELF_FRAME_NS "terrframe"                /* pocket-terrarium's (pocket-tank's journal is "frame") */
 bool shelf_port_frame_get(const char *key, void *buf, size_t max, size_t *got) {
-    nvs_handle_t h; if (nvs_open("frame", NVS_READONLY, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SHELF_FRAME_NS, NVS_READONLY, &h) != ESP_OK) return false;
     size_t len = max; esp_err_t e = nvs_get_blob(h, key, buf, &len);
     nvs_close(h);
     if (e == ESP_OK) *got = len;
     return e == ESP_OK;
 }
 bool shelf_port_frame_set(const char *key, const void *buf, size_t n) {
-    nvs_handle_t h; if (nvs_open("frame", NVS_READWRITE, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SHELF_FRAME_NS, NVS_READWRITE, &h) != ESP_OK) return false;
     esp_err_t e = nvs_set_blob(h, key, buf, n); if (e == ESP_OK) e = nvs_commit(h);
     nvs_close(h); if (e != ESP_OK) ESP_LOGW(TAG, "frame %s: %s", key, esp_err_to_name(e));
     return e == ESP_OK;
 }
 bool shelf_port_frame_del(const char *key) {
-    nvs_handle_t h; if (nvs_open("frame", NVS_READWRITE, &h) != ESP_OK) return false;
+    nvs_handle_t h; if (nvs_open(SHELF_FRAME_NS, NVS_READWRITE, &h) != ESP_OK) return false;
     esp_err_t e = nvs_erase_key(h, key); if (e == ESP_OK) e = nvs_commit(h);
     nvs_close(h);
     return e == ESP_OK || e == ESP_ERR_NVS_NOT_FOUND;

@@ -91,7 +91,7 @@ static i2c_master_bus_handle_t board_i2c_bus(void) { return NULL; }
 extern const uint8_t tokenizer_bin_start[] asm("_binary_tokenizer_bin_start");
 extern const uint8_t tokenizer_bin_end[]   asm("_binary_tokenizer_bin_end");
 
-static const char *TAG = "pocket-tank";
+static const char *TAG = "terrarium";
 /* THE CAP's guard (progression.h, 2026-11-03): some path took the tank past POP_CAP fish. Said once, never an abort -
    the keeper's fish are all still there; the line names the path to fix */
 static void cap_breach(const tank_t *t, int held, const char *file, int line, const char *path) {
@@ -355,14 +355,15 @@ static int restore_fish(void) {
 #define NET_FIRST_TRIES 3
 static int nvs_u8(const char *key, int dflt) {
     nvs_handle_t h; uint8_t v = (uint8_t)dflt;
-    if (nvs_open("tank", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, key, &v); nvs_close(h); }
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, key, &v); nvs_close(h); }
     return v;
 }
 static void nvs_u8_put(const char *key, int v) {
     nvs_handle_t h;
-    if (nvs_open("tank", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, key, (uint8_t)v); nvs_commit(h); nvs_close(h); }
+    if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, key, (uint8_t)v); nvs_commit(h); nvs_close(h); }
 }
-static bool net_saved(void) { char s[NET_SSID_MAX + 1], p[NET_PASS_MAX + 1]; return net_port_creds_get(s, p); }
+/* (PT_NET 0: never a network, whatever an earlier pocket-tank install left in NVS "wifi") */
+static bool net_saved(void) { char s[NET_SSID_MAX + 1], p[NET_PASS_MAX + 1]; return PT_NET && net_port_creds_get(s, p); }
 static bool night_powers_off(void) {        /* the night: a power-off (the clock survives it, or the internet gives it back) */
     if (!s_pmic) return false;
     return s_rtc || (net_saved() && nvs_u8("netclk", 0) && nvs_u8("netok", 0));
@@ -419,7 +420,7 @@ static void net_clock_boot(uint16_t *fb) {  /* before the tank exists: the radio
     snprintf(s_boot_sync, sizeof s_boot_sync, "%s%s", ok ? "got the time" : "FAILED: ", ok ? "" : net_time_why());
     if (!ok) {
         nvs_handle_t h;
-        if (nvs_open("tank", NVS_READWRITE, &h) == ESP_OK) { nvs_set_str(h, "netwhy", net_time_why()); nvs_commit(h); nvs_close(h); }
+        if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_str(h, "netwhy", net_time_why()); nvs_commit(h); nvs_close(h); }
         ESP_LOGW(TAG, "clock: no time from the internet - %s; tonight is a deep sleep, the next wake asks again",
                  set ? "the clock runs on as it was" : "it resumes at the save, the stretch is owed");
         return;
@@ -454,7 +455,7 @@ static void net_clock_rebase(void) {        /* after progression_boot / _wake: a
 void device_clock_log(void) {               /* director `clock` */
     char why[80] = "none"; size_t n = sizeof why;
     nvs_handle_t h;
-    if (nvs_open("tank", NVS_READONLY, &h) == ESP_OK) { if (nvs_get_str(h, "netwhy", why, &n) != ESP_OK) snprintf(why, sizeof why, "none"); nvs_close(h); }
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) { if (nvs_get_str(h, "netwhy", why, &n) != ESP_OK) snprintf(why, sizeof why, "none"); nvs_close(h); }
     ESP_LOGI(TAG, "clock: this boot %s | lived at boot %.2f h | now %lld | RTC chip %s | network %s | real time %s | last sync %s | last failure: %s | tonight: %s",
              s_boot_sync, s_boot_lived_h, (long long)clock_port_now_unix(), !s_rtc ? "no" : rtc_port_stopped() ? "yes, STOPPED at this boot (lost power)" : rtc_port_unread() ? "yes, NO ANSWER at this boot" : "yes", net_saved() ? "saved" : "none",
              nvs_u8("netclk", 0) ? "yes" : "not yet", nvs_u8("netok", 0) ? "ok" : "failed or never", why,
@@ -568,13 +569,13 @@ static void enter_sleep(void) { enter_sleep_for(0); }
 enum { SLEEP_TOUCH = 1, SLEEP_PANEL = 2, SLEEP_IMU = 4, SLEEP_BUS = 8, SLEEP_ALL = 15 };
 static int sleep_cfg(void) {
     nvs_handle_t h; uint8_t v = SLEEP_ALL;
-    if (nvs_open("tank", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "sleepcfg", &v); nvs_close(h); }
+    if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "sleepcfg", &v); nvs_close(h); }
     return v & SLEEP_ALL;
 }
 int device_sleep_cfg(int mask) {
     if (mask >= 0) {
         nvs_handle_t h;
-        if (nvs_open("tank", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "sleepcfg", (uint8_t)(mask & SLEEP_ALL)); nvs_commit(h); nvs_close(h); }
+        if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "sleepcfg", (uint8_t)(mask & SLEEP_ALL)); nvs_commit(h); nvs_close(h); }
     }
     return sleep_cfg();
 }
@@ -1751,7 +1752,7 @@ void device_provision_request(void) {
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "pocket-tank v%s %s (build %s) for %s boot%s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), PT_BOARD,
+    ESP_LOGI(TAG, "pocket-terrarium (on pocket-tank v%s %s, build %s) for %s boot%s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), PT_BOARD,
              esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 || esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 ? " (woken by button)" : "");
     gpio_config_t btn = { .pin_bit_mask = 1ULL << BTN_SLEEP, .mode = GPIO_MODE_INPUT,
                           .pull_up_en = GPIO_PULLUP_ENABLE };
@@ -1809,10 +1810,11 @@ void app_main(void) {
         imu_port_sides(display_port_quarters());   /* the square's and the pendant's own builds stand on a side too (0.3.9.3) */
         imu_port_seed_quarter((nvs_u8("inv", 0) ? 2 : 0) | (nvs_u8("side", 0) ? 1 : 0));   /* the way up it had before this boot (written at each turn) */
     }                                 /* (before update mode: its pages turn with the tank too, 0.3.9.3) */
-    if (update_mode_pending()) { brightness_apply(false); update_mode_run(fb[0], nvs_u8("uq", 0)); }
-    else if (provision_mode_wanted()) provision_mode_run(fb[0]);   /* just installed, no network yet: the page's Wi-Fi step, the glass dark */
+    /* (PT_NET 0, version.h: no update mode, no provisioning, no clock from the internet - the RTC chip or the save's clock) */
+    if (PT_NET && update_mode_pending()) { brightness_apply(false); update_mode_run(fb[0], nvs_u8("uq", 0)); }
+    else if (PT_NET && provision_mode_wanted()) provision_mode_run(fb[0]);   /* just installed, no network yet: the page's Wi-Fi step, the glass dark */
     s_rtc = rtc_port_init(board_i2c_bus());   /* wall clock for the ravenous rule (before the clockless night's sync) */
-    net_clock_boot(fb[0]);            /* no RTC chip, a stopped one, or a chip not yet on real time, with a saved network: the time from the internet, before the advisor takes the heap */
+    if (PT_NET) net_clock_boot(fb[0]);   /* no RTC chip, a stopped one, or a chip not yet on real time, with a saved network: the time from the internet, before the advisor takes the heap */
     battery_port_key_clear();         /* a PWR press on the TIME CHECK page (up to 30 s, nothing polls the key) is not a sleep press once the tank is up (0.4 rc) */
     /* the advisor's hot buffers (~70 KB of internal SRAM, advisor_llm_esp.c)
        come before the discretionary caches below: the LLM is not optional */
