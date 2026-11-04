@@ -39,3 +39,6 @@ tools/boards.local.sh
 sim/build-square/
 sim/fishsim-square
 sim/build-arm*/
+
+# CodeGraph index (local, rebuilt by codegraph)
+.codegraph/

@@ -26,6 +26,8 @@ Status: P1 specs drafted (2026-11-04): `model/schema-lizard.md`, `docs/species-p
 | D7 | Save | New format (new magic, NVS namespace `terr`), append-only from day one (`SAVE_LAYOUT_LOCK` pattern, `progression.c` ~308). |
 | D8 | Shed | **In v1** as a core upkeep loop (§3). |
 | D9 | License | PolyForm Noncommercial, inherited. Keep the required `NOTICE` lines. Commercial use needs the author's permission. |
+| D10 | Habitats | The enclosure is a pack too (`docs/habitat-pack.md`): a tank holds a habitat id and a species id, compatible by the species' list. v1: desert + leopard gecko. |
+| D11 | Worlds | **One reusable core, one bin per world**: an aquarium bin (fish) or a terrarium bin (lizards). Each bin carries one model (8 MB partition, 7.56 MB model), its schema, its packs and its locomotion. Swimming code is kept, never deleted; packs carry `world`. |
 
 ---
 
@@ -168,18 +170,33 @@ flowchart LR
 - [x] Model acceptance targets A1–A16 (in `model/schema-lizard.md`), written before training
 - Freeze point: the schema stays DRAFT until the first long trace run starts; change it freely until then.
 
-### P2 — Engine (`common/tank.c`/`tank.h`): largest piece
-- [ ] `species_t` + the gecko pack; save stores the pack id
-- [ ] Geometry: floor and terraces per board (the round pendant needs a floor arc)
-- [ ] Remove swimming: depth picking (`depth_pick` ~3490), buoyancy, schooling
-- [ ] Walking: trot gait, turn on the spot, stop-and-go pacing (from `crab_tick` ~1752)
-- [ ] Heat field + `heat` normalised to the pack band; lamp on the light schedule
-- [ ] Hides (warm/cool/humid): entering, hidden, peeking
-- [ ] Crickets: spawn on feed tap, hop/flee AI, hide in decor; strike hit/miss
-- [ ] Shed state machine + humid-hide moisture + the mister tool (§3)
-- [ ] The 7 goals → motion (`target_for_goal` ~3200–3415), tuned per pack
+### P2 — Engine (`common/tank.c`/`tank.h`): largest piece, in increments that each leave `make check` green
+
+**P2a — lizard state (done 2026-11-04, aa52367)**
+- [x] Species packs (`common/species*`, gecko 1, test pack 250) and habitat packs (`common/habitat*`, desert 1),
+      both with a `world`; the tank holds a compatible pair; `--selftest-packs`
+- [x] Places from the habitat (warm/humid/cool hides, basking spot); heat field, body temperature, `heat` per pack
+- [x] Sheds incl. growth sheds gating stages, stuck sheds, moisture, `TOOL_MISTER`; stage ages from the pack
+- [x] L1 encoder (`advisor_core_encode_l1`, 420/420 parity lines); save tail 1956..2095; 63/63 on all boards
+- Found: the fish's real stage ages are 2 h / 12 h / 96 h (the gecko keeps 20 min / 90 min / 8 h);
+  stuck-shed stress is a rising floor (the engine's stress decays ~0.18/s); the spray is not drawn yet
+
+**P2b — the world switch, and lizards move like lizards (in progress)**
+- [ ] Build-time world (`PT_WORLD`: aquarium | terrarium) in sim and firmware: picks the model and tokenizer files,
+      the packs, the goal set, the locomotion and the selftest list; the aquarium build stays today's fish tank
+      (its own fish species pack with the 2 h / 12 h / 96 h stages and no sheds; a freshwater habitat)
+- [ ] Goals: the lizard goals beside the fish goals (one enum, each world uses its own set); until the lizard model
+      exists the terrarium build maps the v4 fish model's answers onto lizard goals (deleted in P6)
+- [ ] Swimming isolated as the aquarium world's locomotion (depth picking, buoyancy, schooling); not deleted
+- [ ] Walking on the floor: trot, turn on the spot, stop-and-go (from `crab_tick`); pack speeds and drive rates live
+- [ ] Hides entered and left, hidden and peeking; the 7 goals → motion; `hide` while shedding goes to the humid hide
+- [ ] Director `age`/stage commands go through the shed gate (or say they bypass it)
+
+**P2c — food and hands**
+- [ ] Crickets: spawn on feed tap, hop/flee AI, hide in decor; strike hit/miss; mealworm dish
 - [ ] Touch: hold = hand in the terrarium (trust), rap = startle, tap = crickets
-- [ ] Temporary fish→lizard goal map (deleted in P6)
+
+**P2d — tuning** against A13–A15 once a lizard model exists
 
 ### P3 — Render (`common/render.c`)
 - [ ] Terrarium scene in the scene cache: wall, gradient, substrate, lamp glow
@@ -221,19 +238,15 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
   746 of ~808 tokens median; largest request 840 tokens. No per-request thinking setting needed.
   45k pairs ≈ 6 h: one night. Run with **4 workers** (4 slots; more only queue).
 
-- [ ] `gen_traces.py`: add an OpenAI-compatible client next to `ask_ollama` (`gen_traces.py:483`):
-      `/v1/chat/completions`, `response_format: json_schema` from `output_schema()`,
-      `temperature 0.7`, `max_tokens 48`. Still send `chat_template_kwargs: {enable_thinking: false}`: harmless on
-      `chat-teacher` (server has `--reasoning off`) and required for the `marvin/big` audit. Key read from an env var,
-      never a CLI arg or the repo. No `tools` in the request (the lab's known Qwen bug is tools + JSON format together).
-      Prompt + answer must stay under the 4K slot.
-- [ ] `gen_traces.py --schema lizard`: a Python `Lizard`/`Terrarium` sim (replaces `Fish`/`Tank`, lines 163/198),
-      new `encode()`, new species-agnostic `SYSTEM_PROMPT_LIZARD`
-- [ ] Sample states across the full ranges of the normalised drives, so future packs land inside the training distribution
-- [ ] **Pilot**: ~40 hand-written edge states (starving, cold, overheated, shedding, rest phase, bored)
-      with expected goals. Run each candidate teacher on them; record rules-agreement, JSON
-      failure rate and decisions/min. Log to the lab's MLflow like its other benchmarks. Pick the teacher.
-- [ ] `prompt_check.py` pass (R3)
+- [x] `gen_traces.py --api openai`: `/v1/chat/completions`, `response_format: json_schema`, temperature 0.7,
+      `max_tokens 48`, `chat_template_kwargs: {enable_thinking: false}`, key only from `LAB_API_KEY`, no tools
+- [x] `gen_traces.py --schema L1`: a Python Terrarium/Lizard sim (heat, phase, drives, boredom, sheds incl. growth
+      and stuck, crickets, mealworm dish, 1–3 lizards, hides, edge perturbations), `encode()`, `SYSTEM_PROMPT_L1`
+      (757 words; requests ≤ 1,171 tokens); tokenizer/fold/eval/prompt_check accept L1; runbook `docs/retrain-lizard.md`
+- [x] Parity fixture `model/testdata/l1_parity.jsonl` (420 lines, `make_l1_parity.py --check` deterministic)
+- [x] Pilot 1 (41 states × 3 on `chat-teacher`): 87.8% agreement, 0 JSON failures, ~160 decisions/min (4 workers).
+      Fails A11: content lizards `explore` whatever `bold`; `investigate` never chosen (0/209)
+- [ ] Fix A11/`investigate` in the prompt, re-run the pilot, `prompt_check.py --schema L1` (in progress)
 - [ ] Traces, overnight: target ~40–50k pairs (no old traces carry over). Workers =
       parallel slots on the teacher's server; each worker is sequential because decisions feed back into its sim
       (`gen_traces.py:590`)
