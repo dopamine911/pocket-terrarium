@@ -11,8 +11,8 @@ the overnight run is built; the pilot and the teacher-side prompt check ran on
 | `gen_traces.py --schema L1`: Terrarium/Lizard sim, `encode_l1_snap`, `SYSTEM_PROMPT_L1`, `--api openai` | built, dry-run and pilot-tested |
 | `make_l1_parity.py` → `testdata/l1_parity.jsonl` (R4, 420 lines) | built; the C side is `./fishsim --selftest-l1-encode` (P2a) |
 | `train_tokenizer.py --schema L1` (vocab 59), `fold_traces.py --schema L1` | built, verified on the pilot's teacher answers |
-| `pilot.py` + `pilot_l1.jsonl` (38 edge states) | built, run |
-| `prompt_check.py --schema L1` (A2–A12 and rules 3, 7, 8 on the teacher) | built, run in full on the try-4 prompt; **the shipped text (one sentence later) still needs its full run** |
+| `pilot.py` + `pilot_l1.jsonl` (37 edge states) | built, run |
+| `prompt_check.py --schema L1` (A2–A12 and rules 3, 7, 8 on the teacher) | built, run in full on the shipped text (the gate, below) |
 | `eval.py --schema L1 --teacher --api openai` (A1) | built; needs a model |
 | `train.py` / `export_q4.py` | unchanged; `POCKET_SCHEMA=L1` selects the lexicon |
 | `probe_dist.py` for L1 (A2–A12 on the student) | **not built** |
@@ -52,8 +52,8 @@ python3 make_l1_parity.py --check                                          # the
 python3 train_tokenizer.py --schema L1                                     # out/tokenizer_l1.bin, vocab 59
 curl -s -H @<(printf 'Authorization: Bearer %s\n' "$LAB_API_KEY") \
      http://zaphod.tail740235.ts.net:8080/v1/models | grep -o chat-teacher # 0.3 reachable
-python3 prompt_check.py --schema L1 --api openai --workers 4 --out out/prompt_check_l1.json   # 0.4: 432 calls
-python3 pilot.py --api openai --workers 4                                  # 0.5: 114 calls, ~1 min
+python3 prompt_check.py --schema L1 --api openai --workers 4 --out out/prompt_check_l1.json   # 0.4: 464 calls
+python3 pilot.py --api openai --workers 4                                  # 0.5: 111 calls, ~1 min
 ```
 
 `--stats` on the dry run (the rule stand-in moves the lizards, so the shares are
@@ -68,8 +68,8 @@ prompt_check's L1 panel pins one thing on a content lizard (fed, comfortable,
 calm, active) and prints what the student will inherit: A2–A12, and for the
 tendencies paired cases - the same backgrounds twice, one field changed - so the
 difference is that field's effect: bold 9 against bold 0 (A11; bored 2–5 so `last`
-does not decide it), hatchling against adult at stress 4–6 (rule 8), shed soon
-against no (rule 3). Plus `social9near` (rule 7: social 7–9 with the other near
+does not decide it), hatchling against adult at stress 4–6 and elder against adult
+at energy 3–6 (rule 8), shed soon against no (rule 3). Plus `social9near` (rule 7: social 7–9 with the other near
 investigates now and then), `content` (no goal over 0.45), `satedprey` (a snap at
 prey in front is allowed now). A10 uses a `last` that still fits the state (rest
 when a little tired, investigate with something to look at; appended to the
@@ -80,13 +80,14 @@ along); `--out` keeps every answer. If a check is BAD, edit ONE sentence of
 
 ### The pilot (2026-11-04, `chat-teacher`, from this workstation over Tailscale)
 
-`pilot_l1.jsonl`: 38 hand-written edge states, each with the goals a teacher
+`pilot_l1.jsonl`: 37 hand-written edge states, each with the goals a teacher
 that follows the nine rules may give and the acceptance row or rule it probes.
 (Round 1 had 41: "hunger 1, prey near → not hunt" went when rule 1 gained "a fed
-lizard may still snap at prey right in front of it"; the hatchling-stress and
-shed-soon states became prompt_check's paired comparisons.) `--api rules` runs
-the states through `gen_traces.rule_goal` (the rules as plain code): the
-expectations are consistent with the rules.
+lizard may still snap at prey right in front of it"; the hatchling-stress,
+shed-soon and tired-elder states became prompt_check's paired comparisons; the
+bold-0 A11 state is incurious since round 3 - curiosity 2, as A11 means timid
+and incurious.) `--api rules` runs the states through `gen_traces.rule_goal` (the
+rules as plain code): the expectations are consistent with the rules.
 
 | | try 1 (first prompt) | try 2 | try 3 (dropped) | try 4 (full runs) |
 |---|---|---|---|---|
@@ -157,21 +158,58 @@ while" **took A10 to 0.67 and content explore to 0.56** (investigate 0.33);
 dropping explore's "a real activity, not a fallback" did nothing. Guards for it
 on the same states: A9 1.00, A11 +0.22 (try 4: +0.44), A12 0.00; and the 12 pilot
 states at bored 0–2, most of them a need that must beat `last` (starving, cold,
-overheating, shedding, sleep), 33/36 - only R8-elder-tired, 0/3. **That sentence ships** (781
-words, sha1 dec03c6062); its full prompt_check + pilot (~550 requests) is the
-first step of the next session. The content attractor is still over 0.45 there.
+overheating, shedding, sleep), 33/36 - only R8-elder-tired, 0/3. That sentence
+went in (781 words, sha1 dec03c6062); the content attractor was still over 0.45.
 
-Requests this round: 894 of 900 (six mini panels 246, full pilot 114, full
+Requests in round 2: 894 of 900 (six mini panels 246, full pilot 114, full
 prompt_check 408, the A10 follow-up 126).
 
-Still open on the teacher side:
+### Round 3 and the gate (2026-11-04, the shipped text)
 
-| What | Read |
-|---|---|
-| The content attractor (explore 0.56–0.67 of content states) | Prompt. One sentence at a time against prompt_check's `content` and A10 rows; A11 and A12 as guards. |
-| A11-bold0 (curiosity 6): explore in all six variants, 0/18 | The teacher lets curiosity beat bold; A11 itself passes. Either accept it or take the curiosity out of that one pilot state. |
-| R8-elder-tired | A single-state tendency that flips between prompts; a paired elder/adult case would measure it. |
-| rule 8 pair +0.12 | Positive but small at 16 pairs. |
+The explore attractor, one sentence at a time on prompt_check's 24 `content`
+states of the full panel (the same states as the try-4 run) with A10/A11 (9 each)
+and A9/A12 (4 each) as guards: the round-2 text left explore at 0.50 there (try
+4: 0.67). Round 1 added "and explore is one choice among the four, never the
+default" to the content-lizard sentence: content explore **0.29** (investigate
+0.29, rest 0.25, dig 0.17), A10 0.67, A11 +0.44, A9 1.00, A12 0.00 - it passed, so
+no second round. The text that ships: 792 words, sha1 19434161a1, 1,172–1,180
+prompt tokens a request, the largest request 1,202 of the 4K slot.
+
+The gate on that exact text - prompt_check, full panel (464 calls) and the pilot
+(37 states × 3 = 111): 0 failures in 575 replies, 152.5 decisions/min with 4 workers.
+
+| Row or tendency | Check | Teacher (try 4 → gate) | Want | |
+|---|---|---|---|---|
+| A1 | student agrees with the teacher | needs a model (`eval.py`) | ≥ 72% | — |
+| A2 | hunt: hunger 9, prey near/mid, heat 3–7 | 0.96 → **0.92**; pilot 12/12 | ≥ 0.86 | PASS |
+| A3 | bask: active, hunger 9, prey none, heat 0–2 | 1.00 → **1.00**; pilot 6/6 | ≥ 0.6 | PASS |
+| A4 | bask: active, heat 0–2, hunger ≤ 5, stress ≤ 4 | 1.00 → **1.00**; pilot 6/6 | ≥ 0.8 | PASS |
+| A5 | hide: heat 9 | 1.00 → **1.00**; pilot 9/9 | ≥ 0.8 | PASS |
+| A6 | hide: shed yes, hunger ≤ 6 | 1.00 → **1.00**; pilot 9/9 | ≥ 0.6 | PASS |
+| A7 | rest or hide: sleep, hunger ≤ 7 | 1.00 → **1.00** (hide 0.96); pilot 12/12 | ≥ 0.85 | PASS |
+| A8 | hide: stress 8–9 | 1.00 → **1.00**; pilot 6/6 | ≥ 0.7 | PASS |
+| A9 | a goal ≠ last: active, bored 8–9 | 1.00 → **1.00**; pilot 9/9 | ≥ 0.6 | PASS |
+| A10 | last kept: active, bored 0–1, `last` still fits | new → **0.58** (any `last`: 0.12 → 0.62); pilot 3/3 | ≥ 0.4 | PASS |
+| A11 | explore+investigate, bold 9 − bold 0, 24 pairs | +0.33 → **+0.42**; pilot bold-9 3/3, **bold-0 0/3** | ≥ 0.15 | PASS (pilot state FAIL) |
+| A12 | investigate: social 0, other near | 0.00 → **0.04** (1 of 24); pilot 6/6 | ≤ 0.05 | PASS |
+| A13–A16 | sim census, test pack | not built (C, P2b/P6) | | — |
+| rule 7 | investigate: social 7–9, other near | 0.85 → **0.80** | now and then (≥ 0.10) | PASS |
+| rule 8 | hide: hatchling − adult, stress 4–6, 16 pairs | +0.12 → **+0.25** | > 0 | PASS |
+| rule 8 | rest: elder − adult, energy 3–6, 16 pairs | new → **+0.19** | > 0 | PASS |
+| rule 3 | hide: shed soon − no, 16 pairs | +0.44 → **+0.50** | > 0 | PASS |
+| content | max single goal | 0.67 explore → **0.29** (explore 0.29, investigate 0.25, rest 0.25, dig 0.21) | < 0.45 | PASS |
+| rule 1 | hunt: hunger 0–2, prey near (a snap is allowed) | 0.75 → 0.67 | — | report |
+| pilot | all 37 states | **108/111 = 97.3%**; the 36 unchanged states 108/108 in both try 4 and the gate | | |
+
+The one failing state, A11-bold0 (bold 0, curiosity 2, energy 8, bored 3, `last
+rest`): explore at urgency 3, every time. Twelve diagnostic asks: energy 5 →
+explore 3/3; a hide near → explore 3/3; bored 1 → rest 2/3; `last dig` → rest 3/3.
+So it is not curiosity: the lizard was resting at bored 3, the teacher moves it on
+(rule 6), and with rest just left its timid options are dig or hide - it explores
+gently instead. The paired A11 holds; the state is an edge of rule 6 against rule 7.
+
+Requests in round 3: 684 of 750 (content baseline 38, the explore round 59,
+prompt_check 464, pilot 111, the diagnostic 12).
 
 ## 1. The night (unattended; ~5–6 h)
 

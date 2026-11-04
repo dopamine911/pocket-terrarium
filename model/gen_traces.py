@@ -163,11 +163,11 @@ SYSTEM_PROMPT_V4 = (
 # 87.8% on the pilot; try 2 added "a cold lizard too" to rule 4 (A7 fixed); try 4
 # synced rule 1 with the spec (a fed lizard may snap at prey in front of it) and
 # put rule 7's bold clause as "rests or digs instead of exploring, even when
-# curious" - full pilot 95.6%, prompt_check all A-rows OK but A10 (0.22) and the
-# content attractor (explore 0.67). Rule 6's "it has only just begun ... settles
-# into a pastime for a while" (this text) took A10 to 0.67 and content explore to
-# 0.56 on n=9 subsets with A9/A11/A12 and the need states holding; the full
-# prompt_check on this exact text is the next gate.
+# curious"; rule 6's "it has only just begun ... settles into a pastime for a
+# while" fixed A10; "explore is one choice among the four, never the default" took
+# the content states' explore from 0.67 (try 4) and 0.50 to 0.29 on the same 24
+# states. This text is the 2026-11-04 gate: prompt_check every row OK (464 calls),
+# pilot 108/111 - only A11-bold0 (a timid lizard whose last was rest explores at bored 3).
 SYSTEM_PROMPT_L1 = (
     "You are the sparse instinct advisor for a small pet lizard in a terrarium. "
     "You receive one line describing the lizard's drives and identity (0-9) and what "
@@ -224,7 +224,8 @@ SYSTEM_PROMPT_L1 = (
     "hunt hard when hungry; elders rest more. "
     "9. Energy 0-2 means rest (or bask if also cold). "
     "A content lizard - fed, comfortable, calm, in its active phase - spreads its time "
-    "across explore, investigate, dig and rest; no single pastime should dominate. "
+    "across explore, investigate, dig and rest; no single pastime should dominate, and "
+    "explore is one choice among the four, never the default. "
     "Apart from a snap at prey right in front of it, stop hunting when hunger is low. "
     "Use the whole urgency range: 9 is life-or-death, "
     "7-8 pressing, 4-6 a normal want, 1-3 mild, 0 an idle whim."

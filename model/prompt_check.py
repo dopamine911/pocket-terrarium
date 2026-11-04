@@ -32,8 +32,9 @@ Panel (per schema line, identity randomized unless the case pins it):
   pinned per case, x24 each at the default --n 40 (432 calls, ~4 min on
   chat-teacher with 4 workers). The tendencies are PAIRS - the same backgrounds
   twice, one field changed: bold 9 vs 0 (A11), hatchling vs adult at stress 4-6
-  (rule 8), shed soon vs no (rule 3). Plus social9near (rule 7), content (no
-  attractor), satedprey (a fed lizard's snap) and bored0any (A10 with any last).
+  and elder vs adult at energy 3-6 (rule 8), shed soon vs no (rule 3). Plus
+  social9near (rule 7), content (no attractor), satedprey (a fed lizard's snap)
+  and bored0any (A10 with any last).
   --cases bold9,social9near runs a subset on the very same states.
 """
 import argparse
@@ -129,7 +130,7 @@ def state_l1(rng, **pin):
 
 # the L1 panel: (case, weight per 40 of --n); a pair is two cases on the SAME
 # backgrounds that differ in one field, so their difference is the field's effect
-L1_PAIRS = {"bold9": "bold0", "hatch5": "adult5", "shedsoon": "shedno"}
+L1_PAIRS = {"bold9": "bold0", "hatch5": "adult5", "shedsoon": "shedno", "elder4": "adult4"}
 
 
 def panel_l1(rng, n):
@@ -196,6 +197,10 @@ def panel_l1(rng, n):
             else:
                 f["shelter"] = f"near {rng.randint(1, 11)}"
         P.append(("bored0", line_l1(f)))
+    # rule 8 (appended likewise): elders rest more - the same middling-energy lizards
+    # as elder and as adult, `last` a pastime that is not rest
+    add_pair("elder4", "adult4", 16, {"stage": "elder"}, {"stage": "adult"},
+             energy=span(3, 6), bored=span(2, 5), last=pick("explore", "investigate", "dig"))
     return P
 
 
@@ -243,6 +248,7 @@ def report_l1(results):
         ("r7  P(investigate | social 7-9, other near)", *rate("social9near", goal_is("investigate")),
          ">= 0.10 (now and then)", lambda v: v >= 0.10),
         ("r8  P(hide) hatchling - adult, stress 4-6 (paired)", *diff("hatch5", "adult5", goal_is("hide")), "> 0", lambda v: v > 0),
+        ("r8  P(rest) elder - adult, energy 3-6 (paired)", *diff("elder4", "adult4", goal_is("rest")), "> 0", lambda v: v > 0),
         ("r3  P(hide) shed soon - shed no (paired)", *diff("shedsoon", "shedno", goal_is("hide")), "> 0", lambda v: v > 0),
     ]
     for name, v, n, want, ok in checks:
@@ -260,8 +266,8 @@ def report_l1(results):
         print(f"       {'P(hunt | hunger 0-2, prey near) (a snap is allowed)':55s} = {v:.2f}  (n={n})")
     print("\n  per case:")
     for case in ("starving", "starvecold", "cold", "hot", "shedyes", "sleep", "stress", "bored9", "bored0", "bored0any",
-                 "bold9", "bold0", "social0", "social9near", "content", "hatch5", "adult5", "shedsoon", "shedno",
-                 "satedprey"):
+                 "bold9", "bold0", "social0", "social9near", "content", "hatch5", "adult5", "elder4", "adult4",
+                 "shedsoon", "shedno", "satedprey"):
         if case in by:
             print(f"    {case:11s} {top(case, 4)}")
 
