@@ -42,3 +42,7 @@ sim/build-arm*/
 
 # CodeGraph index (local, rebuilt by codegraph)
 .codegraph/
+
+# training venv (docs/retrain-lizard.md)
+.venv/
+model/.venv/
