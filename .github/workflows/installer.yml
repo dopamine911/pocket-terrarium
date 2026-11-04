@@ -1,0 +1,107 @@
+# Browser installer, published to GitHub Pages on every push to main that
+# touches the firmware, the shared tank code, the model or the installer:
+# build the firmware for every board (docs/BOARDS.md: one manifest per board,
+# the 1.8's keeps the plain manifest.json) with the same ESP-IDF, assemble
+# installer/dist (page + manifest + binaries + vendored ESP Web Tools) and
+# deploy it. Pages serves HTTPS with open CORS, so a page on another site
+# can point its <esp-web-install-button> at this manifest and always offer
+# the firmware of the latest push.
+name: installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - "common/**"
+      - "model/out/**"
+      - "installer/**"
+      - "tools/make_installer.py"
+      - "tools/pt_boards.py"
+      - ".github/workflows/installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # git describe wants the tags
+      - name: Signing key (the cable build carries the OTA trust root - docs/OTA.md)
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          mkdir -p firmware/keys
+          if [ -n "$OTA_SIGNING_KEY" ]; then
+            printf '%s\n' "$OTA_SIGNING_KEY" > firmware/keys/ota_signing_key.pem
+            echo "signing with the project's key"
+          elif [ "${{ github.repository }}" = "mediacutlet/pocket-tank" ]; then
+            echo "no OTA_SIGNING_KEY secret on the public repo: an unsigned cable build could never update itself"; exit 1
+          else
+            openssl genrsa -out firmware/keys/ota_signing_key.pem 3072 2> /dev/null
+            echo "THROWAWAY signing key (no secret here): this image compiles but can never take an update"
+          fi
+      - name: Build the firmware - the 1.8
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+      # the other boards (docs/BOARDS.md): the same tree on top of their
+      # sdkconfig fragment, each in its own build dir
+      - name: Build the firmware - the round board (1.75C)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-round -DSDKCONFIG=build-round/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.round" build
+      - name: Build the firmware - the watch (2.06)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-watch -DSDKCONFIG=build-watch/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.watch" build
+      - name: Build the firmware - the square (2.16)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-square -DSDKCONFIG=build-square/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.square" build
+      # Only the public repo publishes: it tracks model/out/model_q4.bin and
+      # owns the Pages site. Anywhere else (the dev repo ignores model/out/*)
+      # the job stops here, a compile check of the firmware.
+      - name: Assemble the installer
+        if: github.repository == 'mediacutlet/pocket-tank'
+        run: |
+          python3 tools/make_installer.py --build-dir firmware/build \
+            --board-build firmware/build-round --board-build firmware/build-watch --board-build firmware/build-square --out installer/dist
+          touch installer/dist/.nojekyll
+          ls -la installer/dist installer/dist/firmware
+      - uses: actions/upload-pages-artifact@v3
+        if: github.repository == 'mediacutlet/pocket-tank'
+        with:
+          path: installer/dist
+
+  deploy:
+    needs: build
+    if: github.repository == 'mediacutlet/pocket-tank'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

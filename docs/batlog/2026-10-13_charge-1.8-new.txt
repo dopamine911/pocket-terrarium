@@ -1,0 +1,23 @@
+13:53:39 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4093 mV 78% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:54:39 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4111 mV 79% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:55:40 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4129 mV 80% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:56:40 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4143 mV 81% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:57:40 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4151 mV 82% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:58:40 set 150 mA (code 6) | CONSTANT CURRENT | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4163 mV 83% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+13:59:40 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4178 mV 84% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:00:40 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4183 mV 85% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:01:40 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4183 mV 86% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:02:40 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 87% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:03:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 88% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:04:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4185 mV 89% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:05:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4185 mV 89% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:06:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 90% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:07:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 91% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:08:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 92% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:09:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 92% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:10:41 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 93% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:11:42 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 94% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:12:42 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4183 mV 94% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:13:42 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 95% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:14:42 set 150 mA (code 6) | constant voltage (taper) | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4184 mV 95% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3
+14:15:42 set 150 mA (code 6) | done | VBUS 0 mV (input limit 1500 mA, VINDPM 4360 mV) | VSYS 4296 mV | VBAT 4170 mV 100% | die 34.0 C | precharge 25 mA, end 25 mA, CV code 3

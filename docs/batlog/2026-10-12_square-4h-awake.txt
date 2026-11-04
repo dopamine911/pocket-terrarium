@@ -1,0 +1,67 @@
+# the square (2.16, 1000 mAh) - 2026-10-12 17:00-21:00 unplugged, awake, 60% brightness (level 153), the light on, two fry
+# read over the director at 21:00 on the cable; the log's mA column assumes 200 mAh (x5 for this cell): 100 -> 66% in 4.3 h = 340 mAh = ~79 mA; the firmware learned 8.5 %/h
+61 samples (h:mm since the first | SoC | VBAT | bright | state | mA since previous)
+    0:00 |  98% | 4147 mV | 153 | asleep | bed
+    0:09 |  99% | 4158 mV | 255 | awake  | boot    -12.2 mA
+    0:14 | 100% | 4165 mV | 255 | awake  |         -24.0 mA
+    0:19 | 100% | 4172 mV | 255 | awake  |           0.0 mA
+    0:24 | 100% | 4178 mV | 255 | awake  |           0.0 mA
+    0:26 | 100% | 4179 mV | 255 | asleep | sleep     0.0 mA
+    0:39 | 100% | 4127 mV |   0 | asleep | nap       0.0 mA
+    0:39 | 100% | 4127 mV | 255 | awake  |
+    0:44 |  98% | 4096 mV | 153 | awake  |          48.0 mA
+    0:49 |  97% | 4075 mV | 153 | awake  |          24.0 mA
+    0:54 |  96% | 4069 mV | 153 | awake  |          24.0 mA
+    0:59 |  95% | 4070 mV | 153 | awake  |          24.0 mA
+    1:04 |  94% | 4058 mV | 153 | awake  |          24.0 mA
+    1:09 |  94% | 4064 mV | 153 | awake  |           0.0 mA
+    1:14 |  93% | 4049 mV | 153 | awake  |          24.0 mA
+    1:19 |  92% | 4045 mV | 153 | awake  |          24.0 mA
+    1:24 |  92% | 4038 mV | 153 | awake  |           0.0 mA
+    1:29 |  91% | 4042 mV | 153 | awake  |          24.0 mA
+    1:34 |  91% | 4045 mV | 153 | awake  |           0.0 mA
+    1:39 |  90% | 4043 mV | 153 | awake  |          24.0 mA
+    1:44 |  90% | 4035 mV | 153 | awake  |           0.0 mA
+    1:49 |  90% | 4036 mV | 153 | awake  |           0.0 mA
+    1:54 |  89% | 4021 mV | 153 | awake  |          24.0 mA
+    1:59 |  89% | 4028 mV | 153 | awake  |           0.0 mA
+    2:04 |  89% | 4027 mV | 153 | awake  |           0.0 mA
+    2:09 |  88% | 4019 mV | 153 | awake  |          24.0 mA
+    2:14 |  88% | 4022 mV | 153 | awake  |           0.0 mA
+    2:19 |  87% | 4014 mV | 153 | awake  |          24.0 mA
+    2:24 |  87% | 4002 mV | 153 | awake  |           0.0 mA
+    2:29 |  87% | 4004 mV | 153 | awake  |           0.0 mA
+    2:34 |  86% | 4001 mV | 153 | awake  |          24.0 mA
+    2:39 |  86% | 3996 mV | 153 | awake  |           0.0 mA
+    2:44 |  85% | 3982 mV | 153 | awake  |          24.0 mA
+    2:49 |  85% | 3980 mV | 153 | awake  |           0.0 mA
+    2:54 |  84% | 3975 mV | 153 | awake  |          23.9 mA
+    2:59 |  83% | 3966 mV | 153 | awake  |          24.0 mA
+    3:04 |  83% | 3959 mV | 153 | awake  |           0.0 mA
+    3:09 |  82% | 3951 mV | 153 | awake  |          24.0 mA
+    3:14 |  81% | 3942 mV | 153 | awake  |          24.0 mA
+    3:19 |  80% | 3931 mV | 153 | awake  |          24.0 mA
+    3:24 |  79% | 3932 mV | 153 | awake  |          24.0 mA
+    3:29 |  78% | 3920 mV | 153 | awake  |          24.0 mA
+    3:34 |  78% | 3911 mV | 153 | awake  |           0.0 mA
+    3:39 |  77% | 3908 mV | 153 | awake  |          24.0 mA
+    3:44 |  76% | 3897 mV | 153 | awake  |          24.0 mA
+    3:49 |  75% | 3888 mV | 153 | awake  |          24.0 mA
+    3:54 |  74% | 3891 mV | 153 | awake  |          24.0 mA
+    3:59 |  73% | 3877 mV | 153 | awake  |          24.0 mA
+    4:04 |  72% | 3872 mV | 153 | awake  |          24.0 mA
+    4:09 |  71% | 3870 mV | 153 | awake  |          24.0 mA
+    4:14 |  71% | 3863 mV | 153 | awake  |           0.0 mA
+    4:19 |  70% | 3861 mV | 153 | awake  |          24.0 mA
+    4:24 |  69% | 3853 mV | 153 | awake  |          24.0 mA
+    4:29 |  68% | 3846 mV | 153 | awake  |          24.0 mA
+    4:34 |  67% | 3836 mV | 153 | awake  |          24.0 mA
+    4:39 |  66% | 3841 mV | 153 | awake  |          24.0 mA
+    4:41 |  66% | 3889 mV | 153 | asleep | sleep     0.0 mA
+    4:36 |  66% | 3889 mV |   0 | asleep | nap
+    4:38 |  66% | 3846 mV | 153 | asleep | sleep     0.0 mA
+    4:38 |  66% | 3896 mV |   0 | asleep | nap       0.0 mA
+    4:39 |  66% | 3902 mV | 153 | awake  |           0.0 mA
+  awake:  4.3 h, 66 mAh -> 15 mA average
+  asleep: 0.4 h, -2.0 mAh -> -4.56 mA average
+  (SoC is 1% = 2 mAh; short awake windows are coarse, a night is not)

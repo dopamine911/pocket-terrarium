@@ -1,0 +1,23 @@
+# pocket-tank preflight 2026-10-13_1600 on /dev/cu.usbmodem1301
+I (308628) batlog: 2 samples (h:mm since the first | SoC | VBAT | bright | state | mA since previous)
+I (308629) batlog:     0:00 |  32% | 3699 mV |   0 | asleep | bed
+I (308633) batlog:   124:50 |  18% | 3703 mV | 255 | awake  | boot      0.2 mA
+I (308639) batlog:   asleep: 124.8 h, 28.0 mAh -> 0.22 mA average
+I (308645) batlog:   (SoC is 1% = 2 mAh; short awake windows are coarse, a night is not)
+I (312705) director: 0 mira   elder age 98.6h size 1.57 hunger 5.6 energy 5.1 stress 0.0 curiosity 0.6 trust 7.9 ms 1f3f  explore at 142,166
+I (312707) director: 1 nori   elder age 98.3h size 1.45 hunger 3.2 energy 7.1 stress 0.0 curiosity 0.0 trust 7.9 ms 1f3f  visit_bubbles at 240,200
+I (312720) director: 2 kelp   elder age 90.8h size 1.25 hunger 3.5 energy 6.6 stress 0.0 curiosity 0.0 trust 5.7 ms 1f3f  visit_bubbles at 256,161
+I (312733) director: 3 polo   elder age 42.6h size 1.47 hunger 6.5 energy 6.7 stress 0.0 curiosity 9.9 trust 4.1 ms 3f3b  explore at 227,329
+I (312745) director: pellets 0 | trickle on | ravenous 0 | day idle 54s | veg 0.45 0.50 0.42 | algae cells 1/644 | courting no | arrival -
+I (312757) director: sand dollars 348 (earned 838) | shop: plant snail castle coral urchin | colonies 186 | 2754 cm trimmed
+I (312768) director: urchin at x 189 | ambling | appetite 0.026 | 6885 cm grazed so far (keeps the grass over 0.40)
+I (312778) director: snail at 208,467 heading -32 deg | after cell 459 at 404,350 (film 90) | 1 cells on the glass | 3358 grazed so far
+I (312790) director: bed 0 fronds (x from 44, pitch 12): 0.50 0.49 0.48 0.47 0.46 0.45 0.44 0.43 0.43 0.42 0.41
+I (312800) director: bed 1 fronds (x from 294, pitch 12): 0.47 0.48 0.50 0.52 0.53
+I (312807) director: bed 2 fronds (x from 220, pitch 12): 0.40 0.41 0.42 0.44 0.44
+I (312815) director: bed 3 leaves (x from 315, pitch 14): 0.50 0.52 0.53 0.55
+I (312821) director: plant placed: centre x 336 (the keeper's), depth IN FRONT of the fish
+I (312829) director: castle placed: centre x 172 (the keeper's), IN FRONT of the grass (the fish swim through)
+I (312839) director: coral placed: centre x 82 (the keeper's), IN FRONT, colour ff7a1e, growth 0.63 of 1.25 (growing)
+I (312849) director: nursery bed 3 (a bed >= 0.12) | parked real tank: no (this IS the real tank)
+I (312858) director: battery 18% charging, VBAT 3708 mV | brightness 255/255 (level 100%)

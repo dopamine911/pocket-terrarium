@@ -1,0 +1,18 @@
+# touch_calib 2026-10-12 16:13: pass, cross, target x y, press x y
+0 0 48 40 42 36
+0 1 240 40 240 34
+0 2 432 40 425 44
+0 3 48 240 42 252
+0 4 240 240 246 231
+0 5 432 240 435 253
+0 6 48 440 37 434
+0 7 240 440 223 445
+0 8 432 440 424 445
+# x: press = 1.0095 * target -7.4   (rms 6.5 px, worst 11.9; mean off -5.1)
+#    target  48 -> press mean   40.3  (37..42, n 3)
+#    target 240 -> press mean  236.3  (223..246, n 3)
+#    target 432 -> press mean  428.0  (424..435, n 3)
+# y: press = 1.0083 * target -0.4   (rms 7.5 px, worst 11.4; mean off +1.6)
+#    target  40 -> press mean   38.0  (34..44, n 3)
+#    target 240 -> press mean  245.3  (231..253, n 3)
+#    target 440 -> press mean  441.3  (434..445, n 3)

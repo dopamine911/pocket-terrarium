@@ -1,0 +1,93 @@
+# The over-the-air release (docs/OTA.md): on a version tag, build the firmware
+# for every board (docs/BOARDS.md) SIGNED with the project's key, make each
+# board's OTA manifest, and attach the images and the manifests to the GitHub
+# Release for that tag. A tank fetches its own board's
+#   https://github.com/mediacutlet/pocket-tank/releases/latest/download/latest-<board>.json
+# (amoled18, round175c, watch206, square216: common/version.h PT_BOARD)
+# so a release is live for every tank the moment it is published - and a
+# PRE-RELEASE is skipped by "latest": the private test channel (the
+# director's `ota url` points a tank at a pre-release's own asset URL).
+#
+# The signing key is the repository secret OTA_SIGNING_KEY (the PEM text of
+# firmware/keys/ota_signing_key.pem; tools/ota_key.sh). It never appears in
+# a log. Fork PRs do not see secrets and this workflow does not run for them.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  ota:
+    if: github.repository == 'mediacutlet/pocket-tank'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # git describe wants the tags; the tag's message is the manifest note
+      # checkout leaves the pushed tag as a plain ref to its commit: fetch the
+      # annotated tag itself, or the note below is the commit's message
+      - name: The tag's own message
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      - name: Signing key
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          test -n "$OTA_SIGNING_KEY" || { echo "no OTA_SIGNING_KEY secret"; exit 1; }
+          mkdir -p firmware/keys
+          printf '%s\n' "$OTA_SIGNING_KEY" > firmware/keys/ota_signing_key.pem
+      - name: Build (signed) - the 1.8
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+      # the other boards (docs/BOARDS.md): the same tree on top of their
+      # sdkconfig fragment, each in its own build dir
+      - name: Build (signed) - the round board (1.75C)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-round -DSDKCONFIG=build-round/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.round" build
+      - name: Build (signed) - the watch (2.06)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-watch -DSDKCONFIG=build-watch/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.watch" build
+      - name: Build (signed) - the square (2.16)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+          path: firmware
+          command: idf.py -B build-square -DSDKCONFIG=build-square/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.square" build
+      - name: OTA image + manifest
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          for B in firmware/build firmware/build-round firmware/build-watch firmware/build-square; do   # the board comes from each image's marker
+            python3 tools/make_ota_manifest.py --build-dir "$B" \
+              --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" --out ota
+          done
+          ls -la ota
+          test "$(ls ota/latest-*.json | wc -l)" -eq 4 || { echo "expected four board manifests"; exit 1; }
+          rm -f firmware/keys/ota_signing_key.pem
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # a tag with a suffix (v0.3.0-rc1) is a pre-release: invisible to "latest"
+          PRE=""; case "$TAG" in *-*) PRE="--prerelease";; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" ota/latest-*.json ota/pocket_tank-*.bin --clobber
+          else
+            gh release create "$TAG" ota/latest-*.json ota/pocket_tank-*.bin $PRE --verify-tag \
+              --title "$TAG" --notes "$(git tag -l --format='%(contents)' "$TAG")"
+          fi

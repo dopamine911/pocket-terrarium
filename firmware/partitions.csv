@@ -1,0 +1,16 @@
+# pocket-tank partition table (16 MB flash) - two app slots for over-the-air
+# updates (docs/OTA.md). nvs holds the keeper's tank and never moves
+# (tools/make_installer.py refuses a table that moves it). The model does not
+# move either: a cable update writes the app and skips the 7.5 MB model. The
+# second slot is carved from the front of the old storage row; otadata sits
+# in front of it. The model's LAST sector (0xA8F000) is the model trailer
+# (firmware/main/model_trailer.c), written after the body so a half-written
+# model is never mistaken for a good one.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+ota_0,      app,  ota_0,   0x10000,  0x280000,
+model,      data, 0x40,    0x290000, 0x800000,
+otadata,    data, ota,     0xA90000, 0x2000,
+ota_1,      app,  ota_1,   0xAA0000, 0x280000,
+storage,    data, spiffs,  0xD20000, 0x2E0000,
