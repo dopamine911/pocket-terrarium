@@ -1,4 +1,4 @@
-# Lizard schema L1 — DRAFT (frozen once the first trace run starts)
+# Lizard schema L1 — FROZEN (the first trace run started 2026-11-04; a change now means new traces)
 
 The model's input and output for pocket-terrarium. It replaces the fish
 schemas in `schema.md` (v2–v4), which stay as the record of what pocket-tank

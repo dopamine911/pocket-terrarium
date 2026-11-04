@@ -258,9 +258,9 @@ with what it has. Each log prints every 50 pairs (`50/11250`), warnings as
 Watching it:
 ```bash
 wc -l out/l1_traces_*.jsonl                                       # pairs so far
-for w in a b c d; do kill -0 "$(cat out/l1_gen_$w.pid)" 2>/dev/null && echo "$w running" || echo "$w STOPPED"; done
+pgrep -af 'gen_traces.py --schema L1' | cut -c1-110                 # the live workers (the .pid files can hold a wrapper's pid, not python's)
 python3 fold_traces.py --schema L1 out/l1_traces_a.jsonl --out /tmp/l1_peek.jsonl   # the first ~200: no goal over 40%
-kill $(cat out/l1_gen_*.pid)                                      # stop all (the files keep every pair written)
+pkill -f 'gen_traces.py --schema L1'                               # stop all (the files keep every pair written)
 ```
 The fold's coverage block prints the teacher's rate on each acceptance slice
 (A2–A9, A12) in the data itself.

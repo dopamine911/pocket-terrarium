@@ -168,7 +168,7 @@ flowchart LR
 - [x] `docs/species-pack.md`: the `species_t` contract, heat/phase normalisation, gecko values, validation
 - [x] `docs/shed.md`: the cycle, clean vs stuck, moisture, the mister, milestones, tests
 - [x] Model acceptance targets A1–A16 (in `model/schema-lizard.md`), written before training
-- Freeze point: the schema stays DRAFT until the first long trace run starts; change it freely until then.
+- Frozen 2026-11-04: the first long trace run started (P4).
 
 ### P2 — Engine (`common/tank.c`/`tank.h`): largest piece, in increments that each leave `make check` green
 
@@ -246,10 +246,9 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] Parity fixture `model/testdata/l1_parity.jsonl` (420 lines, `make_l1_parity.py --check` deterministic)
 - [x] Pilot 1 (41 states × 3 on `chat-teacher`): 87.8% agreement, 0 JSON failures, ~160 decisions/min (4 workers).
       Fails A11: content lizards `explore` whatever `bold`; `investigate` never chosen (0/209)
-- [ ] Fix A11/`investigate` in the prompt, re-run the pilot, `prompt_check.py --schema L1` (in progress)
-- [ ] Traces, overnight: target ~40–50k pairs (no old traces carry over). Workers =
-      parallel slots on the teacher's server; each worker is sequential because decisions feed back into its sim
-      (`gen_traces.py:590`)
+- [x] Prompt gate (5e2f7d8): every teacher-checkable row passes; pilot 97.3%; the Python sim mirrors the C desert
+- [ ] Traces, overnight (started 2026-11-04, 4 workers × 11,250 on `chat-teacher`, seeds 41–44, hard stop 7 h;
+      plus ~140 extra pairs from seeds 51–54 written by an accidental second launch, kept: distinct seeds)
 - [ ] `fold_traces.py` → `train_tokenizer.py` → `train.py` (dim 384, 8 layers, seq 64) → `export_q4.py`
 - [ ] Training hardware: **CPU PyTorch** is enough. 6 × 14.3M params × 64×64 tokens × 5,000 iters ≈ 1.8 PFLOP,
       roughly 1–3 h on marvin's 16 Zen 5 cores or zaphod's 3900X [INFERENCE: time 100 iters first].
