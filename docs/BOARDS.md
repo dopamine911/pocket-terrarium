@@ -66,7 +66,8 @@ pixel instead of a name - fix that instead.
    reach, a spacing, a density, a timeout - tuned on the 1.8 is a 1.8 number.
    Derive it from the world's names (`TANK_BOT`, `FOOD_FLOOR_Y`, `TANK_FX0` /
    `TANK_FX1`, `TANK_W` / `TANK_H`) or prove it with a selftest that MEASURES
-   it on every world (check-all runs it four times). Before adding or
+   it on every world (check-all runs it on all four, in both bins: the terrarium's and the aquarium's,
+   docs/habitat-pack.md "Worlds"). Before adding or
    changing one, ask: does it still hold on the tallest glass (the watch), the
    widest (the P4), the curved one (the bowl)? The miss that wrote this rule:
    a pellet left in the water vanished at 45 s - the 1.8's fall - so on the
@@ -76,7 +77,7 @@ pixel instead of a name - fix that instead.
 
    | step | command (from the project root) | what it proves |
    |---|---|---|
-   | the checks | `make -C pocket-tank/sim check-all` | every selftest on all four worlds |
+   | the checks | `make -C pocket-tank/sim check-all` | every selftest on all four worlds, in both bins (`WORLD=terrarium` and `WORLD=aquarium`) |
    | the pictures | `pocket-tank/tools/board_sheet.py --selftest-card` (or `--snapshot 20`) | the same page on four glasses, side by side, cut to each glass |
    | the firmware | `pocket-tank/tools/flash.sh` builds the 1.8; `flash_round.sh --build-only`, `flash_watch.sh --build-only` | it compiles for each board; compare `.bss` with the last flashed build (internal RAM is ~23 KB) |
    | the glass | flash the 1.8 first (it is the reference and has the preflight), then the other two | Strato's finger |

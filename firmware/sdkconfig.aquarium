@@ -1,0 +1,4 @@
+# the AQUARIUM's bin (common/world.h PT_WORLD 1: pocket-tank's fish, swimming): on top of sdkconfig.defaults and a board's overlay
+#   idf.py -B <dir> -DSDKCONFIG=<dir>/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.aquarium" build
+#   idf.py -B <dir> -DSDKCONFIG=<dir>/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.round;sdkconfig.aquarium" build
+CONFIG_POCKET_TANK_WORLD_AQUARIUM=y

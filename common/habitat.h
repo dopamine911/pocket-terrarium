@@ -9,7 +9,8 @@
  *
  * Positions are fractions of the floor's span (tank.h PLACE_*: 0 = the glass at the warm, left end, 1 = the
  * cool, right end), so a habitat lays out on every board; temperatures are degrees C; times are tended
- * seconds (awake in full, asleep at SLEEP_GROWTH_FRAC). One habitat for now: the desert. */
+ * seconds (awake in full, asleep at SLEEP_GROWTH_FRAC). Two habitats: the terrarium's desert, and the
+ * aquarium's freshwater (P2b: pocket-tank's water as a pack - a heater's even 25 C, no lamp, no hides). */
 #ifndef HABITAT_H
 #define HABITAT_H
 #include <stdbool.h>
@@ -30,10 +31,12 @@ typedef struct {
     const char *name;                   /* "DESERT" */
     uint8_t     id;                     /* stored in the save; never reused; 1..31 (species_t.habitats is a bit per id) */
     world_t     world;                  /* the build it belongs to: only a species of the same world lives in it */
-    /* the floor while lit: from its warm end to its cool end, straight across; dark, all of it night_drop_c cooler */
+    /* the floor while lit: from its warm end to its cool end, straight across (an aquarium's may be even); dark, all of
+       it night_drop_c cooler */
     float       floor_warm_c, floor_cool_c, night_drop_c;
     /* the basking spot: where along the floor, its middle while the lamp is lit, and the lamp's pool round it
-       (bask_c in the middle, falling to the floor's own at bask_r_px; dark, the lamp is out) */
+       (bask_c in the middle, falling to the floor's own at bask_r_px; dark, the lamp is out). bask_r_px 0: no lamp
+       (an aquarium) */
     float       bask_u, bask_c, bask_r_px;
     hide_t      hides[HABITAT_HIDES_MAX];
     uint8_t     n_hides;
@@ -42,15 +45,22 @@ typedef struct {
     float       humidity;               /* the air's baseline 0..1 (the desert ~0.2): data - the shed reads the humid hide's moisture only */
 } habitat_t;
 
-#define HABITAT_DESERT  1               /* common/habitat/desert.c */
+#define HABITAT_DESERT     1            /* common/habitat/desert.c (the terrarium) */
+#define HABITAT_FRESHWATER 2            /* common/habitat/freshwater.c (the aquarium) */
+#if PT_TERRARIUM
 #define HABITAT_DEFAULT HABITAT_DESERT
-extern const habitat_t HABITAT_PACK_DESERT;
+#else
+#define HABITAT_DEFAULT HABITAT_FRESHWATER
+#endif
+extern const habitat_t HABITAT_PACK_DESERT, HABITAT_PACK_FRESHWATER;
 
 const habitat_t *habitat_get(uint8_t id);      /* NULL: no such habitat */
 int  habitat_count(void);
 const habitat_t *habitat_at(int i);
-/* a habitat's own rules (--selftest-packs): an ordered, positive layout, at least one humid hide, a lamp that
- * warms its spot, moisture and humidity in 0..1; false with the first broken rule in why */
+/* a habitat's own rules (--selftest-packs), its world's: a terrarium's - an ordered, positive layout, a warm end
+ * warmer than its cool end, a lamp that warms its spot, at least one humid hide; an aquarium's - the floor may be
+ * even, a lamp and hides are its own business (none in freshwater); every one's moisture and humidity in 0..1.
+ * false with the first broken rule in why */
 bool habitat_check(const habitat_t *h, char *why, size_t n);
 /* the species may live in the habitat: it lists the habitat's id (species_t.habitats) and they share a world */
 bool habitat_fits(const habitat_t *h, const species_t *s);

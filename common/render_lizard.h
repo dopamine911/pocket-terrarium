@@ -1,0 +1,94 @@
+/* render_lizard.h - the lizard body plan's renderer (pocket-terrarium P3a): draw_lizard.
+ *
+ * One renderer for every PLAN_LIZARD pack (species.h): the pack's lizard_geom_t sets the body (its length, the
+ * head's width, the limbs, the eye, how much the tail shows the fat reserve), its morph the colours and its
+ * pattern for the stage the markings (BANDED, SPOTTED; anything else is drawn plain). The engine's state picks
+ * the pose (tank.h LZ_POSE_*), the turn (fish_t.yaw / yaw_tail), the walk's phase, the blink, the tongue, the
+ * fat reserve and the shed (tank.h SHED_*). Seen from the side, a little from above: the feet on the near side
+ * stand a little lower than the far ones.
+ *
+ * Standalone so far: render_tank does not call it yet (P3b wires it in, with the desert scene,
+ * render_scene_desert.h). `fishsim --lizard-sheet <prefix>` (sim/sheet_lizard.c) draws every morph, stage,
+ * pose, the walk, the sheds and the scene on all four glasses, and measures the cost.
+ *
+ * Cost: the body (head, trunk, tail) is a grid of tones built only for a pose not drawn lately and blitted
+ * every frame (render.c's crab, cr_build); the legs, the eyes, the tongue and the mouth are drawn live over it.
+ * So a walking lizard is one cached body however long it walks; a turn builds a body per step of its yaw. */
+#ifndef RENDER_LIZARD_H
+#define RENDER_LIZARD_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "tank.h"                   /* LZ_POSE_*, SHED_*, STAGE_*; species.h's lizard_geom_t, morph_t, pattern_t */
+
+/* where it draws: a frame (or the scene cache) in the frame's byte order (render.h FB_SWAP16), the window of the
+ * frame it covers (render.c ctx_t's ox, oy, w, h: everything outside is clipped) and the night's dim (render_tank:
+ * 0.45 dark, 1 lit). mark, when set, is called for every run of pixels written (frame coordinates, x0..x1
+ * inclusive) - render.c's dirty / touched masks and the drawn box; NULL = nothing marked. */
+typedef struct {
+    uint16_t *fb; int stride;
+    int ox, oy, w, h;
+    float dim;
+    void (*mark)(void *user, int x0, int x1, int y);
+    void *user;
+} lz_canvas_t;
+
+/* who it is: the pack's body, its morph, the pattern its stage shows, the stage (STAGE_FRY = a hatchling ..
+ * STAGE_ELDER) and its own markings' seed (fish_t.uid: no two geckos spotted alike) */
+typedef struct {
+    const lizard_geom_t *geom;
+    const morph_t       *morph;
+    const pattern_t     *pattern;
+    uint8_t              stage;
+    uint32_t             seed;
+} lizard_look_t;
+
+/* what it is doing. Everything but kind defaults to 0 (lizard_pose: yaw 1, the tail's yaw with it, fat 0.5) */
+typedef struct {
+    uint8_t kind;           /* LZ_POSE_* (tank.h): STAND WALK TURN FLICK STALK LUNGE BASK DIG REST HIDDEN PEEK STANDOFF */
+    float   yaw, yaw_tail;  /* which way it faces (fish_t.yaw): +1 right .. 0 head-on (its face to the glass) .. -1 left;
+                               the tail's a beat behind (fish_t.yaw_tail; pass yaw again if the engine keeps none) */
+    float   phase;          /* 0..1, wrapping: the walk's cycle (WALK, TURN's shuffle, STALK's creep - the diagonal pairs
+                               step together), the dig's scrabble (DIG); LUNGE: how far it has reached, 0..1 */
+    float   blink;          /* 0 open .. 1 shut (REST is drawn shut, BASK at least half-lidded) */
+    float   tongue;         /* 0 in .. 1 out (a flick: up and back down over ~0.25 s) */
+    float   fat;            /* the fat reserve 0..1: the tail's girth (scaled by the pack's geom.tail_fat) */
+    uint8_t shed;           /* SHED_* (tank.h): SOON dull and pale with blue-grey eyes; SHEDDING the old skin loose from
+                               the nose back (shed_k); STUCK white rings left on the toes and the tail tip */
+    float   shed_k;         /* SHEDDING: how far back from the nose the old skin has loosened, 0..1 */
+    float   peek;           /* PEEK: how much of it shows out of the hide, from the nose: 0..1 (0.25: the head) */
+    float   clock;          /* seconds (the tank's clock): the breath (REST, BASK), the stalk's tail tip, the standoff's
+                               tail */
+} lizard_pose_t;
+lizard_pose_t lizard_pose(int kind, float yaw);
+
+/* the stage's size: the pack's geom.length_px is the adult's (scale 1) */
+float lizard_stage_scale(int stage);
+
+/* where the engine's lizard stands to where it is drawn: (x, y) is its middle on the floor (tank.h PLACE_Y and the
+ * lanes); its feet stand LIZARD_FLOOR_DY below that, on the sand line (TANK_BOT - 16) in the middle lane */
+#define LIZARD_FLOOR_DY 8.0f
+/* nose to tail tip, drawn: x is the middle of its length - half of it on either side when it faces sideways */
+static inline float lizard_half_len(const lizard_geom_t *g, float scale) { return 0.5f * g->length_px * scale; }
+
+/* the lizard, its middle at x, its feet on floor_y, at scale (lizard_stage_scale x anything the engine adds, ~0.3..1.4):
+ * its contact shadow, the legs away from the glass, the body, the near legs, the eyes and lids, the tongue and the
+ * mouth. HIDDEN draws nothing */
+void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *look, const lizard_pose_t *pose, float x, float floor_y, float scale);
+/* the box the last draw_lizard wrote (frame coordinates, inclusive); false = it drew nothing */
+bool lizard_last_box(int *x0, int *y0, int *x1, int *y1);
+
+/* MEMORY: the cached bodies and the build's scratch live in one block the platform hands over (the firmware: PSRAM,
+ * like render_set_decor_scratch); without one it is calloc'd on the first draw (the sim) */
+size_t lizard_scratch_bytes(void);
+void   lizard_set_scratch(void *buf);
+/* THE FRAME'S BUILDS: a new body (a pose, a step of a turn) costs a build, ~6x a cached draw. Called once a frame,
+ * at most `builds` of them are made that frame; a lizard over the budget is drawn with its last body a frame more
+ * (its legs, eyes and tongue live as ever). Negative (the default): no limit */
+void   lizard_frame(int builds);
+/* (tests, the bench) off: a build every draw; how many builds so far; how many bodies were cut to the grid's size
+ * (0 at every size the packs use: the sheet checks) */
+void   lizard_cache_on(bool on);
+int    lizard_cache_builds(void);
+int    lizard_cache_clipped(void);
+#endif

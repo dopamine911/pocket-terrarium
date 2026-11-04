@@ -8,8 +8,9 @@
 # (`cc -std=c11 -D_ANSI_SOURCE -fsyntax-only`) catches glibc's hidden names
 # only; this catches what the tests do.
 #
-#   tools/check_linux.sh            # the tree as committed (git archive HEAD), all four worlds, stops at the first failure like CI
-#   tools/check_linux.sh --all      # every selftest in every world, going on past failures: the whole list at once
+#   tools/check_linux.sh            # the tree as committed (git archive HEAD), all four worlds in both bins (check-all), stops at the first failure like CI
+#   tools/check_linux.sh --all      # every selftest in every world, both bins (the terrarium's and the aquarium's lists), going on past
+#                                   # failures: the whole list at once
 #                                   # (the list from make itself: a grep took the NOMODEL line along and ran a
 #                                   # garbled flag as a plain sim forever, 11-03)
 #   tools/check_linux.sh --dirty    # the working tree instead of HEAD (uncommitted edits included)
@@ -36,11 +37,13 @@ for f in model_q4.bin model.bin tokenizer.bin; do [ -f "$W/model/out/$f" ] || [ 
 NOMODEL=""; { [ -f "$W/model/out/model.bin" ] && [ -f "$W/model/out/tokenizer.bin" ]; } || NOMODEL="NOMODEL=1"
 echo "check_linux: $W ($([ "$DIRTY" = 1 ] && echo the working tree || echo HEAD $(git rev-parse --short HEAD)), $([ -n "$NOMODEL" ] && echo no model || echo with the model))"
 if [ "$ALL" = 1 ]; then
-  SCRIPT='tests=$(printf "print-tests:\n\t@echo \$(SELFTESTS)\n" | make -s -C sim -f Makefile -f - print-tests);
+  SCRIPT='rc=0; for bin in terrarium aquarium; do
+    tests=$(printf "print-tests:\n\t@echo \$(SELFTESTS)\n" | make -s -C sim -f Makefile -f - WORLD=$bin print-tests);
     [ -n "$NOMODEL" ] && tests=$(echo "$tests" | sed "s/--selftest-llm//; s/--selftest-model//");
-    rc=0; for w in "" ROUND=1 WATCH=1 SQUARE=1; do out=fishsim; case $w in ROUND=1) out=fishsim-round;; WATCH=1) out=fishsim-watch;; SQUARE=1) out=fishsim-square;; esac;
-      echo "=== WORLD ${w:-RECT}"; make -C sim -j"$(nproc)" $w $out >/dev/null 2>&1 || { echo "BUILD FAILED"; rc=1; continue; };
-      for t in $tests; do r=$(cd sim && ./$out $t 2>&1 | grep -E "^FAIL" | head -3); [ -n "$r" ] && { echo "  $t: $r"; rc=1; }; done; done; exit $rc'
+    for w in "" ROUND=1 WATCH=1 SQUARE=1; do out=fishsim; case $w in ROUND=1) out=fishsim-round;; WATCH=1) out=fishsim-watch;; SQUARE=1) out=fishsim-square;; esac;
+      [ $bin = aquarium ] && out=$out-aquarium;
+      echo "=== WORLD ${w:-RECT}, the $bin"; make -C sim -j"$(nproc)" WORLD=$bin $w $out >/dev/null 2>&1 || { echo "BUILD FAILED"; rc=1; continue; };
+      for t in $tests; do r=$(cd sim && ./$out $t 2>&1 | grep -E "^FAIL" | head -3); [ -n "$r" ] && { echo "  $t: $r"; rc=1; }; done; done; done; exit $rc'
 else
   SCRIPT='make -C sim -j"$(nproc)" $NOMODEL check-all 2>&1 | grep -v "^cc \|^  ok\|tick \|^census" | grep -E "RUN |FAIL|rror|Error" ; exit ${PIPESTATUS[0]}'
 fi

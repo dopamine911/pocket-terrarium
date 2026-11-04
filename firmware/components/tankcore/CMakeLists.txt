@@ -6,7 +6,8 @@ set(COMMON ${CMAKE_CURRENT_LIST_DIR}/../../../common)
 idf_component_register(
     SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
          "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/update.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c" "${COMMON}/passport.c" "${COMMON}/link.c" "${COMMON}/tank_link.c" "${COMMON}/collection.c" "${COMMON}/gift.c"
-         "${COMMON}/species.c" "${COMMON}/species/gecko.c" "${COMMON}/habitat.c" "${COMMON}/habitat/desert.c"
+         "${COMMON}/species.c" "${COMMON}/species/gecko.c" "${COMMON}/species/fish.c" "${COMMON}/habitat.c" "${COMMON}/habitat/desert.c" "${COMMON}/habitat/freshwater.c"
+         "${COMMON}/render_lizard.c" "${COMMON}/render_scene_desert.c"
          "persist_port_esp.c" "rtc_port_pcf85063.c"
     INCLUDE_DIRS "${COMMON}" "."
     PRIV_REQUIRES nvs_flash esp_driver_i2c esp_partition
@@ -27,4 +28,11 @@ if(CONFIG_POCKET_TANK_WATCH)   # the watch's 410 x 502 portrait tank
 endif()
 if(CONFIG_POCKET_TANK_SQUARE)  # the square's 480 x 480 tank
     target_compile_definitions(${COMPONENT_LIB} PUBLIC TANK_SQUARE)
+endif()
+# THE WORLD (common/world.h, PLAN.md D11): the bin's, from the Kconfig choice POCKET_TANK_WORLD (sdkconfig.aquarium picks
+# the aquarium). PUBLIC, as the board's shape: every component that sees tank.h - main, llm - must see the same world.
+if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC PT_WORLD=1)
+else()
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC PT_WORLD=2)
 endif()

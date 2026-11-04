@@ -753,12 +753,16 @@ float progression_stage_age(const tank_t *t, stage_t st) {
 /* GROWING UP (docs/shed.md "Growing up: a shed comes first"): an age past its stage starts a growth shed at once - or
  * makes the shed under way the growth shed - and the stage changes only when that shed comes off clean (shed_done),
  * never at the age itself. Only the director's set_age (`down`) puts the age's own stage on at once, up or down (a
- * fish grown up under shorter stage times keeps its stage on the longer ones: nothing else takes one away). The
- * badges follow the stage it has. */
+ * fish grown up under shorter stage times keeps its stage on the longer ones: nothing else takes one away). A pack
+ * that does not shed (species_t.sheds false: the aquarium's fish) grows as pocket-tank's always have - the stage the
+ * age has earned, at once, a silent surprise. The badges follow the stage it has. */
 static void apply_stage(tank_t *t, int i, bool down) {
     fish_t *f = &t->fish[i];
     stage_t st = stage_for(t, s_age[i]);
-    if (down) { if (st != f->stage) { f->stage = st; mark_dirty(); } }
+    if (!tank_species(t)->sheds) {
+        if (st < f->stage && !down) st = f->stage;
+        if (st != f->stage) { f->stage = st; mark_dirty(); }
+    } else if (down) { if (st != f->stage) { f->stage = st; mark_dirty(); } }
     else if (st > f->stage && !f->shed_growth && tank_shed_growth(t, i)) mark_dirty();
     if (f->stage >= STAGE_JUV)   set_ms(f, MS_REACHED_JUV);
     if (f->stage >= STAGE_ADULT) set_ms(f, MS_REACHED_ADULT);
@@ -789,9 +793,13 @@ static void shed_done(tank_t *t, int i) {
 /* TENDED TIME for the lizards here - awake every second (x progression_time_scale), asleep SLEEP_GROWTH_FRAC of it: the
  * age, the shed's clock and the humid hide drying (tank_shed_clock), a shed come off clean finished, and a stage's age
  * starting its growth shed the moment it is reached - the step is cut there, so the step's shed time is lived before
- * it. A step of nothing still runs the stage rule. */
+ * it. A step of nothing still runs the stage rule. A pack that does not shed: the age, and the stage it has earned. */
 static void live_tended(tank_t *t, double tended) {
     const species_t *p = tank_species(t);
+    if (!p->sheds) {                                /* (no shed to cut a step for: pocket-tank's growing, exactly) */
+        for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away) { s_age[i] += tended; apply_stage(t, i, false); }
+        return;
+    }
     do {
         double step = tended; int cut = -1;
         for (int i = 0; i < t->n_fish; i++) {       /* the next stage's age inside this step: the step ends there */
@@ -1522,8 +1530,11 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     *saved_unix = sv.saved_unix; s_loaded_unix = sv.saved_unix;
     s_loaded_release = sv.saved_release;
     t->n_fish = 0;
-    /* the packs first: every fish is made on its species (an older save, an id this build lacks, a pair that does not fit: the defaults) */
-    if (!sv.pack_v || !tank_set_packs(t, sv.habitat_id, sv.pack_id)) { t->habitat_id = HABITAT_DEFAULT; t->pack_id = SPECIES_DEFAULT; }
+    /* the packs first: every fish is made on its species (an older save, an id this build lacks, a pair that does not fit or is
+       another world's - a terrarium's save under the aquarium's bin, say: the defaults, and the tail's heat and sheds, which
+       are that pack's, are not taken - its animals start fresh) */
+    const bool packs_ok = sv.pack_v && tank_set_packs(t, sv.habitat_id, sv.pack_id);
+    if (!packs_ok) { t->habitat_id = HABITAT_DEFAULT; t->pack_id = SPECIES_DEFAULT; }
     bool upgraded = false;                    /* a fish from before 0.4: its genes / IDs made up at this load */
     uint32_t tail_used = 0, pack_used = 0; bool any_away = false;
     for (int i = 0; i < sv.n_fish; i++) {
@@ -1558,7 +1569,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         if (ts >= 0 && sv.fish_uid[ts]) { f->uid = sv.fish_uid[ts]; f->parent_uid[0] = sv.parent_uid[ts][0]; f->parent_uid[1] = sv.parent_uid[ts][1]; }
         else upgraded = true;
         if (ts >= 0 && (sv.link_away >> ts & 1)) { f->away = true; any_away = true; }   /* next door when it was saved */
-        int ps = sv.pack_v ? pack_slot(&sv, i, &pack_used) : -1;
+        int ps = packs_ok ? pack_slot(&sv, i, &pack_used) : -1;
         if (ps >= 0) {                            /* the lizard (P2a): its heat and its shed, by the tail's own print; nonsense = tank_make_fish's fresh ones */
             const species_t *sp = tank_species(t);
             float bc = sv.body_c[ps], ss = sv.shed_s[ps], sd = sv.shed_damp[ps];
@@ -1575,7 +1586,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
             float m = sv.moist[k];
             bool humid = k < h->n_hides && h->hides[k].kind == HIDE_HUMID;
-            t->moist[k] = !humid ? 0 : sv.pack_v && m >= 0 && m <= 1 ? m : h->moist_start;
+            t->moist[k] = !humid ? 0 : packs_ok && m >= 0 && m <= 1 ? m : h->moist_start;
         }
     }
     if (sv.tank_uid) t->uid = sv.tank_uid;
@@ -1727,19 +1738,29 @@ uint32_t progression_blob_unlocks(const void *blob, size_t len) {
 #define SLEPT_SLICE_S 300.0f              /* the night lived at tank_tick_sleep's own grain (it is the same in one span or many) */
 void progression_slept(tank_t *t, float seconds) {
     if (seconds <= 0) return;
-    /* a slice at a time: the body's heat, the age and its growth sheds, the shed's clock and the humid hide drying,
-       all at SLEEP_GROWTH_FRAC - so a stage reached in the night has its shed in progress (or done) in the morning,
-       as it would have been lived (docs/shed.md "Growing up"), and a stuck shed's stress is where it would be */
-    for (double left = seconds; left > 0; left -= SLEPT_SLICE_S) {
-        float dt = left < SLEPT_SLICE_S ? (float)left : SLEPT_SLICE_S;
-        tank_tick_sleep(t, dt);
-        live_tended(t, dt * SLEEP_GROWTH_FRAC);
+    if (!tank_species(t)->sheds) {
+        /* a pack that does not shed (the aquarium's fish): the night in one span, as pocket-tank always lived it - the
+           meal pay's wait, the fry offer (aged in full), then their slow growth in the dark */
+        tank_tick_sleep(t, seconds);
+        for (int i = 0; i < t->n_fish; i++) t->fish[i].meal_pay_wait = fmaxf(0, t->fish[i].meal_pay_wait - seconds);
+        fry_age(t, seconds);
+        live_tended(t, seconds * SLEEP_GROWTH_FRAC);
+        for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away) apply_growth(&t->fish[i]);
+    } else {
+        /* a slice at a time: the body's heat, the age and its growth sheds, the shed's clock and the humid hide drying,
+           all at SLEEP_GROWTH_FRAC - so a stage reached in the night has its shed in progress (or done) in the morning,
+           as it would have been lived (docs/shed.md "Growing up"), and a stuck shed's stress is where it would be */
+        for (double left = seconds; left > 0; left -= SLEPT_SLICE_S) {
+            float dt = left < SLEPT_SLICE_S ? (float)left : SLEPT_SLICE_S;
+            tank_tick_sleep(t, dt);
+            live_tended(t, dt * SLEEP_GROWTH_FRAC);
+        }
+        for (int i = 0; i < t->n_fish; i++) {      /* the meal pay's wait runs through sleep; they grew, slowly, in the dark */
+            t->fish[i].meal_pay_wait = fmaxf(0, t->fish[i].meal_pay_wait - seconds);
+            if (!t->fish[i].away) apply_growth(&t->fish[i]);
+        }
+        fry_age(t, seconds);                      /* the fry offer ages asleep too, in full */
     }
-    for (int i = 0; i < t->n_fish; i++) {      /* the meal pay's wait runs through sleep; they grew, slowly, in the dark */
-        t->fish[i].meal_pay_wait = fmaxf(0, t->fish[i].meal_pay_wait - seconds);
-        if (!t->fish[i].away) apply_growth(&t->fish[i]);
-    }
-    fry_age(t, seconds);                      /* the fry offer ages asleep too, in full */
     /* the tank milestone (2026-09-15, was "first quiet night" - every fish
        resting under the old day/night cycle): one unbroken stretch of device
        sleep as long as a night. The cap keeps a week's absence a single span. */
@@ -1777,6 +1798,10 @@ bool progression_finger_company(const tank_t *t, int i) {
     return false;
 }
 
+/* the goals progression reads by meaning, its world's (tank.h THE GOALS): company - a fish following a friend, a lizard
+   investigating; play - the fish's darting, the lizard's digging */
+#define G_FRIEND (PT_TERRARIUM ? GOAL_LZ_INVESTIGATE : GOAL_FOLLOW_FRIEND)
+#define G_PLAY   (PT_TERRARIUM ? GOAL_LZ_DIG : GOAL_DART_PLAY)
 void progression_tick(tank_t *t, float dt) {
     if (!s_booted) return;
     progression_cap_check(t, "progression_tick");   /* (any path, once a tick: a compare) */
@@ -1808,30 +1833,39 @@ void progression_tick(tank_t *t, float dt) {
          * cool it, and the model only follows with a very social fish (7-9),
          * so a middling fish never got the warmth back and sank to the floor;
          * a social one ran to the ceiling. */
-        float warm = (f->goal.id == GOAL_FOLLOW_FRIEND ? SOCIAL_FOLLOW_GAIN : 0)
+        float warm = (f->goal.id == G_FRIEND ? SOCIAL_FOLLOW_GAIN : 0)
                    + (progression_finger_company(t, i) ? SOCIAL_HOLD_GAIN : progression_near_friend(t, i) ? SOCIAL_NEAR_GAIN : 0);
         if (warm > 0) { f->sociable = clampf(f->sociable + k * warm, 0.05f, 0.95f); pressure += k * warm; }
         f->sociable += (f->sociable0 - f->sociable) * k * TRAIT_SETTLE;
         f->drift_acc += pressure;
         if (fabsf(f->bold - f->bold0) >= 0.11f || fabsf(f->sociable - f->sociable0) >= 0.11f) changed_someone = true;
 
-        /* milestones: firsts the fish chose to do */
-        if (f->goal.id == GOAL_DART_PLAY && f->goal_age > 1.0f) set_ms(f, MS_FIRST_DART);
-        if (f->goal.id == GOAL_VISIT_BUBBLES && tank_dist(f->x, f->y, t->bubble_x, t->bubble_y) < 90) set_ms(f, MS_FIRST_BUBBLES);
-        if (f->goal.id == GOAL_INSPECT_REEF) {               /* its landmark: the reef cluster once there is one */
-            float rx, ry; tank_reef_spot(t, &rx, &ry);
-            if (tank_dist(f->x, f->y, rx, ry) < 90) {
-                set_ms(f, MS_INSPECTED);                      /* no badge (0.3.0): it reveals the curiosity slider */
-                if (tank_decor_in(t, 4)) reef_visit = true;          /* (a cluster on the shelf is no landmark) */
+        /* milestones: firsts the fish chose to do. The terrarium's lizards earn the same bits by their own goals (P2b)
+           until P5 draws the lizard's badges (PLAN.md P5: first dig, first bask ...): a dig is the dart's, a bask on
+           the spot the bubbles', an investigation the curiosity's and the follow's, a hide the seagrass's */
+        if (f->goal.id == G_PLAY && f->goal_age > 1.0f) set_ms(f, MS_FIRST_DART);
+        if (PT_TERRARIUM) {
+            float bx, by; tank_bask_point(t, &bx, &by);
+            if (f->goal.id == GOAL_LZ_BASK && fabsf(f->x - bx) < 20) set_ms(f, MS_FIRST_BUBBLES);   /* on the spot */
+            if (f->goal.id == GOAL_LZ_INVESTIGATE && f->goal_age > 2.0f) set_ms(f, MS_INSPECTED);
+            if (f->hide >= 0 && (f->goal_age > 2.0f || f->stress >= 5.0f)) set_ms(f, MS_FIRST_GRASS);   /* safe in a hide */
+        } else {
+            if (f->goal.id == GOAL_VISIT_BUBBLES && tank_dist(f->x, f->y, t->bubble_x, t->bubble_y) < 90) set_ms(f, MS_FIRST_BUBBLES);
+            if (f->goal.id == GOAL_INSPECT_REEF) {               /* its landmark: the reef cluster once there is one */
+                float rx, ry; tank_reef_spot(t, &rx, &ry);
+                if (tank_dist(f->x, f->y, rx, ry) < 90) {
+                    set_ms(f, MS_INSPECTED);                      /* no badge (0.3.0): it reveals the curiosity slider */
+                    if (tank_decor_in(t, 4)) reef_visit = true;          /* (a cluster on the shelf is no landmark) */
+                }
             }
+            /* the seagrass: resting inside a canopy, or tucked into one while
+               rattled - the grass as the place to be safe (2026-10-02, in the
+               badge slot "first reef" had) */
+            if (((f->goal.id == GOAL_REST && f->goal_age > 2.0f) || f->stress >= 5.0f || f->breather > 2.0f) && tank_in_grass(t, f->x, f->y))
+                set_ms(f, MS_FIRST_GRASS);
         }
-        /* the seagrass: resting inside a canopy, or tucked into one while
-           rattled - the grass as the place to be safe (2026-10-02, in the
-           badge slot "first reef" had) */
-        if (((f->goal.id == GOAL_REST && f->goal_age > 2.0f) || f->stress >= 5.0f || f->breather > 2.0f) && tank_in_grass(t, f->x, f->y))
-            set_ms(f, MS_FIRST_GRASS);
-        if (f->goal.id == GOAL_FOLLOW_FRIEND && f->goal_age > 2.0f) set_ms(f, MS_FIRST_FOLLOW);
-        if (f->goal.id == GOAL_DART_PLAY) n_dart++;
+        if (f->goal.id == G_FRIEND && f->goal_age > 2.0f) set_ms(f, MS_FIRST_FOLLOW);
+        if (f->goal.id == G_PLAY) n_dart++;
     }
     if (n_dart >= 2) set_tms(t, TMS_FIRST_PLAY_SESSION);
     if (changed_someone) set_tms(t, TMS_CHANGED_SOMEONE);

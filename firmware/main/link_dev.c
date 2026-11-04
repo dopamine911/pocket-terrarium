@@ -418,7 +418,7 @@ void link_dev_cmd(tank_t *t, int argc, char **argv) {
         int i = atoi(argv[2]); int ed = !strcmp(argv[3], "left") ? LINK_LEFT : LINK_RIGHT;
         if (!s_tank || i < 0 || i >= s_tank->n_fish || s_tank->fish[i].away) { ESP_LOGW(TAG, "no such fish here"); return; }
         if (!link_door_open(L, (link_edge_t)ed)) { ESP_LOGW(TAG, "the %s door is not open", EDGE[ed]); return; }
-        fish_t *f = &s_tank->fish[i]; f->goal.id = GOAL_EXPLORE; f->door = DOOR_HEADING; f->door_edge = (int8_t)ed; f->door_refused = 0;
+        fish_t *f = &s_tank->fish[i]; f->goal.id = GOAL_W_EXPLORE; f->door = DOOR_HEADING; f->door_edge = (int8_t)ed; f->door_refused = 0;
         ESP_LOGI(TAG, "%s heads for the %s door", f->name, EDGE[ed]);
     }
     else if (!strcmp(c, "give") && argc > 2) {   /* link give <fish 0-5 | name> [left|right]: GIVE confirmed in its modal (no side:

@@ -2,9 +2,11 @@
 /* selftest_packs.c - pocket-terrarium P2a: the packs and the state the engine keeps for a lizard, through the
  * sim (tank_tick, progression_tick, progression_slept, the touch calls), never by reading a constant back:
  *
- *   ./fishsim --selftest-packs    every species and habitat against its rules (docs/species-pack.md "Validation",
- *                                 habitat.h), the rules refusing what they must, every pair a tank can hold fits and
- *                                 shares a world, every habitat's lit floor reaching each fitting species' band
+ *   ./fishsim --selftest-packs    every species and habitat of both worlds against its rules (docs/species-pack.md
+ *                                 "Validation", habitat.h), the rules refusing what they must, every fitting pair of
+ *                                 this build's world held and the other world's refused (P2b: another bin's), every
+ *                                 pair a tank can hold fitting and this world's, every habitat's lit floor reaching
+ *                                 each fitting species' band
  *   ./fishsim --selftest-heat     the heat field and the body's heat: a cold lizard warms into its band on the basking
  *                                 spot at its tau's pace and overheats past it, the cool side cools it, cold slows it,
  *                                 the digits at every pack's thresholds, the test pack 6 C warmer, the body asleep
@@ -52,6 +54,12 @@ static void park_all(const tank_t *t) {      /* (after every move: the swim neve
         if (s_fed) f->hunger = 2;
     }
 }
+/* into hide k and parked there: in a hide is a state since P2b (fish_t.hide - THE WALK, tank_lizard_enter), no longer a
+ * spot; its goal rest, so it stays in (these tests run no advisor: a goal is what they set) */
+static void park_in(tank_t *t, int i, int k) {
+    tank_lizard_enter(t, i, k); t->fish[i].goal.id = GOAL_LZ_REST;
+    park(i, t->fish[i].x, t->fish[i].y);
+}
 /* n frames of dt awake: the reflex, the parked lizards put back, progression (the tended clock) */
 static void frames(tank_t *t, int n, float dt) {
     for (int k = 0; k < n; k++) { tank_tick(t, dt, NULL); park_all(t); progression_tick(t, dt); }
@@ -81,25 +89,38 @@ int selftest_packs(void) {
         if (!species_check(p, why, sizeof why)) PF("species %s (id %d): %s", p->name, p->id, why);
         for (int j = 0; j < i; j++) if (species_at(j)->id == p->id) PF("species %s and %s share id %d", species_at(j)->name, p->name, p->id);
         if (species_get(p->id) != p) PF("species_get(%d) is not %s", p->id, p->name);
-        printf("selftest-packs: species %3d %-15s ok: band %.0f / %.0f / %.0f / %.0f C, stages at %.0f / %.0f / %.0f s, sheds every %.0f..%.0f s, %d morphs%s\n",
-               p->id, p->name, p->t_cold, p->t_lo, p->t_hi, p->t_hot, p->stage_s[0], p->stage_s[1], p->stage_s[2],
-               p->shed_every_s[0], p->shed_every_s[3], p->n_morphs, p->test_only ? " (tests only)" : "");
+        char shed[64];
+        if (p->sheds) snprintf(shed, sizeof shed, "sheds every %.0f..%.0f s", p->shed_every_s[0], p->shed_every_s[3]);
+        else snprintf(shed, sizeof shed, "no sheds (the stage at its age)");
+        printf("selftest-packs: species %3d %-15s ok: %s, band %.0f / %.0f / %.0f / %.0f C, stages at %.0f / %.0f / %.0f s, %s, %d morphs%s\n",
+               p->id, p->name, p->world == WORLD_TERRARIUM ? "terrarium" : "aquarium", p->t_cold, p->t_lo, p->t_hi, p->t_hot,
+               p->stage_s[0], p->stage_s[1], p->stage_s[2], shed, p->n_morphs, p->test_only ? " (tests only)" : "");
     }
     for (int i = 0; i < nh; i++) {
         const habitat_t *h = habitat_at(i);
         if (!habitat_check(h, why, sizeof why)) PF("habitat %s (id %d): %s", h->name, h->id, why);
         for (int j = 0; j < i; j++) if (habitat_at(j)->id == h->id) PF("habitats %s and %s share id %d", habitat_at(j)->name, h->name, h->id);
         if (habitat_get(h->id) != h) PF("habitat_get(%d) is not %s", h->id, h->name);
-        printf("selftest-packs: habitat %3d %-15s ok: floor %.0f -> %.0f C (dark -%.0f), basking spot %.0f C at %.2f, %d hides, humidity %.2f\n",
-               h->id, h->name, h->floor_warm_c, h->floor_cool_c, h->night_drop_c, h->bask_c, h->bask_u, h->n_hides, h->humidity);
+        printf("selftest-packs: habitat %3d %-15s ok: %s, floor %.0f -> %.0f C (dark -%.0f), basking spot %.0f C at %.2f, %d hides, humidity %.2f\n",
+               h->id, h->name, h->world == WORLD_TERRARIUM ? "terrarium" : "aquarium", h->floor_warm_c, h->floor_cool_c, h->night_drop_c, h->bask_c, h->bask_u, h->n_hides, h->humidity);
     }
-    /* the pairs: a habitat a species lists is of its world, and its lit floor reaches the species' band somewhere */
+    /* the pairs: a habitat a species lists is of its world, and its lit floor reaches the species' band somewhere; a
+     * tank holds a fitting pair of this build's world and refuses the other world's (P2b: that pair is another bin's -
+     * its floor is still checked here, staged straight into the tank as that bin holds it) */
+    int fit_ours = 0;
     for (int i = 0; i < ns; i++) for (int j = 0; j < nh; j++) {
         const species_t *p = species_at(i); const habitat_t *h = habitat_at(j);
         if (((p->habitats >> h->id) & 1u) && p->world != h->world) PF("%s lists the %s, a habitat of another world", p->name, h->name);
         if (!habitat_fits(h, p)) continue;
         tank_init(&s_t, 1);
-        if (!tank_set_packs(&s_t, h->id, p->id)) PF("a tank refused %s in the %s, a pair that fits", p->name, h->name);
+        const bool ours = p->world == PT_WORLD_ID;
+        if (ours && !tank_set_packs(&s_t, h->id, p->id)) PF("a tank refused %s in the %s, a pair of its world (%s) that fits", p->name, h->name, PT_WORLD_NAME);
+        if (!ours) {
+            const uint8_t h0 = s_t.habitat_id, p0 = s_t.pack_id;
+            if (tank_set_packs(&s_t, h->id, p->id) || s_t.habitat_id != h0 || s_t.pack_id != p0) PF("the %s's tank took %s in the %s, another world's pair", PT_WORLD_NAME, p->name, h->name);
+            s_t.habitat_id = h->id; s_t.pack_id = p->id;
+        }
+        fit_ours += ours;
         float lo = 1e9f, hi = -1e9f, at = -1;
         for (float x = tank_glass_x0(PLACE_Y) + 1; x < tank_glass_x1(PLACE_Y) - 1; x += 0.5f) {
             if (tank_hide_at(&s_t, x, PLACE_Y) >= 0) continue;          /* the floor itself, not a hide */
@@ -108,10 +129,11 @@ int selftest_packs(void) {
             if (at < 0 && c >= p->t_lo && c <= p->t_hi) at = x;
         }
         if (at < 0) PF("the %s's lit floor (%.1f..%.1f C) never reaches %s's band %.0f-%.0f C", h->name, lo, hi, p->name, p->t_lo, p->t_hi);
-        printf("selftest-packs: %s in the %s: the lit floor runs %.1f..%.1f C and is in its band (%.0f-%.0f C) first at x %.0f\n",
-               p->name, h->name, lo, hi, p->t_lo, p->t_hi, at);
+        printf("selftest-packs: %s in the %s: %s; the lit floor runs %.1f..%.1f C and is in its band (%.0f-%.0f C) first at x %.0f\n",
+               p->name, h->name, ours ? "held" : "refused (another world's)", lo, hi, p->t_lo, p->t_hi, at);
     }
-    /* every pair a tank can hold fits; a fresh tank holds the default pair; A16's test pack lives in the desert */
+    /* every pair a tank can hold fits and is this world's - each fitting one of this world, no other; a fresh tank holds
+     * the world's default pair; A16's test pack lives in the desert (the terrarium's) */
     tank_init(&s_t, 1);
     if (s_t.habitat_id != HABITAT_DEFAULT || s_t.pack_id != SPECIES_DEFAULT) PF("a new tank holds habitat %d / species %d, not the defaults", s_t.habitat_id, s_t.pack_id);
     int held = 0;
@@ -122,14 +144,17 @@ int selftest_packs(void) {
         }
         const habitat_t *h = habitat_get((uint8_t)hid); const species_t *p = species_get((uint8_t)pid);
         if (!h || !p || !habitat_fits(h, p) || h->world != p->world) PF("a tank took habitat %d with species %d, a pair that does not fit", hid, pid);
+        if (p->world != PT_WORLD_ID) PF("the %s's tank took habitat %d with species %d, another world's pair", PT_WORLD_NAME, hid, pid);
         held++;
         tank_set_packs(&s_t, HABITAT_DEFAULT, SPECIES_DEFAULT);
     }
-    if (!tank_set_packs(&s_t, HABITAT_DESERT, SPECIES_TEST_WARM)) PF("A16's test pack is refused the desert");
+    if (held != fit_ours) PF("a tank holds %d pairs, but %d fitting pairs are the %s's", held, fit_ours, PT_WORLD_NAME);
+    if (PT_TERRARIUM && !tank_set_packs(&s_t, HABITAT_DESERT, SPECIES_TEST_WARM)) PF("A16's test pack is refused the desert");
     uint8_t h0 = s_t.habitat_id, p0 = s_t.pack_id;
-    if (tank_set_packs(&s_t, 99, SPECIES_GECKO) || tank_set_packs(&s_t, HABITAT_DESERT, 99) || s_t.habitat_id != h0 || s_t.pack_id != p0)
+    if (tank_set_packs(&s_t, 99, SPECIES_DEFAULT) || tank_set_packs(&s_t, HABITAT_DEFAULT, 99) || s_t.habitat_id != h0 || s_t.pack_id != p0)
         PF("an unknown habitat or species was taken, or the refusal moved the tank");
-    printf("selftest-packs: %d (habitat, species) pairs of 65536 can be held, every one fits and shares its world; the test pack lives in the desert\n", held);
+    printf("selftest-packs: %d (habitat, species) pairs of 65536 can be held in the %s, every one fits and is its world's%s\n",
+           held, PT_WORLD_NAME, PT_TERRARIUM ? "; the test pack lives in the desert" : "");
     /* the rules refuse what they must: one broken copy of the gecko (and the desert) each */
     species_t b; habitat_t hb; int refused = 0;
     #define REFUSE_S(stmt, what) do { b = SPECIES_PACK_GECKO; stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
@@ -214,11 +239,21 @@ int selftest_heat(void) {
     }
     if (!(f->body_c < sp->t_lo && fabsf(f->body_c - env_c) < 0.05f)) PF("on the cool side it settled at %.2f C, the floor there is %.2f C", f->body_c, env_c);
     printf("selftest-heat: on the cool side (x %.0f, %.1f C) it cooled %.1f -> %.1f C, heat %.1f\n", xc, env_c, start, f->body_c, f->heat);
-    /* 3. cold slows it: the same lizard in the same moment, cold and comfortable (two copies of one tank) */
+    /* 3. cold slows it: the same lizard in the same moment, cold and comfortable (copies of one tank) - a moment it
+       walks (THE WALK stops and goes, and turns about standing: a stop's pace is 0 whatever the heat) */
     tank_init(&s_u, 12); tank_new_population(&s_u); s_u.trickle_off = true;
     for (int n = 0; n < 60; n++) tank_tick(&s_u, dt, NULL);               /* under way */
     const float probe[3] = { sp->t_cold - 3, sp->t_cold + (sp->t_lo - sp->t_cold) * 0.3f, (sp->t_lo + sp->t_hi) * 0.5f };   /* heat 0, 1.5, 6 */
-    float speed[3];
+    float speed[3] = { 0, 0, 0 };
+    int waited = 0;
+    for (; waited < (int)(120 / dt); waited++) {                          /* the next frame it walks, comfortable */
+        memcpy(t, &s_u, sizeof *t);
+        t->fish[0].body_c = probe[2]; t->fish[0].heat = species_heat_of(sp, probe[2]);
+        tank_tick(t, dt, NULL);
+        if (t->fish[0].pose == LZ_POSE_WALK && t->fish[0].target_speed > 1) break;
+        tank_tick(&s_u, dt, NULL);
+    }
+    if (waited >= (int)(120 / dt)) PF("its pace cold: in 120 s under way it never walked (pose %s)", LZ_POSE_NAMES[t->fish[0].pose]);
     for (int k = 0; k < 3; k++) {
         memcpy(t, &s_u, sizeof *t);
         t->fish[0].body_c = probe[k]; t->fish[0].heat = species_heat_of(sp, probe[k]);
@@ -288,7 +323,7 @@ int selftest_shed(void) {
     const int humid = tank_humid_hide(t), warm = hide_of_kind(t, HIDE_WARM);
     if (humid < 0 || warm < 0) PF("the habitat has no humid or no warm hide");
     float hx, hy, wx, wy; tank_hide_point(t, humid, &hx, &hy); tank_hide_point(t, warm, &wx, &wy);
-    park(0, hx, hy); park(1, wx, wy);
+    park_in(t, 0, humid); park_in(t, 1, warm);
     float t_soon = -1, t_shed = -1, t_growth = -1, t_juv = -1; int soons = 0;
     for (float s = 0; s < sp->shed_every_s[0] + sp->shed_soon_s + SHED_SOAK_S + 30; s += dt) {
         int was = t->fish[0].shed;
@@ -319,7 +354,7 @@ int selftest_shed(void) {
     fish_t *f = &t->fish[0];
     progression_set_age(t, 0, sp->stage_s[0] - 10);
     f->shed = SHED_NORMAL; f->shed_s = 1e5f;
-    park(0, wx, wy); park(1, wx, wy - 40);
+    park_in(t, 0, warm); park(1, wx, wy - 40);
     live(t, 9.5f, dt);
     if (f->shed != SHED_NORMAL || f->stage != STAGE_FRY) PF("10 s short of the juvenile age: %s, stage %d", SHED_WORD[f->shed], f->stage);
     live(t, 1.0f, dt);
@@ -328,7 +363,7 @@ int selftest_shed(void) {
         PF("0.5 s past the juvenile age (timer far off): %s, growth %d, %.1f s left, stage %d (want a growth shed's pre-shed from the age's moment, still a hatchling)",
            SHED_WORD[f->shed], f->shed_growth, f->shed_s, f->stage);
     if (until_state(t, 0, SHED_SHEDDING, sp->shed_soon_s + 1, dt) < 0 || f->stage != STAGE_FRY) PF("its pre-shed never turned into shedding, or it grew at the age");
-    park(0, hx, hy);
+    park_in(t, 0, humid);
     float clean_at = -1;
     for (float s = 0; s < SHED_SOAK_S + 5 && clean_at < 0; s += dt) { frames(t, 1, dt); if (f->stage == STAGE_JUV) clean_at = s + dt; }
     age = progression_age_s(t, 0);
@@ -342,7 +377,7 @@ int selftest_shed(void) {
     fresh(t, 103);
     progression_set_age(t, 0, sp->stage_s[0] - 100);
     f->shed = SHED_SHEDDING; f->shed_s = 400; f->shed_damp = 0;
-    park(0, wx, wy); park(1, wx, wy - 40);
+    park_in(t, 0, warm); park(1, wx, wy - 40);
     int saw_soon = 0;
     for (float s = 0; s < 101; s += dt) { frames(t, 1, dt); saw_soon += f->shed == SHED_SOON; }
     if (f->shed != SHED_SHEDDING || !f->shed_growth || saw_soon || f->stage != STAGE_FRY) PF("the age mid-shed: %s, growth %d, %d frames of a second pre-shed, stage %d", SHED_WORD[f->shed], f->shed_growth, saw_soon, f->stage);
@@ -350,7 +385,7 @@ int selftest_shed(void) {
     live(t, 120, dt);
     if (f->shed != SHED_STUCK || f->stage != STAGE_FRY || saw_soon) PF("its window out of the hide: %s, stage %d (want stuck, the stage held)", SHED_WORD[f->shed], f->stage);
     tank_mist_pass(t, humid); tank_mist_pass(t, humid);
-    park(0, hx, hy);
+    park_in(t, 0, humid);
     float cleared = -1;
     for (float s = 0; s < SHED_SOAK_S + 5 && cleared < 0; s += dt) { frames(t, 1, dt); if (f->shed != SHED_STUCK) cleared = s + dt; }
     if (fabsf(cleared - SHED_SOAK_S) > 0.2f || f->shed != SHED_NORMAL || f->stage != STAGE_JUV || saw_soon) PF("a damp stay on the stuck growth shed: cleared after %.1f s (want %.0f), %s, stage %d", cleared, SHED_SOAK_S, SHED_WORD[f->shed], f->stage);
@@ -362,7 +397,7 @@ int selftest_shed(void) {
     t->moist[humid] = 0;
     progression_set_age(t, 0, sp->stage_s[0] - 1);
     f->shed = SHED_NORMAL; f->shed_s = 1e5f; f->stress = 0; f->trust = 7;
-    park(0, hx, hy); park(1, wx, wy);
+    park_in(t, 0, humid); park_in(t, 1, warm);
     if (until_state(t, 0, SHED_STUCK, 2 + sp->shed_soon_s + sp->shed_window_s, dt) < 0) PF("in the dry humid hide the growth shed never stuck (%s)", SHED_WORD[f->shed]);
     if (f->stage != STAGE_FRY) PF("stuck in a dry hide it grew anyway");
     const float half = STUCK_STRESS_MAX / STUCK_STRESS_PER_S / 2;
@@ -422,8 +457,7 @@ int selftest_shed(void) {
     const float night_tended = 100 + sp->shed_soon_s + sp->shed_window_s + 200;   /* the juveniles: 100 s to the pre-shed, the cycle, 200 s past its window */
     const float c_in = night_tended - 150;                                       /* the hatchling reaches the juvenile age 150 s before the morning */
     progression_set_age(t, 2, sp->stage_s[0] - c_in); t->fish[2].shed = SHED_NORMAL; t->fish[2].shed_s = 1e5f;
-    t->fish[0].x = hx; t->fish[0].y = hy; t->fish[1].x = wx; t->fish[1].y = wy;
-    float cx2, cy2; tank_hide_point(t, hide_of_kind(t, HIDE_COOL), &cx2, &cy2); t->fish[2].x = cx2; t->fish[2].y = cy2;
+    tank_lizard_enter(t, 0, humid); tank_lizard_enter(t, 1, warm); tank_lizard_enter(t, 2, hide_of_kind(t, HIDE_COOL));   /* (in them: asleep, nobody walks) */
     const float slept = night_tended / SLEEP_GROWTH_FRAC;
     progression_slept(t, slept);
     const fish_t *a = &t->fish[0], *b = &t->fish[1], *c = &t->fish[2];
@@ -445,7 +479,7 @@ int selftest_shed(void) {
     /* ---- 7. off its food before a shed: hunger at SHED_HUNGER_X while soon or shedding, awake */
     fresh(t, 107);
     s_fed = false;
-    park(0, wx, wy); park(1, wx, wy - 40);
+    park_in(t, 0, warm); park(1, wx, wy - 40);
     f = &t->fish[0]; f->shed = SHED_NORMAL; f->shed_s = 1e5f; f->hunger = 2;
     live(t, 20, dt);
     float dh_normal = f->hunger - 2;

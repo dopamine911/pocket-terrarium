@@ -294,7 +294,7 @@ int selftest_l1_encode(void) {
     for (int i = 0; i < PHASE_N; i++) if (!phase_seen[i]) L1F("no fixture line has phase %s", PHASE_NAMES[i]);
     printf("selftest-l1-encode: coverage: both packs, heat 0-9, every stage, shed, last and phase word\n");
 
-    /* 3. a live terrarium: lizard 0 inside the humid hide, stuck in its shed, on the goal that plays bask */
+    /* 3. a live terrarium: lizard 0 in the humid hide (gone in: fish_t.hide, THE WALK), stuck in its shed, its goal bask */
     tank_t *t = &s_tank;
     tank_init(t, 7);
     tank_new_population(t);
@@ -305,22 +305,25 @@ int selftest_l1_encode(void) {
     if (humid < 0) L1F("live: the habitat has no humid hide");
     tank_hide_point(t, humid, &hx, &hy);
     tank_bask_point(t, &bx, &by);
-    f->x = hx; f->y = hy;
-    f->shed = SHED_STUCK;
-    f->goal.id = GOAL_VISIT_BUBBLES;
     l1_snap_t s;
+    f->x = hx; f->y = hy;                                       /* on its point, out: walking past is not in it */
     advisor_core_l1_snap(t, 0, &s);
-    if (!s.in_shelter) L1F("live: at the humid hide's point (%.1f, %.1f) but not in_shelter", hx, hy);
+    if (s.in_shelter) L1F("live: standing on the humid hide's point (%.1f, %.1f), out of it, but in_shelter", hx, hy);
+    if (!tank_lizard_enter(t, 0, humid)) L1F("live: lizard 0 could not go into the humid hide");
+    f->shed = SHED_STUCK;
+    f->goal.id = GOAL_LZ_BASK;
+    advisor_core_l1_snap(t, 0, &s);
+    if (!s.in_shelter) L1F("live: in the humid hide (at its point %.1f, %.1f) but not in_shelter", hx, hy);
     if (!s.shelter.on || s.shelter.x != hx || s.shelter.y != hy)
         L1F("live: shelter (%.1f, %.1f) is not the humid hide's point (%.1f, %.1f)", s.shelter.x, s.shelter.y, hx, hy);
     if (s.shed != 2) L1F("live: stuck in its shed but shed %d, want 2 (yes)", s.shed);
-    if (s.last != LZ_BASK) L1F("live: goal visit_bubbles but last %d, want %d (bask)", s.last, LZ_BASK);
+    if (s.last != LZ_BASK) L1F("live: goal bask but last %d, want %d (bask)", s.last, LZ_BASK);
     if (!s.warm.on || s.warm.x != bx || s.warm.y != by)
         L1F("live: warm (%.1f, %.1f) is not the basking spot (%.1f, %.1f)", s.warm.x, s.warm.y, bx, by);
     if (s.pack != t->pack_id) L1F("live: pack %d, the tank's is %d", s.pack, t->pack_id);
     if (t->night) L1F("live: a new terrarium starts with the light off");
     if (s.phase != PHASE_ACTIVE) L1F("live: phase %d with the light on, want %d (active)", s.phase, PHASE_ACTIVE);
-    printf("selftest-l1-encode: live snapshot: in the humid hide, shed yes, last bask, warm = the basking spot, pack %d, phase active\n", s.pack);
+    printf("selftest-l1-encode: live snapshot: on the humid hide's point but out of it, not in_shelter; in it, in_shelter, shed yes, last bask, warm = the basking spot, pack %d, phase active\n", s.pack);
 
     char line[512];
     advisor_core_encode_l1(&s, line, sizeof line);

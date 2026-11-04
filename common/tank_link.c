@@ -227,7 +227,7 @@ static void gift_tick(tank_t *t, link_t *L, gift_book_t *g) {
         }
         bool open = g->leaving_edge >= 0 && t->door_open[g->leaving_edge];
         if (open) {                                  /* briskly to its door (the DEPORT swim), then through it - no OFFER: it is theirs */
-            if (f->door == DOOR_NONE || f->door == DOOR_HEADING) { f->door = DOOR_HEADING; f->door_edge = g->leaving_edge; f->goal.id = GOAL_EXPLORE; f->deported = true; f->door_refused = 0; }
+            if (f->door == DOOR_NONE || f->door == DOOR_HEADING) { f->door = DOOR_HEADING; f->door_edge = g->leaving_edge; f->goal.id = GOAL_W_EXPLORE; f->deported = true; f->door_refused = 0; }
             else if (f->door == DOOR_ASKED) { f->door = DOOR_PASSING; f->door_sent = true; }
         }
         bool through = open && f->door == DOOR_PASSING && beyond(f);
@@ -362,7 +362,7 @@ bool tank_link_event(tank_t *t, link_t *L, const link_ev_t *e) {
         memset(f, 0, sizeof *f);
         passport_to_fish(&e->pp, f);
         tank_lizard_fresh(t, f);                                /* (P2a: its heat and shed; a passport carries neither) */
-        f->goal.id = GOAL_EXPLORE; f->goal.urgency = 3; f->goal.confidence = 1; f->goal.runner_up = GOAL_COUNT;
+        f->goal.id = GOAL_W_EXPLORE; f->goal.urgency = 3; f->goal.confidence = 1; f->goal.runner_up = GOAL_COUNT;
         f->goal_prev = GOAL_COUNT; f->zone_last = -1; f->ask_age = 99; f->sig = 0xffffffffu;
         f->wander = (float)(e->uid % 628) / 100.0f; f->turn_rate = f->turn_rate > 0 ? f->turn_rate : 2.4f;
         for (int z = 0; z < 6; z++) f->zone_seen[z] = t->clock - 600;   /* every corner of this tank is new to it */

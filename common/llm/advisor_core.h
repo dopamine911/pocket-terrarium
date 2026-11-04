@@ -14,7 +14,10 @@
 
 /* open model + tokenizer; alloc is the run-state allocator (PSRAM on device).
  * Detects the schema from the tokenizer (a " trust" token = v3, " bored" = v4,
- * " heat" = the lizard's L1: model/schema-lizard.md). */
+ * " heat" = the lizard's L1: model/schema-lizard.md). Its goal words are its
+ * own set of tank.h's goals (the fish's eight, the lizard's seven); a model of
+ * the other world is refused (false) - but for the terrarium's fish model, its
+ * temporary brain (THE TEMPORARY FISH-MODEL BRIDGE, below). */
 bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
                        const uint8_t *tok_bin, size_t tok_len,
                        void *(*alloc)(size_t), uint32_t seed);
@@ -24,7 +27,8 @@ const q4_config_t *advisor_core_config(void);
 q4_model_t *advisor_core_model(void);           /* for q4_model_bench */
 
 /* encode fish idx's state line per schema (no trailing " ->"): the fish's
- * v2-v4, or L1 (advisor_core_l1_snap + advisor_core_encode_l1) */
+ * v2-v4, or L1 (advisor_core_l1_snap + advisor_core_encode_l1); in the
+ * terrarium with a fish model, the bridge's v4 line of a lizard */
 void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n);
 
 /* ---- schema L1 (model/schema-lizard.md) ----
@@ -53,21 +57,22 @@ extern const char *const L1_SHED_NAMES[3];      /* no soon yes */
 /* the L1 state line of s (no trailing " ->"), byte for byte model/gen_traces.py encode_l1_snap */
 void advisor_core_encode_l1(const l1_snap_t *s, char *out, size_t n);
 /* fish idx of the tank as an L1 snapshot: zone as the fish encoder's grid, prey = the nearest pellet (until
- * P2c's crickets), other = the nearest other fish, warm = the basking spot, shelter = the nearest hide (in_shelter
- * inside one), wall = the fish encoder's contact point, last = its goal through advisor_core_l1_goal_of, phase =
- * tank_activity_phase */
+ * P2c's crickets), other = the nearest other lizard, warm = the basking spot, shelter = the hide it is in or the
+ * nearest (in_shelter: it is in one - fish_t.hide, THE WALK), wall = the fish encoder's contact point, last = its
+ * goal (a lizard goal's LZ_* index), phase = tank_activity_phase */
 void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s);
-/* THE TEMPORARY GOAL BRIDGE (P2a, until P2b's seven-goal enum replaces the fish's goals): the lizard goal a fish
- * goal plays (seek_food hunt, visit_bubbles bask, inspect_reef hide, follow_friend investigate, explore explore,
- * rest rest, dart_play dig, flee_shadow hide) and back (hide inspect_reef) - `last` on the L1 line, and an L1
- * model's answer as the goal the reflex still performs */
-int       advisor_core_l1_goal_of(goal_id_t g);  /* LZ_* */
-goal_id_t advisor_core_fish_goal_of(int lz);     /* GOAL_COUNT for no such goal */
+/* THE TEMPORARY FISH-MODEL BRIDGE (P2b; advisor_core.c has all of it - DELETE IN P6 with the lizard model): the
+ * terrarium's bin thinks with the v4 fish model until then. Its answers are the lizard goals they play (seek_food
+ * hunt, visit_bubbles bask, inspect_reef and flee_shadow hide, follow_friend investigate, explore explore, rest
+ * rest, dart_play dig), and a lizard's goal reads back as a fish goal on the v4 line's `last` */
+goal_id_t advisor_bridge_lizard_goal(goal_id_t fish);
+goal_id_t advisor_bridge_fish_goal(goal_id_t lizard);
 
 /* run the model on a state line. Returns the goal (id == GOAL_COUNT if the
  * output was unparseable: keep the previous goal), with confidence and
- * runner_up filled from the goal-token softmax. tokens_out (may be NULL)
- * receives prompt+generated token count for tok/s accounting. */
+ * runner_up filled from the goal-token softmax - always a goal of its build's
+ * world. tokens_out (may be NULL) receives prompt+generated token count for
+ * tok/s accounting. */
 goal_t advisor_core_infer(const char *state, int *tokens_out);
 
 /* the distribution layer knobs: sampling on (the model's own distribution,
@@ -76,7 +81,8 @@ goal_t advisor_core_infer(const char *state, int *tokens_out);
 extern bool  advisor_core_sample;
 extern bool advisor_core_two_pass;             /* the goal + " urgency" as one batched pass (default on); off = the old three passes */
 extern float advisor_core_temp;
-/* last decision's full goal distribution (for debug / narration) */
+/* last decision's full goal distribution (for debug / narration), indexed by goal_id_t: the build's world's goals
+ * (GOAL_FIRST .. GOAL_FIRST + GOAL_N - 1) filled, the rest 0 */
 const float *advisor_core_last_probs(void);
 /* true once any decision's odds came back not a number (NaN / inf): a damaged
  * model. Sticky until the next start; the platform raises NOTICE_MODEL_DAMAGED. */

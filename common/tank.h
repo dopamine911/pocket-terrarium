@@ -249,13 +249,40 @@ int tank_algae_cells(void);                    /* the cells that are on the glas
                                                 * night's sleep films ~17% (selftest-tend;
                                                 * ~25% before 2026-09-23) */
 
+/* THE GOALS (pocket-terrarium P2b): one enum for both worlds - the fish's eight (schema v2-v4, in the order the fish
+ * model's goal tokens are looked up) and the lizard's seven after them (schema L1, LZ_* order: GOAL_LZ(LZ_HUNT) ..).
+ * A build uses its own world's set only - GOAL_FIRST .. GOAL_FIRST + GOAL_N - 1 (goal_in_world): the advisor's
+ * token map, the rule stub, the reflex, progression's firsts and render's rest. GOAL_COUNT is "no goal" (no
+ * change) in both. The few goals shared code asks for by meaning are GOAL_W_*: the world's food goal, its rest
+ * and its explore. */
 typedef enum {
     GOAL_SEEK_FOOD, GOAL_FLEE_SHADOW, GOAL_VISIT_BUBBLES, GOAL_FOLLOW_FRIEND,
     GOAL_EXPLORE, GOAL_REST, GOAL_DART_PLAY, GOAL_INSPECT_REEF,
+    GOAL_LZ_HUNT, GOAL_LZ_BASK, GOAL_LZ_HIDE, GOAL_LZ_EXPLORE, GOAL_LZ_INVESTIGATE, GOAL_LZ_DIG, GOAL_LZ_REST,
     GOAL_COUNT
 } goal_id_t;
+#define GOAL_FISH_FIRST GOAL_SEEK_FOOD
+#define GOAL_LZ_FIRST   GOAL_LZ_HUNT
+#define GOAL_LZ(k)      ((goal_id_t)(GOAL_LZ_FIRST + (k)))        /* LZ_* (species.h) -> its goal */
+_Static_assert(GOAL_LZ_FIRST == GOAL_FISH_FIRST + FISH_GOALS && GOAL_COUNT == GOAL_LZ_FIRST + LZ_GOALS && GOAL_LZ_REST == GOAL_LZ(LZ_REST),
+               "the goal enum is the fish's eight, then the lizard's seven in LZ_* order");
+#if PT_TERRARIUM
+#define GOAL_FIRST     GOAL_LZ_FIRST
+#define GOAL_N         LZ_GOALS
+#define GOAL_W_FOOD    GOAL_LZ_HUNT
+#define GOAL_W_REST    GOAL_LZ_REST
+#define GOAL_W_EXPLORE GOAL_LZ_EXPLORE
+#else
+#define GOAL_FIRST     GOAL_FISH_FIRST
+#define GOAL_N         FISH_GOALS
+#define GOAL_W_FOOD    GOAL_SEEK_FOOD
+#define GOAL_W_REST    GOAL_REST
+#define GOAL_W_EXPLORE GOAL_EXPLORE
+#endif
+static inline bool goal_in_world(int g) { return g >= GOAL_FIRST && g < GOAL_FIRST + GOAL_N; }
+static inline int  goal_lz(int g) { return g >= GOAL_LZ_FIRST && g < GOAL_COUNT ? g - GOAL_LZ_FIRST : -1; }   /* its LZ_* index, -1 for a fish goal */
 
-extern const char *const GOAL_NAMES[GOAL_COUNT];   /* schema.md lowercase names */
+extern const char *const GOAL_NAMES[GOAL_COUNT];   /* the schemas' lowercase words, both sets (the lizard's are LZ_GOAL_NAMES) */
 
 /* SWIM DEPTH (0.3.9.4, Strato 10-31: "its a decision the fish makes. To swim in front, behind, or through"): a
  * fish IN FRONT of the back grass, BEHIND every frond, or THROUGH it (every other frond over it). A decoration's
@@ -392,8 +419,8 @@ typedef struct {
                              * my finger through the volcano"); its jump to the front may cross the seagrass, never
                              * a piece (tank.c piece_exit) */
     double zone_seen[6];    /* tank clock when the fish was last in each zone */
-    float  explore_x, explore_y; /* explore's destination - a point in a stale zone */
-    bool   explore_set;     /* ... valid; cleared when explore is (re)chosen or reached */
+    float  explore_x, explore_y; /* explore's destination - a point in a stale zone (a lizard investigating alone: its place) */
+    bool   explore_set;     /* ... valid; cleared when explore (or a lizard's investigate) is (re)chosen, or explore's reached */
     int    eaten;
     int    eaten_player;    /* pellets that came from the keeper's hand */
     bool   meal_due;        /* ate from the keeper's hand since progression last looked (the meal pay) */
@@ -449,18 +476,29 @@ typedef struct {
     int8_t   door, door_edge;
     double   door_seen;         /* tank clock of its last visit next door (the neighbor ages like a zone) */
     double   door_refused;      /* tank clock until which a door refused it is glass for it */
-    /* the lizard (pocket-terrarium P2a: docs/species-pack.md "Heat", docs/shed.md). body_c (C) follows the
-     * surroundings (tank_env_c where it is) at its pack's tau for its stage, awake and asleep; heat is body_c
-     * on the pack's map, 0..10 (species_heat_of; the L1 line's `heat` is its drive9). The shed: SHED_*; shed_s
-     * - NORMAL: tended seconds to the next pre-shed, SOON / SHEDDING: tended seconds left in it, STUCK: tended
-     * seconds stuck so far; shed_damp - damp seconds in the humid hide this shedding (or this stuck spell)
-     * toward SHED_SOAK_S; shed_growth - a growth shed: the stage changes when it comes off clean; shed_clean -
+    /* the lizard (pocket-terrarium P2a: docs/species-pack.md "Heat", docs/shed.md). body_c (C) follows what it
+     * feels (tank_animal_env_c: its hide's air, or the floor where it is) at its pack's tau for its stage, awake and
+     * asleep; heat is body_c on the pack's map, 0..10 (species_heat_of; the L1 line's `heat` is its drive9). The
+     * shed: SHED_*; shed_s - NORMAL: tended seconds to the next pre-shed, SOON / SHEDDING: tended seconds left in it,
+     * STUCK: tended seconds stuck so far; shed_damp - damp seconds in the humid hide this shedding (or this stuck
+     * spell) toward SHED_SOAK_S; shed_growth - a growth shed: the stage changes when it comes off clean; shed_clean -
      * clean sheds in its life. All saved (progression.c, the terrarium tail) */
     float    body_c, heat;
     uint8_t  shed;
     bool     shed_growth;
     uint16_t shed_clean;
     float    shed_s, shed_damp;
+    /* THE WALK (P2b, the terrarium's locomotion; tank.h below): hide - the hide it is IN (the habitat's index; -1 out):
+     * it goes in on purpose and comes out on purpose, never by walking past one; pose - what its body is doing
+     * (LZ_POSE_*: HIDDEN or PEEK while in a hide - P3 draws it, the L1 line's `shelter near 12` reads `hide`);
+     * pose_s - seconds in that pose; lane - the floor's depth it walks at, px off PLACE_Y; to_x - where this walk is
+     * going; walk_s / pause_s - the stop-and-go: seconds left of this bout of walking, or of this stop; turn_s - a
+     * turn about on the spot under way (seconds left: it stands meanwhile); strike_s - the hunt's freeze before a
+     * lunge, then the lunge's own; peek_s - in a hide, seconds to its next look out (or back in). None saved: a boot
+     * finds it on the floor, out. A fish (the aquarium) keeps hide -1 and pose STAND */
+    int8_t   hide;
+    uint8_t  pose;
+    float    pose_s, lane, to_x, walk_s, pause_s, turn_s, strike_s, peek_s;
 } fish_t;
 enum { DOOR_NONE, DOOR_HEADING, DOOR_ASKED, DOOR_PASSING, DOOR_ENTERING };
 
@@ -1001,6 +1039,18 @@ typedef goal_t (*advisor_fn)(const tank_t *t, int fish_idx, bool request);
  * appearing, night - and the urgent path (2026-09-11). */
 #define ADVISOR_IDLE_CEILING 45.0f   /* 5 fish x 3.65 s per decision at 25 s would still be 70% busy */
 
+/* THE FISH'S DRIVES (pocket-tank's numbers; tank.c update_fish swims on them, and the aquarium's fish pack carries
+ * them as data - species/fish.c reads these, so the two cannot drift apart). The hunger economy's story is tank.c's
+ * (2026-09-01); the lizards' drives are their pack's (species_t, THE WALK) */
+#define HUNGER_PER_S           0.010f   /* fed -> starving in ~17 min (shy fish); + bold x HUNGER_BOLD_PER_S (tank.c) */
+#define FISH_ENERGY_PER_S      0.012f   /* spent a second swimming, + its speed / 4000 */
+#define FISH_ENERGY_REST_PER_S 0.30f    /* back a second resting (or settled in a breather) */
+#define FISH_CURIOSITY_PER_S   0.08f    /* curiosity's rise a second exploring (the prototype's; -0.025 otherwise, spent at the sights) */
+#define FISH_HUNGER_PER_PELLET 4.3f     /* a pellet's worth */
+#define SLEEP_HUNGER_PER_H     0.8f     /* asleep (tank_tick_sleep), an hour: fed -> ravenous over ~7 h */
+#define SLEEP_ENERGY_PER_H     2.0f
+#define SLEEP_STRESS_PER_H     2.0f
+
 /* boredom (fish_t.bored; the same numbers live in model/gen_traces.py) */
 #define BORED_PER_S        0.15f  /* 0 -> 9 in a minute on one pastime */
 #define BORED_NEW_GOAL     4.0f   /* relief for a goal that is not the one just left */
@@ -1081,30 +1131,36 @@ void  tank_tick_sleep(tank_t *t, float seconds);
 
 /* ---- the packs' world: places, heat, shed (pocket-terrarium P2a; world-neutral names, one core for both builds) ----
  * The species (species.h) and its habitat (habitat.h) are the tank's two packs (tank_t.pack_id, habitat_id):
- * tank_set_packs takes a pair only when it fits (habitat_fits) - false otherwise, the tank as it was.
+ * tank_set_packs takes a pair only when it fits (habitat_fits) and is of this build's world (PT_WORLD_ID) - false
+ * otherwise, the tank as it was.
  * PLACES: the habitat's hides and its basking spot are logical points on the floor, laid out on every board
  * from TANK_BOT and the glass at the floor: the floor's span is the glass at PLACE_Y inset PLACE_MARGIN, a
  * place's fraction u runs along it from the warm (left, 0) end to the cool (right, 1) end, all at PLACE_Y
- * (an animal's middle standing on the sand). An animal within HIDE_R of a hide's point is inside it. */
+ * (an animal's middle standing on the sand). A hide's FOOTPRINT is HIDE_R round its point (tank_hide_at: where it
+ * stands - the mister's aim, the heat field's probe); an animal is INSIDE a hide only when it went in (fish_t.hide,
+ * P2b: THE WALK below) - a lizard walking past one is not in it. */
 #define PLACE_Y      (TANK_BOT - 24.0f)
 #define PLACE_MARGIN 30.0f
-#define HIDE_R       28.0f              /* inside a hide: this close to its point (a lizard's half length; the engine's, every pack's) */
+#define HIDE_R       28.0f              /* a hide's footprint: this close to its point (a lizard's half length; the engine's, every pack's) */
 const species_t *tank_species(const tank_t *t);           /* the tank's species pack (SPECIES_DEFAULT's for an unknown id) */
 const habitat_t *tank_habitat(const tank_t *t);           /* ... and its habitat (HABITAT_DEFAULT's for an unknown id) */
-bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id);   /* a new pair: both known and it fits, else false */
+bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id);   /* a new pair: both known, it fits and it is this world's, else false */
 float tank_floor_x(float u);                              /* the x a floor fraction stands at on this board */
 void  tank_hide_point(const tank_t *t, int k, float *x, float *y);      /* the habitat's hide k */
 void  tank_bask_point(const tank_t *t, float *x, float *y);             /* its basking spot */
-int   tank_hide_at(const tank_t *t, float x, float y);    /* the hide (its index) the point is inside, -1 none */
+int   tank_hide_at(const tank_t *t, float x, float y);    /* the hide (its index) whose footprint the point is in, -1 none */
 int   tank_nearest_hide(const tank_t *t, float x, float y, float *dist);   /* the nearest hide (its point's distance), -1 none */
 /* THE HEAT FIELD (degrees C at a point), all from the habitat: lit, the floor runs straight from floor_warm_c
  * at its warm end to floor_cool_c at its cool end, and the lamp's pool round the basking spot rises to bask_c
- * at its middle from the floor's own at bask_r_px; inside a hide, the hide's own (t_lit_c). Dark, the lamp is
- * out, the floor is night_drop_c cooler and a hide is at its t_dark_c. (The desert: 31 -> 25 C, the spot 35 C,
- * the warm / humid / cool hides 30 / 28 / 24 C; dark 26 -> 20 C and 30 / 25 / 21 C.) tank_env_c reads the
- * light as it is, tank_env_c_lit as given (asleep: off). */
+ * at its middle from the floor's own at bask_r_px; in a hide's footprint, the hide's own (t_lit_c). Dark, the lamp
+ * is out, the floor is night_drop_c cooler and a hide is at its t_dark_c. (The desert: 31 -> 25 C, the spot 35 C,
+ * the warm / humid / cool hides 30 / 28 / 24 C; dark 26 -> 20 C and 30 / 25 / 21 C. Freshwater: 25 C, all of it,
+ * always.) tank_env_c reads the light as it is, tank_env_c_lit as given (asleep: off). What an animal FEELS is
+ * tank_animal_env_c: the air of the hide it is in, else the open floor where it stands (a hide's footprint walked
+ * past is the floor's). */
 float tank_env_c(const tank_t *t, float x, float y);
 float tank_env_c_lit(const tank_t *t, float x, float y, bool lit);
+float tank_animal_env_c(const tank_t *t, const fish_t *f, bool lit);
 /* its effects, normalised to the species (docs/species-pack.md "Heat"): heat under HEAT_SLOW slows it - its
  * speed x HEAT_SLOW_MIN at heat 0, rising straight to x1 at HEAT_SLOW; heat HEAT_HOT and up pulls stress
  * toward 4 + 2 x (heat - 8) at HEAT_HOT_PULL a second (the engine's stress settles ~0.18 a second, so a push
@@ -1130,15 +1186,69 @@ enum { SHED_NORMAL, SHED_SOON, SHED_SHEDDING, SHED_STUCK, SHED_CLEAN, SHED_STATE
 #define SOAK_HOLD_S        3.0f         /* the mister held on an animal this long (from the platform's first hold report) */
 #define MIST_PICK_R        40.0f        /* the animal under the mister: its middle this close to the finger at the hold's start ... */
 #define MIST_KEEP_R        64.0f        /* ... and kept while it stays this close */
-void  tank_lizard_fresh(const tank_t *t, fish_t *f);   /* a new arrival's body and shed: mid-band, a fresh shed clock (tank_make_fish; a visitor) */
+void  tank_lizard_fresh(const tank_t *t, fish_t *f);   /* a new arrival's body, shed and walk: mid-band, a fresh shed clock, out of any
+                                                          hide (tank_make_fish; a visitor) */
 bool  tank_shed_growth(tank_t *t, int i);          /* a stage's age reached: a growth shed starts now (normal), or the one
-                                                      under way becomes it; false for a shed just come off (CLEAN) */
-void  tank_shed_clock(tank_t *t, float tended);    /* tended seconds of the shed for every animal here, and the humid hides drying */
-bool  tank_in_damp_hide(const tank_t *t, int i);   /* fish i is inside a humid hide and it is damp */
+                                                      under way becomes it; false for a shed just come off (CLEAN), and for a
+                                                      pack that does not shed (species_t.sheds: the stage is the age's) */
+void  tank_shed_clock(tank_t *t, float tended);    /* tended seconds of the shed for every animal here, and the humid hides
+                                                      drying (nothing for a pack that does not shed) */
+bool  tank_in_damp_hide(const tank_t *t, int i);   /* fish i is in a humid hide (fish_t.hide) and it is damp */
 int   tank_humid_hide(const tank_t *t);            /* the habitat's first humid hide, -1 none */
 void  tank_mist_pass(tank_t *t, int k);            /* a mister pass over hide k: + MIST_PASS, up to 1 */
 bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on animal i done: a stuck shed comes off (stress +1, trust
                                                       +0.2 on a trusting one; true), anything else is sprayed (stress +1; false) */
+/* ---- THE WALK (pocket-terrarium P2b, tank.c): the terrarium's locomotion - a lizard walks the floor; the swim
+ * (buoyancy, depth picking, the school, the doors) is the aquarium's alone, kept whole in tank.c update_fish ----
+ * Its middle stays in the floor's band, LZ_LANE_BACK..LZ_LANE_FRONT px about PLACE_Y - the back and the front lane a
+ * walk takes, so two can pass; a place is at PLACE_Y itself - and its body inside the glass at its height: its
+ * middle at least LZ_GLASS_M in, and LZ_HALF_LEN x its size (the bowl's floor narrows toward its ends, the watch's
+ * corners close in). It walks at its pack's pace for its stage (species_t.walk_px_s) x the urgency's 0.8..1.25, x
+ * the cold's HEAT_SLOW, x 0.45 spent (energy under 1.2) - STOP-AND-GO: a bout of walking, then a stop (the pack's
+ * bout_s, pause_s; an explorer's stops longer, with tongue flicks) - and it TURNS ABOUT ON THE SPOT (turn_s: it
+ * stands while its yaw swings through head-on, its lane held too). Every goal resolves to a point on the floor and
+ * what it does there:
+ *   hunt         the prey (the nearest pellet, until P2c's crickets): to it, a freeze (STALK) within LZ_STRIKE_PX,
+ *                then a LUNGE at LZ_LUNGE_X its pace that misses LZ_MISS of the time (LZ_MISS_COLD more cold); a
+ *                pellet still falling: it waits under it; none: a slow walk to where food came last
+ *   bask         to the basking spot, then flat on it (BASK) until the goal changes - heat rises
+ *   hide         into the hide its need picks (tank_lizard_hide_for: the humid hide with a shed coming, on or stuck,
+ *                the cool one when hot - heat LZ_HIDE_COOL_AT, there until under LZ_HIDE_COOL_TO - else the warm
+ *                one); in, it is HIDDEN, and PEEKs out now and then (a bold one sooner); a need that changes moves it
+ *   explore      to a point in the floor zone it has not seen for longest (the schema's bottom row), slowly, its
+ *                stops tongue flicks (FLICK)
+ *   investigate  the other lizard if there is one, else the nearest place it is not at (picked once: there it stays,
+ *                flicking): up to LZ_CONTACT_PX of it - or, social under LZ_SOCIAL_LOW, a STANDOFF LZ_STANDOFF_PX off,
+ *                facing it
+ *   dig          scrabbles where it stands (DIG; out of a hide first)
+ *   rest         lies still where it is (REST; in a hide it stays in)
+ * The night: in its species' sleep phase every goal but hide is performed as rest (a starving lizard, hunger 8 and
+ * up, still hunts). The spawning's pair walks to the nursery and stands there; the setup page's lizard to its spot.
+ * Drives run on its pack's rates (species_t: hunger, energy spent walking or digging and back lying still, curiosity
+ * up except exploring or investigating - LZ_CURIOSITY_SPEND_X its rise spent then); stress settles 0.18 a second,
+ * twice that in a hide or lying still. */
+enum { LZ_POSE_STAND = 0, LZ_POSE_WALK, LZ_POSE_TURN, LZ_POSE_FLICK, LZ_POSE_STALK, LZ_POSE_LUNGE, LZ_POSE_BASK,
+       LZ_POSE_DIG, LZ_POSE_REST, LZ_POSE_HIDDEN, LZ_POSE_PEEK, LZ_POSE_STANDOFF, LZ_POSES };
+extern const char *const LZ_POSE_NAMES[LZ_POSES];
+#define LZ_LANE_BACK     (-5.0f)      /* px off PLACE_Y: the back lane ... */
+#define LZ_LANE_FRONT    5.0f         /* ... and the front one: the floor's band */
+#define LZ_GLASS_M       24.0f        /* its middle keeps this far inside the glass at its height ... */
+#define LZ_HALF_LEN      20.0f        /* ... and its body this x its size (the fish body render.c draws it with until P3) */
+#define LZ_ARRIVE_PX     6.0f         /* at a place: this close to it */
+#define LZ_STRIKE_PX     30.0f        /* the hunt: its snout this near the prey, it freezes, then lunges */
+#define LZ_LUNGE_X       3.0f
+#define LZ_MISS          0.15f
+#define LZ_MISS_COLD     0.35f
+#define LZ_CONTACT_PX    32.0f        /* investigate: up to the other this close (nose to it) ... */
+#define LZ_STANDOFF_PX   70.0f        /* ... or, territorial, no closer than this */
+#define LZ_SOCIAL_LOW    0.33f
+#define LZ_HIDE_COOL_AT  7.0f
+#define LZ_HIDE_COOL_TO  5.5f
+#define LZ_CURIOSITY_SPEND_X 10.0f
+bool  tank_lizard_enter(tank_t *t, int i, int k);       /* staging (the director, the tests): lizard i into hide k now, at its point, hidden;
+                                                          false = no such hide (nothing changes) */
+void  tank_lizard_leave(tank_t *t, int i);              /* ... and out of the one it is in, at its mouth */
+int   tank_lizard_hide_for(const tank_t *t, int i);     /* the hide lizard i's need picks (the hide goal's), -1 = the habitat has none */
 /* Tank light (2026-09-15). It is on while the device is being handled and
  * goes off LIGHT_IDLE_S after the last handling - the tank sitting still on
  * a desk is night: the fish rest, the palette dims, the panel dims. The

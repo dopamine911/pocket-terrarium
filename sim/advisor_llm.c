@@ -99,7 +99,7 @@ void advisor_llm_debug(const tank_t *t, int fish_idx) {
            g.id < GOAL_COUNT ? GOAL_NAMES[g.id] : "<no change>", g.urgency, g.confidence,
            g.runner_up < GOAL_COUNT ? GOAL_NAMES[g.runner_up] : "-");
     printf("  dist:");
-    for (int i = 0; i < GOAL_COUNT; i++) printf(" %s=%.2f", GOAL_NAMES[i], p[i]);
+    for (int i = GOAL_FIRST; i < GOAL_FIRST + GOAL_N; i++) printf(" %s=%.2f", GOAL_NAMES[i], p[i]);   /* (its world's goals) */
     printf("\n");
 }
 
@@ -111,7 +111,7 @@ static int pick_next(const tank_t *t) {
         if (g_pending[i] && !tank_swims(t, i)) g_pending[i] = false;
         if (!g_pending[i]) continue;
         const fish_t *f = &t->fish[i];
-        bool urgent = f->hunger > 8.0f && f->goal.id != GOAL_SEEK_FOOD;
+        bool urgent = f->hunger > 8.0f && f->goal.id != GOAL_W_FOOD;
         if (urgent) return i;
     }
     for (int k = 0; k < N_FISH_SLOTS; k++) {

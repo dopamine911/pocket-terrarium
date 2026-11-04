@@ -3,11 +3,12 @@
  * the new (prefill + the goal and " urgency" as one batched pass: two), over a grid of schema-4
  * states. Greedy: the goal and the urgency must agree. Sampled with the same seed: the goal
  * must agree (the digit may differ where the old path's second token was not " urgency").
- * Build from firmware/host_test:
- *   cc -O2 -I../../common -I../../common/llm -Wl,-undefined,dynamic_lookup -o decide_host decide_host.c \
+ * Build from firmware/host_test, in the aquarium's world (-DPT_WORLD=1: the v4 fish model's goal set, common/world.h):
+ *   cc -O2 -DPT_WORLD=1 -I../../common -I../../common/llm -Wl,-undefined,dynamic_lookup -o decide_host decide_host.c \
  *     ../../common/llm/advisor_core.c ../../common/llm/q4_model.c ../../common/llm/word_tok.c -lm
- * (advisor_core_encode's tank and species calls are never made here: dynamic_lookup leaves them unresolved;
- *  the data it reads - tank.c's and species.c's name lists - is defined below)
+ * (macOS; on Linux `-no-pie -Wl,--unresolved-symbols=ignore-all` for `-Wl,-undefined,dynamic_lookup`. advisor_core_encode's
+ *  tank and species calls are never made here: the link leaves them unresolved; the data it reads - tank.c's and
+ *  species.c's name lists - is defined below)
  *   ./decide_host ../../model/out/model_q4.bin ../../model/out/tokenizer.bin */
 #include "advisor_core.h"
 #include "word_tok.h"
@@ -18,8 +19,11 @@
 static uint8_t *slurp(const char *p, size_t *n) { FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); *n = ftell(f); fseek(f, 0, SEEK_SET); uint8_t *b = malloc(*n); if (b && fread(b, 1, *n, f) != *n) { free(b); b = NULL; } fclose(f); return b; }
 static void *xalloc(size_t n) { return calloc(1, n); }
 static double now_ms(void) { struct timeval t; gettimeofday(&t, NULL); return t.tv_sec * 1e3 + t.tv_usec / 1e3; }
-/* tank.c's list, defined here: advisor_core_init reads it (tank.c is not linked) */
-const char *const GOAL_NAMES[GOAL_COUNT] = { "seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef" };
+/* tank.c's list, defined here: advisor_core_init reads it (tank.c is not linked) - both worlds' goals, one enum (tank.h THE GOALS) */
+const char *const GOAL_NAMES[GOAL_COUNT] = {
+    "seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef",   /* the fish's */
+    "hunt", "bask", "hide", "explore", "investigate", "dig", "rest",                                                  /* the lizard's */
+};
 #define GOALS GOAL_NAMES
 const char *const STAGE_NAMES[4] = { "fry", "juv", "adult", "elder" };
 #define STAGES STAGE_NAMES

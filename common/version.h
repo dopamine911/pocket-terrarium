@@ -46,7 +46,9 @@
  * is healed from these at boot when a cable install left none, and an
  * update manifest naming another model tag says "needs the cable" until the
  * model path lands (docs/OTA.md, phase two). tools/model_trailer.py --check
- * refuses a release whose model file disagrees with these. */
+ * refuses a release whose model file disagrees with these. pocket-terrarium
+ * P2b: both worlds still ship the v4 fish model (world.h THE BRAIN); P6 gives
+ * the terrarium the lizard model's identity here, by PT_WORLD. */
 #define PT_MODEL_TAG     "v3m"
 #define PT_MODEL_LEN     7557640u
 #define PT_MODEL_SHA256  "50bed3e16a6b11f3496dde21d8784da9067f40ec9f0a77cf97f60a95acb80f6b"

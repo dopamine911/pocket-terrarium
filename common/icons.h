@@ -60,6 +60,7 @@ extern const icon_t icon_snail_glass;
 extern const icon_t icon_snail_upright;
 extern const icon_t icon_tool_lock_closed;
 extern const icon_t icon_tool_lock_open;
+extern const icon_t icon_tool_mister;
 extern const icon_t icon_tool_scissors;
 extern const icon_t icon_tool_sponge;
 

@@ -145,6 +145,12 @@ static void make_room(tank_t *t) {
     ESP_LOGI(TAG, "tank at the cap: %s steps out for the scene (the parked tank keeps it)", t->fish[t->n_fish].name);
 }
 static float stage_age(const tank_t *t, int st) { return st <= STAGE_FRY ? 0 : progression_stage_age(t, (stage_t)st) + 60; }   /* a minute past the species' age for it */
+/* `age`, `stage` and `stages` put the age's stage on AT ONCE (progression_set_age, a staging): for a pack that sheds - the
+   terrarium's lizards - that is past the growth-shed gate, no shed and the stage now (docs/shed.md "Growing up"). Said
+   every time, so a staged scene is never taken for the real growing up (P2b); the aquarium's fish have no gate */
+static void shed_bypass_note(const tank_t *t) {
+    if (tank_species(t)->sheds) ESP_LOGW(TAG, "stage set directly: this BYPASSES the growth-shed gate (no shed came first; a lizard grows at a clean shed - docs/shed.md)");
+}
 static int stage_of(const char *s) {
     for (int i = 0; i < 4; i++) if (!strcasecmp(s, STAGE_NAMES[i])) return i;
     if (!strcasecmp(s, "juvenile")) return STAGE_JUV;
@@ -1035,6 +1041,7 @@ static void run(tank_t *t, char *line) {
         int n = t->n_fish < 4 ? t->n_fish : 4;
         for (int i = 0; i < n; i++) progression_set_age(t, i, stage_age(t, 4 - n + i));
         ESP_LOGI(TAG, "one fish per stage");
+        shed_bypass_note(t);
         show_state(t);
     } else if (!strcmp(c, "stage") && argc > 2) {
         int st = stage_of(argv[2]);
@@ -1043,6 +1050,7 @@ static void run(tank_t *t, char *line) {
         if (!strcmp(argv[1], "all")) for (int i = 0; i < t->n_fish; i++) progression_set_age(t, i, stage_age(t, st));
         else { int who = find_fish(t, argv[1]); if (who < 0) { ESP_LOGW(TAG, "no fish '%s'", argv[1]); return; }
                progression_set_age(t, who, stage_age(t, st)); }
+        shed_bypass_note(t);
         show_state(t);
     } else if (!strcmp(c, "overgrown")) {
         if (!stage_guard(t)) return;
@@ -1076,6 +1084,7 @@ static void run(tank_t *t, char *line) {
         int who = find_fish(t, argv[1]); if (who < 0) { ESP_LOGW(TAG, "no fish '%s'", argv[1]); return; }
         if (!stage_guard(t)) return;
         progression_set_age(t, who, atof(argv[2]) * 3600.0f);
+        shed_bypass_note(t);
         show_state(t);
     } else if (!strcmp(c, "form") && argc > 3) {     /* form <fish|all> <shape> <fins> [pattern] (0.4): a staged fish's look, for the eye (names or numbers) */
         int v[3] = { -1, -1, 0 };

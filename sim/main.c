@@ -111,6 +111,9 @@ int selftest_heat(void);                /* ... the heat field and the body's hea
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
 int selftest_mister(void);              /* ... the third tool */
 int selftest_l1_encode(void);           /* selftest_l1.c: the L1 encoder against the Python fixture (R4) */
+int selftest_walk(void);                /* selftest_walk.c (P2b): the lizards stay on the floor - the band, the glass, every board; turns, stops, paces */
+int selftest_goals(void);               /* ... each of the seven goals reaches its place (the hide by its need, humid in a shed), the night */
+int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper */
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
 
@@ -279,11 +282,11 @@ static int selftest(void) {
     for (int i = 0; i < tank.n_fish; i++) eaten += tank.fish[i].eaten;
     printf("selftest: 7200 ticks ok, %u advisor asks, %d player feedings, feed spot %.0f\n",
            tank.advisor_asks, tank.player_feedings, tank.feed_spot_x);
-    for (int g = 0; g < GOAL_COUNT; g++) {
+    for (int g = GOAL_FIRST; g < GOAL_FIRST + GOAL_N; g++) {   /* (its world's goals) */
         if (goal_seen[g]) distinct++;
         printf("  %-14s %5d fish-ticks\n", GOAL_NAMES[g], goal_seen[g]);
     }
-    printf("  pellets eaten: %d, distinct goals used: %d/8\n", eaten, distinct);
+    printf("  pellets eaten: %d, distinct goals used: %d/%d\n", eaten, distinct, GOAL_N);
     for (int i = 0; i < tank.n_fish; i++)
         printf("  %-5s (%.0f,%.0f) hunger %.1f energy %.1f goal %s\n",
                tank.fish[i].name, tank.fish[i].x, tank.fish[i].y,
@@ -2355,25 +2358,27 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
     }
     {   /* the packs (pocket-terrarium P2a, 1956): pack_v 0 (every fixture: an older save) = the default species in the default habitat,
            each lizard comfortable with a fresh shed clock for its stage, the humid hides at the habitat's start; 1 = as written (by slot:
-           our own saves keep their prints in order) - a pair that does not fit loads as the defaults */
+           our own saves keep their prints in order) - a pair that does not fit, or is another world's (P2b: another bin's save), loads
+           as the defaults, and then the tail's heat, sheds and moisture (that pack's) are not taken: fresh, as an older save's */
         const bool pv = e[1956] != 0;
         uint8_t pid = pv ? e[1957] : SPECIES_DEFAULT, hid = pv ? e[1958] : HABITAT_DEFAULT;
-        if (!habitat_fits(habitat_get(hid), species_get(pid))) { pid = SPECIES_DEFAULT; hid = HABITAT_DEFAULT; }
+        const bool held = pv && habitat_fits(habitat_get(hid), species_get(pid)) && species_get(pid)->world == PT_WORLD_ID;
+        if (!held) { pid = SPECIES_DEFAULT; hid = HABITAT_DEFAULT; }
         if (tank.pack_id != pid || tank.habitat_id != hid) SV_FAIL("species %d in habitat %d, want %d in %d", tank.pack_id, tank.habitat_id, pid, hid);
         const species_t *sp = tank_species(&tank); const habitat_t *hb = tank_habitat(&tank);
         for (int i = 0; i < n; i++) {
             const fish_t *f = &tank.fish[i];
-            uint8_t st = pv ? e[1960 + i] : SHED_NORMAL; bool gr = pv && e[1966 + i];
-            uint16_t cl = pv ? (uint16_t)(e[1972 + 2 * i] | e[1973 + 2 * i] << 8) : 0;
-            float bc = pv ? sv_f32(e, 1984 + 4 * i) : (sp->t_lo + sp->t_hi) * 0.5f, ss = pv ? sv_f32(e, 2008 + 4 * i) : sp->shed_every_s[f->stage & 3];
-            float sd = pv ? sv_f32(e, 2032 + 4 * i) : 0;
+            uint8_t st = held ? e[1960 + i] : SHED_NORMAL; bool gr = held && e[1966 + i];
+            uint16_t cl = held ? (uint16_t)(e[1972 + 2 * i] | e[1973 + 2 * i] << 8) : 0;
+            float bc = held ? sv_f32(e, 1984 + 4 * i) : (sp->t_lo + sp->t_hi) * 0.5f, ss = held ? sv_f32(e, 2008 + 4 * i) : sp->shed_every_s[f->stage & 3];
+            float sd = held ? sv_f32(e, 2032 + 4 * i) : 0;
             if (f->shed != st || f->shed_growth != gr || f->shed_clean != cl || f->body_c != bc || f->shed_s != ss || f->shed_damp != sd || f->heat != species_heat_of(sp, bc))
                 SV_FAIL("fish %d: shed %d growth %d clean %d, %.2f C (heat %.2f), %.1f s / %.1f damp - want %d %d %d, %.2f C, %.1f / %.1f", i, f->shed, f->shed_growth, f->shed_clean,
                         f->body_c, f->heat, f->shed_s, f->shed_damp, st, gr, cl, bc, ss, sd);
         }
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
             bool humid = k < hb->n_hides && hb->hides[k].kind == HIDE_HUMID;
-            float want = !humid ? 0 : pv ? sv_f32(e, 2056 + 4 * k) : hb->moist_start;
+            float want = !humid ? 0 : held ? sv_f32(e, 2056 + 4 * k) : hb->moist_start;
             if (tank.moist[k] != want) SV_FAIL("hide %d's moisture %.3f, want %.3f", k, tank.moist[k], want);
         }
     }
@@ -2563,36 +2568,41 @@ static int selftest_saves(void) {
         if (tank.fish[i].away) { printf("FAIL: home again, it was saved as away\n"); return 1; }
         printf("selftest-saves: a fish next door at the save: away after the reboot, home from bubbles 10 s in, saved home\n");
     }
-    /* the packs tail (pocket-terrarium P2a): the pair, each lizard's heat and shed and the hides' moisture come back as saved -
+    /* the packs tail (pocket-terrarium P2a): the pair, each animal's heat and shed and the hides' moisture come back as saved -
        by print, like the genes (a fish sold under an older build moved the rest down: theirs follow them); a pair that does not
-       fit, or an id this build lacks, loads as the default pair */
+       fit, or an id this build lacks, loads as the default pair - and so does another world's (P2b: a terrarium's save in the
+       aquarium's bin, or the other way), its animals fresh: the tail's heat and sheds are that pack's. The round trip is on this
+       world's own pair: the terrarium's test pack in the desert (not the default pair: its coming back is the tail's doing), the
+       aquarium's fish in freshwater (its one pair: the animals' tail proves it was taken; no hide to keep damp) */
     {
+        const uint8_t own_h = PT_TERRARIUM ? HABITAT_DESERT : HABITAT_FRESHWATER, own_p = PT_TERRARIUM ? SPECIES_TEST_WARM : SPECIES_FISH;
+        const uint8_t other_h = PT_TERRARIUM ? HABITAT_FRESHWATER : HABITAT_DESERT, other_p = PT_TERRARIUM ? SPECIES_FISH : SPECIES_GECKO;
         remove(getenv("POCKET_TANK_SAVE"));
         tank_init(&tank, 24); progression_wake(&tank, 0);
         while (tank.n_fish < 3) tank_add_fish(&tank, 0, 1);
-        if (!tank_set_packs(&tank, HABITAT_DESERT, SPECIES_TEST_WARM)) { printf("FAIL: the desert refused the test pack\n"); return 1; }
-        const int humid = tank_humid_hide(&tank);
+        if (!tank_set_packs(&tank, own_h, own_p)) { printf("FAIL: the %s refused its own pair, species %d in habitat %d\n", PT_WORLD_NAME, own_p, own_h); return 1; }
+        const int humid = tank_humid_hide(&tank);                       /* (-1: freshwater keeps no hide damp) */
         static const uint8_t ST[3] = { SHED_STUCK, SHED_SOON, SHED_SHEDDING };
         for (int i = 0; i < 3; i++) {
             fish_t *f = &tank.fish[i];
             f->shed = ST[i]; f->shed_s = 100.5f + 11 * i; f->shed_damp = 2.25f * i; f->shed_growth = i != 1; f->shed_clean = (uint16_t)(7 + i);
             f->body_c = 33.75f - 4 * i; f->heat = species_heat_of(tank_species(&tank), f->body_c);
         }
-        tank.moist[humid] = 0.4375f;
+        if (humid >= 0) tank.moist[humid] = 0.4375f;
         uint32_t uid1 = tank.fish[2].uid;
         progression_save(&tank);
         static uint8_t pk[4096]; long l = saves_read(pk, sizeof pk);
-        if (l != SAVE_NOW || pk[1956] != 1 || pk[1957] != SPECIES_TEST_WARM || pk[1958] != HABITAT_DESERT) { printf("FAIL: the packs tail was not written (%ld bytes, %d %d %d)\n", l, pk[1956], pk[1957], pk[1958]); return 1; }
+        if (l != SAVE_NOW || pk[1956] != 1 || pk[1957] != own_p || pk[1958] != own_h) { printf("FAIL: the packs tail was not written (%ld bytes, %d %d %d)\n", l, pk[1956], pk[1957], pk[1958]); return 1; }
         tank_init(&tank, 25); progression_wake(&tank, 0);
-        if (tank.pack_id != SPECIES_TEST_WARM || tank.habitat_id != HABITAT_DESERT || tank.n_fish != 3 || fabsf(tank.moist[humid] - 0.4375f) > 0) {
-            printf("FAIL: the packs tail came back as species %d in habitat %d, %d fish, the humid hide at %.4f\n", tank.pack_id, tank.habitat_id, tank.n_fish, tank.moist[humid]); return 1; }
+        if (tank.pack_id != own_p || tank.habitat_id != own_h || tank.n_fish != 3 || (humid >= 0 && fabsf(tank.moist[humid] - 0.4375f) > 0)) {
+            printf("FAIL: the packs tail came back as species %d in habitat %d, %d fish, the humid hide at %.4f\n", tank.pack_id, tank.habitat_id, tank.n_fish, humid >= 0 ? tank.moist[humid] : 0.0f); return 1; }
         for (int i = 0; i < 3; i++) {
             const fish_t *f = &tank.fish[i];
             if (f->shed != ST[i] || f->shed_s != 100.5f + 11 * i || f->shed_damp != 2.25f * i || f->shed_growth != (i != 1) || f->shed_clean != 7 + i || f->body_c != 33.75f - 4 * i
                 || f->heat != species_heat_of(tank_species(&tank), f->body_c)) {
-                printf("FAIL: lizard %d came back shed %d %.1f s %.2f damp growth %d clean %d, %.2f C\n", i, f->shed, f->shed_s, f->shed_damp, f->shed_growth, f->shed_clean, f->body_c); return 1; }
+                printf("FAIL: animal %d came back shed %d %.1f s %.2f damp growth %d clean %d, %.2f C\n", i, f->shed, f->shed_s, f->shed_damp, f->shed_growth, f->shed_clean, f->body_c); return 1; }
         }
-        /* an older build sold lizard 1 under the kept tail: the rest move down a slot, their tails find them by print */
+        /* an older build sold animal 1 under the kept tail: the rest move down a slot, their tails find them by print */
         tank_remove_fish(&tank, 1); progression_save(&tank);
         static uint8_t head[4096]; if (saves_read(head, sizeof head) != SAVE_NOW) { printf("FAIL: the sold tank's save\n"); return 1; }
         memcpy(head + 1956, pk + 1956, SAVE_NOW - 1956);                /* its own head over the tail as it was before the sale */
@@ -2601,14 +2611,27 @@ static int selftest_saves(void) {
         if (tank.n_fish != 2 || tank.fish[1].uid != uid1 || tank.fish[1].shed != ST[2] || tank.fish[1].shed_clean != 9 || tank.fish[1].body_c != 33.75f - 8) {
             printf("FAIL: after a sale under an older head, slot 1 is %08x (want %08x) shed %d clean %d %.2f C - its tail is not its own\n",
                    (unsigned)tank.fish[1].uid, (unsigned)uid1, tank.fish[1].shed, tank.fish[1].shed_clean, tank.fish[1].body_c); return 1; }
-        /* a pair that does not fit, and one this build has no pack for */
-        for (int bad = 0; bad < 2; bad++) {
-            pk[1957] = bad ? 99 : SPECIES_GECKO; pk[1958] = bad ? HABITAT_DESERT : 77;
+        /* a pair that does not fit, one this build has no pack for, and another world's: the defaults, the animals fresh (the default
+           pack's comfortable body and a new shed clock, tank_lizard_fresh), the humid hides at the habitat's start */
+        for (int bad = 0; bad < 3; bad++) {
+            pk[1957] = bad == 2 ? other_p : bad ? 99 : SPECIES_GECKO; pk[1958] = bad == 2 ? other_h : bad ? HABITAT_DESERT : 77;
             wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(pk, 1, SAVE_NOW, wf); fclose(wf);
             tank_init(&tank, 27); progression_wake(&tank, 0);
             if (tank.pack_id != SPECIES_DEFAULT || tank.habitat_id != HABITAT_DEFAULT) { printf("FAIL: a save of species %d in habitat %d loaded as %d in %d, not the defaults\n", pk[1957], pk[1958], tank.pack_id, tank.habitat_id); return 1; }
+            const species_t *dp = tank_species(&tank); const habitat_t *dh = tank_habitat(&tank);
+            for (int i = 0; i < tank.n_fish; i++) {
+                const fish_t *f = &tank.fish[i];
+                if (f->shed != SHED_NORMAL || f->shed_growth || f->shed_clean || f->shed_damp != 0 || f->body_c != (dp->t_lo + dp->t_hi) * 0.5f || f->shed_s != dp->shed_every_s[f->stage & 3]) {
+                    printf("FAIL: a save of species %d in habitat %d: animal %d kept the tail's shed %d clean %d, %.2f C (want a fresh one)\n", pk[1957], pk[1958], i, f->shed, f->shed_clean, f->body_c); return 1; }
+            }
+            for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
+                const bool hu = k < dh->n_hides && dh->hides[k].kind == HIDE_HUMID;
+                if (tank.moist[k] != (hu ? dh->moist_start : 0)) { printf("FAIL: a save of species %d in habitat %d: hide %d's moisture %.4f, want %.4f\n", pk[1957], pk[1958], k, tank.moist[k], hu ? dh->moist_start : 0); return 1; }
+            }
         }
-        printf("selftest-saves: the packs tail: the test pack in the desert, three lizards' heat and shed and the humid hide's moisture come back as saved, by print after a sale; an unknown pair loads as the defaults\n");
+        printf("selftest-saves: the packs tail: %s in the %s, three animals' heat and shed%s come back as saved, by print after a sale; an unknown pair loads as the defaults, "
+               "and another world's (%s in the %s) too, its animals fresh\n", species_get(own_p)->name, habitat_get(own_h)->name, humid >= 0 ? " and the humid hide's moisture" : "",
+               species_get(other_p)->name, habitat_get(other_h)->name);
     }
     remove(getenv("POCKET_TANK_SAVE"));
     for (int k = 0; k < nf; k++) free(names[k]);
@@ -3239,9 +3262,8 @@ static int selftest_tend(void) {
           printf("selftest-tend: a tool in hand - a surface tap, a double tap and a hold did nothing\n"); }
         for (int i = 0; i < (int)(TOOL_IDLE_S * 60) + 120; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
         if (tank.tool != TOOL_HAND) { printf("FAIL: the scissors stayed in hand after %.0f s untouched\n", TOOL_IDLE_S); return 1; }
-        const int by = RENDER_TOOLS_Y + RENDER_TOOLS_H / 2;
-        if (render_tools_hit(RENDER_TOOLS_X + 20, by) != TOOL_SPONGE || render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W / 2, by) != TOOL_SCISSORS ||   /* (in thirds since the mister, P2a) */
-            render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W - 20, by) != TOOL_MISTER ||
+        const int by = RENDER_TOOLS_Y + RENDER_TOOLS_H / 2;   /* (the aquarium's halves; the terrarium's thirds are --selftest-mister's) */
+        if (render_tools_hit(RENDER_TOOLS_X + 20, by) != TOOL_SPONGE || render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W - 20, by) != TOOL_SCISSORS ||
             render_tools_hit(RENDER_TOOLS_X + 20, RENDER_CARD_Y + RENDER_CARD_H - 4) >= 0 || !RENDER_CARD_HIT(RENDER_TOOLS_X + 20, RENDER_TOOLS_Y - 2)) {
             printf("FAIL: the toolbox's tap test\n"); return 1; }
         for (int i = 0; i < ALGAE_CELLS; i++) tank.algae[i] = 0;
@@ -3834,7 +3856,7 @@ static int selftest_temper(void) {
  * the wild) has to find its way back; bold may grow a step in a good home,
  * not run to 0.95. Then ten real minutes alone against ten of a held finger. */
 static int selftest_drift(void) {
-    if (!advisor_llm_init("../model/out/model_q4.bin", "../model/out/tokenizer.bin")) {
+    if (!advisor_llm_init("../" PT_MODEL_FILE, "../" PT_TOKENIZER_FILE)) {   /* (the world's brain: world.h) */
         printf("FAIL: model.bin/tokenizer.bin not found under ../model/out/\n");
         return 1;
     }
@@ -3879,7 +3901,7 @@ static int selftest_drift(void) {
     printf("selftest-drift: bold born 0.20 0.40 0.50 0.60 0.80 | fed + calm %.0f%% of fish-time, stress > 7 %.1f%%\n",
            100.0 * calm_ticks / (ticks * 5.0), 100.0 * scared_ticks / (ticks * 5.0));
     printf("selftest-drift: goal share");
-    for (int g = 0; g < GOAL_COUNT; g++) printf(" %s %.0f%%", GOAL_NAMES[g], 100.0 * goal_ticks[g] / (ticks * 5.0));
+    for (int g = GOAL_FIRST; g < GOAL_FIRST + GOAL_N; g++) printf(" %s %.0f%%", GOAL_NAMES[g], 100.0 * goal_ticks[g] / (ticks * 5.0));
     printf("\n");
     for (int i = 0; i < 4; i++)
         if (fabsf(tank.fish[i].sociable - born[i]) > 0.2f) {
@@ -3922,7 +3944,7 @@ static int selftest_drift(void) {
  * minutes > 0 runs REAL-TIME pacing for that long (the honest measurement of
  * survival-reflex overrides); minutes == 0 is the fast smoke test. */
 static int selftest_llm(int minutes) {
-    if (!advisor_llm_init("../model/out/model_q4.bin", "../model/out/tokenizer.bin")) {
+    if (!advisor_llm_init("../" PT_MODEL_FILE, "../" PT_TOKENIZER_FILE)) {   /* (the world's brain: world.h) */
         printf("FAIL: model.bin/tokenizer.bin not found under ../model/out/\n");
         return 1;
     }
@@ -3998,7 +4020,7 @@ static int selftest_llm(int minutes) {
     printf("selftest-llm: %d goal changes (%d torn), %u asks, %d survival overrides in %d sim-seconds\n",
            changes, torn, tank.advisor_asks, tank_reflex_overrides, ticks / 60);
     printf("census: goal share");
-    for (int g = 0; g < GOAL_COUNT; g++) printf(" %s %.0f%%", GOAL_NAMES[g], 100.0 * goal_ticks[g] / (ticks * tank.n_fish));
+    for (int g = GOAL_FIRST; g < GOAL_FIRST + GOAL_N; g++) printf(" %s %.0f%%", GOAL_NAMES[g], 100.0 * goal_ticks[g] / (ticks * tank.n_fish));
     printf("\ncensus: fish-time at a landmark (bubbles/reef, 55 px) %.0f%% | 3+ fish crowding one %.0f%% of the time | "
            "a 3-fish cluster anywhere %.0f%% | mean curiosity %.1f hunger %.1f energy %.1f\n",
            100.0 * near_ticks / (ticks * tank.n_fish), 100.0 * crowd_ticks / ticks, 100.0 * cluster_ticks / ticks,
@@ -8791,7 +8813,7 @@ static void *st_alloc(size_t n) { return calloc(1, n); }
 static int selftest_model(const char *prefix) {
 #define MFAIL(...) do { printf("FAIL: selftest-model: "); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
     size_t ml, tl;
-    uint8_t *mb = st_slurp("../model/out/model_q4.bin", &ml), *tb = st_slurp("../model/out/tokenizer.bin", &tl);
+    uint8_t *mb = st_slurp("../" PT_MODEL_FILE, &ml), *tb = st_slurp("../" PT_TOKENIZER_FILE, &tl);   /* (the world's brain: world.h) */
     if (!mb || !tb) MFAIL("model.bin/tokenizer.bin not found under ../model/out/");
     tank_init(&tank, 4321); tank_new_population(&tank);
     char st[400]; advisor_core_sample = true;
@@ -12319,8 +12341,10 @@ static int selftest_card(const char *prefix) {
     setup_touch(&tank, 0, 0, false);
     if (!setup_active() || !setup_is_rename() || setup_page() != SETUP_PG_RENAME || setup_fish() != 2 || tank.stage_fish != 2)
         CARD_FAIL("the rename page did not open on cy (active %d, page %d, fish %d, stage %d)", setup_active(), setup_page(), setup_fish(), tank.stage_fish);
-    for (int i = 0; i < 60 * 12; i++) { tank_tick(&tank, DT, advisor_rules); setup_touch(&tank, 0, 0, false); }   /* cy swims to its stage */
-    if (tank_dist(tank.fish[2].x, tank.fish[2].y, tank.stage_x, tank.stage_y) > 60) CARD_FAIL("cy is not on its stage after 12 s (%.0f px off)", tank_dist(tank.fish[2].x, tank.fish[2].y, tank.stage_x, tank.stage_y));
+    for (int i = 0; i < 60 * 12; i++) { tank_tick(&tank, DT, advisor_rules); setup_touch(&tank, 0, 0, false); }   /* cy swims to its stage (a lizard walks the
+                                                                                                                  floor to under it: tank.h THE WALK) */
+    const float stage_off = PT_TERRARIUM ? fabsf(tank.fish[2].x - tank.stage_x) : tank_dist(tank.fish[2].x, tank.fish[2].y, tank.stage_x, tank.stage_y);
+    if (stage_off > 60) CARD_FAIL("cy is not on its stage after 12 s (%.0f px off)", stage_off);
     setup_activate(&tank, SETUP_HIT_UP);                      /* c -> d */
     if (strcmp(tank.fish[2].name, "dy")) CARD_FAIL("the wheel made '%s' of cy", tank.fish[2].name);
     render_tank(&tank, fb, TANK_W); render_setup(&tank, fb, TANK_W, tank.clock);
@@ -12597,9 +12621,10 @@ static int selftest_clock(void) {
           static tank_t back; tank_init(&back, 5); progression_boot(&back);
           if (!(back.sd_unlocks & SD_ITEM_SEAHORSE) || fabs((double)back.sh_s - sh) > 1.0) CK_CHECK("the seahorse's saved time came back %.1f s off", (double)back.sh_s - sh); }
 
-        /* a door visit, at this clock, ends on its own */
-        if (selftest_clock_doors(days * 86400.0)) CK_CHECK("a door visit did not end on its own");
-        if (!fails) printf("selftest-clock: day %d - the clock keeps time; SELL (card, shop), GIVE and the gift card's holds pass; ARRIVING lets go; the tail beat is unbroken; the grass sways; the snail rests and walks; wander runs; the seahorse's days count and save; a visit ends\n", days);
+        /* a door visit, at this clock, ends on its own (the aquarium's: a lizard never takes a door - tank.h THE WALK) */
+        if (!PT_TERRARIUM && selftest_clock_doors(days * 86400.0)) CK_CHECK("a door visit did not end on its own");
+        if (!fails) printf("selftest-clock: day %d - the clock keeps time; SELL (card, shop), GIVE and the gift card's holds pass; ARRIVING lets go; the tail beat is unbroken; the grass sways; the snail rests and walks; wander runs; the seahorse's days count and save%s\n",
+                           days, PT_TERRARIUM ? "" : "; a visit ends");
     }
     printf("selftest-clock: %s\n", fails ? "FAILED" : "OK");
     return fails ? 1 : 0;
@@ -13169,6 +13194,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
         if (strcmp(argv[a], "--selftest-mister") == 0) return selftest_mister();
         if (strcmp(argv[a], "--selftest-l1-encode") == 0) return selftest_l1_encode();
+        if (strcmp(argv[a], "--selftest-walk") == 0) return selftest_walk();
+        if (strcmp(argv[a], "--selftest-goals") == 0) return selftest_goals();
+        if (strcmp(argv[a], "--selftest-terrarium") == 0) return selftest_terrarium();
         if (strcmp(argv[a], "--genes") == 0 && a + 1 < argc) return genes_shot(argv[a + 1]);
         if (strcmp(argv[a], "--plant-order") == 0) return plant_order();
         if (strcmp(argv[a], "--place-shot") == 0 && a + 1 < argc) return place_shot(argv[a + 1]);
@@ -13216,6 +13244,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-shelf-rename") == 0) return selftest_shelf_rename();
         if (strcmp(argv[a], "--volcano") == 0 && a + 1 < argc) return volcano_shot(argv[a + 1]);
         if (strcmp(argv[a], "--crab") == 0 && a + 1 < argc) return crab_shot(argv[a + 1]);
+        if (strcmp(argv[a], "--lizard-sheet") == 0 && a + 1 < argc) { int lizard_sheet(const char *prefix); return lizard_sheet(argv[a + 1]); }   /* sheet_lizard.c (P3a) */
         if (strcmp(argv[a], "--critter-cards") == 0 && a + 1 < argc) return critter_cards(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-critter-nav") == 0) return selftest_critter_nav();
         if (strcmp(argv[a], "--fluid") == 0 && a + 1 < argc) return fluid(argv[a + 1]);
@@ -13303,8 +13332,8 @@ int main(int argc, char **argv) {
             advisor_llm_narrate = true;   /* film the tank + this terminal */
             llm_active = true;
         }
-    llm_available = advisor_llm_init("../model/out/model_q4.bin",
-                                     "../model/out/tokenizer.bin");
+    llm_available = advisor_llm_init("../" PT_MODEL_FILE,                  /* the world's brain (world.h): the terrarium's is */
+                                     "../" PT_TOKENIZER_FILE);             /* still the fish model, over the bridge (P6) */
     printf(llm_available
            ? "LLM advisor loaded (press L to toggle rule/LLM brain)\n"
            : "model.bin/tokenizer.bin not found; rule brain only\n");

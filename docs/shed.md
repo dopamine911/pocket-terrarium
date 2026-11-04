@@ -62,7 +62,9 @@ a damp humid hide it uses, later if it dawdles, and not at all while the shed is
 A shed comes off clean when, during `shedding`, the lizard spends
 **`SHED_SOAK_S` = 60 s in total** inside a humid hide whose **moisture is at
 least `SHED_DAMP` = 0.35**. Time inside counts while it is damp enough; it does
-not have to be one stay. A dry humid hide does nothing.
+not have to be one stay. A dry humid hide does nothing. Inside means gone in
+(P2b, `tank.h` THE WALK: `fish_t.hide`, hidden or peeking out) - a lizard
+walking past the hide's mouth is not in it.
 
 A lizard with `shed yes` that the model sends to `hide` goes to the humid hide
 (`model/schema-lizard.md`, goal `hide`), so a well-kept terrarium sheds clean

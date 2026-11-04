@@ -868,7 +868,7 @@ static void draw_fish(ctx_t *c, const tank_t *t, const fish_t *f) {
                                                           the floor touches it, never shows through it - nothing of a fish is
                                                           ever painted over the sand or a piece's footing (2026-10-24) */
     int h = FISH_FLOOR_Y - cf.oy; if (h < cf.h) cf.h = h;
-    bool asleep = t->night && f->goal.id == GOAL_REST;
+    bool asleep = t->night && (f->goal.id == GOAL_W_REST || f->pose == LZ_POSE_REST || f->pose == LZ_POSE_HIDDEN);   /* (a lizard lying still asleep: THE WALK's pose) */
     /* and its BODY rests on the sand, never in it: the physics lets a centre
        down to 15 x size off the bottom (tank.c's hard clamp; a pellet lies
        2 px into the sand), where the biggest fish's belly would be 8 px under
@@ -7476,35 +7476,27 @@ static void shade_box(ctx_t *c, int x, int y, int w, int h) {
     }
 }
 static void rect_fill(ctx_t *c, int x, int y, int w, int h, uint32_t rgb);   /* below */
-/* the MISTER's icon (pocket-terrarium P2a): a trigger spray bottle in a 24 px box at scale s, drawn from
- * rectangles - the bottle, its water, the neck, the sprayer head with its nozzle and trigger, a puff of mist
- * off the nozzle. P3 replaces it with art from assets/icons like the others' (PLAN.md P3 "Icons") */
-static void mister_icon(ctx_t *c, int x, int y, int s) {
-    static const struct { int8_t x, y, w, h; uint32_t rgb; } R[] = {
-        {  8, 11, 10, 12, 0x3d6b78 }, {  9, 12,  8, 10, 0x9fc9d4 }, {  9, 16,  8,  6, 0x4aa3c8 },   /* the bottle, the water in it */
-        { 11,  8,  4,  3, 0xd9e6ea },                                                             /* the neck */
-        {  7,  4, 11,  4, 0xe8f0f2 }, {  4,  5,  3,  2, 0xe8f0f2 }, { 14,  8,  2,  4, 0xc4d3d8 },   /* the head, the nozzle, the trigger */
-        {  1,  3,  2,  2, 0xbfe9f5 }, {  0,  6,  2,  2, 0xbfe9f5 }, {  2,  9,  2,  2, 0xbfe9f5 },   /* the mist */
-    };
-    for (size_t k = 0; k < sizeof R / sizeof R[0]; k++) rect_fill(c, x + R[k].x * s, y + R[k].y * s, R[k].w * s, R[k].h * s, R[k].rgb);
-}
-#define TOOL_BTN_W ((RENDER_TOOLS_W - 16 - 12) / 3)   /* three tools in a row (the mister, P2a): the icons at 1x */
+/* the toolbox's tools, by world (P2b): the aquarium's two - the sponge and the scissors, as pocket-tank's, their icons
+ * at 2x in halves - and the terrarium's three, the mister third (P2a: the icons at 1x to fit). The fish do not shed:
+ * no mister in their box (tank_set_tool refuses it too) */
+#define TOOLS_N    (PT_TERRARIUM ? 3 : 2)
+#define TOOL_BTN_W ((RENDER_TOOLS_W - 16 - 6 * (TOOLS_N - 1)) / TOOLS_N)
 #define TOOL_BTN_H (RENDER_TOOLS_H - 16)
 static void tools_draw(ctx_t *c, const tank_t *t) {
     const int X = RENDER_TOOLS_X, Y = RENDER_TOOLS_Y, W = RENDER_TOOLS_W, H = RENDER_TOOLS_H;
     shade_box(c, X, Y, W, H);
     rect_edge(c, X, Y, W, H, 0x9fd8e2); rect_edge(c, X + 1, Y + 1, W - 2, H - 2, 0x1c2f36);
     static const int TOOL[3] = { TOOL_SPONGE, TOOL_SCISSORS, TOOL_MISTER };
-    for (int k = 0; k < 3; k++) {
+    const int s = TOOLS_N == 2 ? 2 : 1;                       /* the icons' scale */
+    for (int k = 0; k < TOOLS_N; k++) {
         int bx = X + 8 + k * (TOOL_BTN_W + 6), by = Y + 8;
         bool held = t->tool == TOOL[k];
         rect_fill(c, bx, by, TOOL_BTN_W, TOOL_BTN_H, held ? 0x356670 : 0x14252b);
         uint32_t edge = held ? 0xffffff : 0x4d6a72;
         rect_edge(c, bx, by, TOOL_BTN_W, TOOL_BTN_H, edge);
         if (held) rect_edge(c, bx + 1, by + 1, TOOL_BTN_W - 2, TOOL_BTN_H - 2, edge);
-        if (TOOL[k] == TOOL_MISTER) { mister_icon(c, bx + (TOOL_BTN_W - 24) / 2, by + (TOOL_BTN_H - 24) / 2, 1); continue; }
-        const icon_t *ic = TOOL[k] == TOOL_SPONGE ? &icon_tool_sponge : &icon_tool_scissors;
-        blit_icon_scaled(c, bx + (TOOL_BTN_W - ic->w) / 2, by + (TOOL_BTN_H - ic->h) / 2, ic, 1, true);
+        const icon_t *ic = TOOL[k] == TOOL_SPONGE ? &icon_tool_sponge : TOOL[k] == TOOL_SCISSORS ? &icon_tool_scissors : &icon_tool_mister;   /* (the mister's art, P3) */
+        blit_icon_scaled(c, bx + (TOOL_BTN_W - ic->w * s) / 2, by + (TOOL_BTN_H - ic->h * s) / 2, ic, s, true);
     }
     /* the LOCK beside it (0.3.5) */
     const int LX = RENDER_LOCK_X, LY = RENDER_LOCK_Y, LW = RENDER_LOCK_W, LH = RENDER_LOCK_H;
@@ -7563,7 +7555,8 @@ bool render_lock_hit(float x, float y) {
 int render_tools_hit(float x, float y) {
     const int X = RENDER_TOOLS_X, W = RENDER_TOOLS_W;
     if (y < RENDER_TOOLS_Y || x < X - RENDER_CARD_HIT_SIDE || x >= X + W + RENDER_SIDE_GAP / 2) return -1;   /* (the right: half the gap, the lock has the rest) */
-    return x < X + W / 3 ? TOOL_SPONGE : x < X + 2 * W / 3 ? TOOL_SCISSORS : TOOL_MISTER;   /* in thirds (the mister, P2a) */
+    if (TOOLS_N == 2) return x < X + W / 2 ? TOOL_SPONGE : TOOL_SCISSORS;                                     /* the aquarium's halves */
+    return x < X + W / 3 ? TOOL_SPONGE : x < X + 2 * W / 3 ? TOOL_SCISSORS : TOOL_MISTER;                   /* the terrarium's thirds (the mister, P2a) */
 }
 
 /* the chip: the tool at 1x and DONE, top left where the card would be */
@@ -7586,11 +7579,8 @@ void render_tool_chip(const tank_t *t, int fish_idx, uint16_t *fb, int stride) {
     const int X = TOOL_CHIP_X, Y = TOOL_CHIP_Y, W = tool_chip_w(), H = TOOL_CHIP_H;
     shade_box(&c, X, Y, W, H);
     rect_edge(&c, X, Y, W, H, 0xffffff); rect_edge(&c, X + 1, Y + 1, W - 2, H - 2, 0x9fd8e2);
-    if (t->tool == TOOL_MISTER) mister_icon(&c, X + 8, Y + (H - 24) / 2, 1);
-    else {
-        const icon_t *ic = t->tool == TOOL_SCISSORS ? &icon_tool_scissors : &icon_tool_sponge;
-        blit_icon(&c, X + 8, Y + (H - ic->h) / 2, ic, 255);
-    }
+    const icon_t *ic = t->tool == TOOL_SCISSORS ? &icon_tool_scissors : t->tool == TOOL_MISTER ? &icon_tool_mister : &icon_tool_sponge;
+    blit_icon(&c, X + 8, Y + (H - ic->h) / 2, ic, 255);
     draw_text(&c, X + 8 + 24 + 8, Y + (H - 14) / 2, 2, 0xffffff, "DONE");   /* (every tool's icon is 24 px) */
 }
 bool render_tool_chip_hit(const tank_t *t, float x, float y) {
@@ -7743,7 +7733,7 @@ void render_glyph(uint16_t *fb, int stride, int x, int y, int scale, uint32_t rg
 static void draw_still(uint16_t *fb, int stride, float x, float y, float size, fish_t *f, const fish_t *form, double clock, float room) {
     ctx_t c = ctx_page(fb, stride);
     f->heading = 0; f->speed = 40;
-    f->hunger = 4; f->stress = 0; f->goal.id = GOAL_EXPLORE;
+    f->hunger = 4; f->stress = 0; f->goal.id = GOAL_W_EXPLORE;
     if (form) { f->shape = form->shape; f->fins = form->fins; f->pattern = form->pattern; }
     if (room > 0) fish_fit(f, x, y, size, room); else { f->x = x; f->y = y; f->size = size; }
     tank_fish_face(f);                           /* side-on, facing right */

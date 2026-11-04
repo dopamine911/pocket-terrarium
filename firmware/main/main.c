@@ -294,7 +294,7 @@ static int restore_fish(void) {
         if (!s->valid || s->x < 0 || s->x > TANK_W || s->y < 0 || s->y > TANK_H) continue;
         fish_t *f = &tank.fish[i];
         f->x = s->x; f->y = s->y; f->heading = s->heading; tank_fish_face(f);
-        if (s->goal < GOAL_COUNT) f->goal.id = (goal_id_t)s->goal;
+        if (goal_in_world(s->goal)) f->goal.id = (goal_id_t)s->goal;   /* (its world's goals only: tank.h THE GOALS; a lizard lands on the floor by itself) */
         n++;
     }
     s_snap_n = 0;

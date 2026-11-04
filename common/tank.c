@@ -12,8 +12,12 @@
 static void veg_sync(tank_t *t);   /* veg_growth[] = per-bed mean of veg_h[][] */
 
 const char *const GOAL_NAMES[GOAL_COUNT] = {
-    "seek_food", "flee_shadow", "visit_bubbles", "follow_friend",
+    "seek_food", "flee_shadow", "visit_bubbles", "follow_friend",                     /* the fish's (schema v2-v4) */
     "explore", "rest", "dart_play", "inspect_reef",
+    "hunt", "bask", "hide", "explore", "investigate", "dig", "rest",                  /* the lizard's (L1: species.c LZ_GOAL_NAMES) */
+};
+const char *const LZ_POSE_NAMES[LZ_POSES] = {
+    "stand", "walk", "turn", "flick", "stalk", "lunge", "bask", "dig", "rest", "hidden", "peek", "standoff",
 };
 
 /* ---- the event bus (tank_events.h): one listener, synchronous ---- */
@@ -69,6 +73,7 @@ void tank_ensure_ids(tank_t *t) {
 }
 static bool box_clear_beds(const tank_t *t, float x0, float x1, float y1);   /* SWIM DEPTH (below) */
 static float depth_hash(const tank_t *t, float x, float y, uint32_t salt);
+static void walk_ground(fish_t *f);                                            /* THE WALK: onto the floor (below) */
 static uint8_t critter_depth_roll(const tank_t *t, float x, uint32_t salt) {   /* a floor critter's want against the grass: a fifth behind, a third through */
     float r = depth_hash(t, x, 0, salt);
     return r < 0.22f ? FISH_DEPTH_BEHIND : r < 0.55f ? FISH_DEPTH_THROUGH : FISH_DEPTH_FRONT;
@@ -398,7 +403,7 @@ void tank_make_fish(tank_t *t, int slot, int preset, float sociable, float bold,
     f->stage = stage;
     f->starve_flagged = false;
     f->trust = 5.0f;
-    f->goal.id = GOAL_EXPLORE; f->goal.urgency = 3; f->goal.confidence = 1; f->goal.runner_up = GOAL_COUNT;
+    f->goal.id = GOAL_W_EXPLORE; f->goal.urgency = 3; f->goal.confidence = 1; f->goal.runner_up = GOAL_COUNT;
     f->goal_age = 0; f->ask_age = 99; f->dart_timer = 0; f->dart_x = f->x; f->dart_y = f->y; f->hesitate = 0;
     f->bored = 0; f->goal_prev = GOAL_COUNT; f->zone_last = -1; f->explore_set = false; f->breather = 0;
     f->gdepth = FISH_DEPTH_FRONT; f->gdepth_want = 0xff; f->gdepth_rest = FISH_DEPTH_BEHIND; f->pdepth = FISH_DEPTH_FRONT; f->pdepth_want = 0xff;
@@ -419,14 +424,37 @@ void tank_make_fish(tank_t *t, int slot, int preset, float sociable, float bold,
     f->door_sent = false; f->deported = false; f->bolt_home = false;   /* (2026-11-02: a slot a fish was GIVEN out of kept its door_sent - the next
                                                                          fish made there hovered at every open door and never asked to cross) */
     tank_lizard_fresh(t, f);
+    if (PT_TERRARIUM) walk_ground(f);                 /* a lizard is made on the floor (the draws above as ever: a seeded run stays itself) */
 }
 /* a lizard new to this tank (made here, or in from next door): comfortable in its species' band, a fresh shed clock
-   for its stage (docs/shed.md) - never 0 C (a visitor is built from its passport, which carries neither) */
+   for its stage (docs/shed.md) - never 0 C (a visitor is built from its passport, which carries neither) - and out of
+   every hide, standing, on the places' line (THE WALK; nothing drawn from the tank's stream: the aquarium's fish are
+   made as they always were) */
 void tank_lizard_fresh(const tank_t *t, fish_t *f) {
     const species_t *sp = tank_species(t);
     f->body_c = (sp->t_lo + sp->t_hi) * 0.5f; f->heat = species_heat_of(sp, f->body_c);
     f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_clean = 0; f->shed_damp = 0;
     f->shed_s = sp->shed_every_s[f->stage & 3];
+    f->hide = -1; f->pose = LZ_POSE_STAND; f->pose_s = 0; f->lane = 0; f->to_x = -1;
+    f->walk_s = f->pause_s = f->turn_s = f->strike_s = f->peek_s = 0;
+}
+
+/* ---- THE WALK's footing (P2b, tank.h; the rest is with update_lizard): its middle in the floor's band, its body
+ * inside the glass at its height (LZ_GLASS_M, LZ_HALF_LEN x its size), level, facing one way or the other ---- */
+static float walk_margin(const fish_t *f) { return fmaxf(LZ_GLASS_M, LZ_HALF_LEN * f->size); }
+static void walk_span(const fish_t *f, float y, float *x0, float *x1) {
+    float m = walk_margin(f);
+    *x0 = tank_glass_x0(y) + m; *x1 = tank_glass_x1(y) - m;
+    if (*x0 > *x1) *x0 = *x1 = (*x0 + *x1) * 0.5f;          /* (no floor that narrow on any board) */
+}
+static void walk_face(fish_t *f, int facing) { f->facing = (int8_t)(facing < 0 ? -1 : 1); f->heading = f->facing > 0 ? 0.0f : 3.14159265f; }
+static void walk_ground(fish_t *f) {                         /* onto the floor where it is: a newcomer, a staging, a wake */
+    f->lane = clampf(f->lane == f->lane ? f->lane : 0, LZ_LANE_BACK, LZ_LANE_FRONT);
+    if (!(f->y >= PLACE_Y + LZ_LANE_BACK && f->y <= PLACE_Y + LZ_LANE_FRONT)) f->y = PLACE_Y + f->lane;
+    float x0, x1; walk_span(f, f->y, &x0, &x1);
+    f->x = f->x == f->x ? clampf(f->x, x0, x1) : (x0 + x1) * 0.5f;   /* (a NaN: the middle) */
+    walk_face(f, f->facing ? f->facing : cosf(f->heading) < 0 ? -1 : 1);
+    if (f->turn_s <= 0) f->yaw = f->facing;
 }
 
 void tank_set_bubble_x(tank_t *t, float x) {
@@ -444,6 +472,7 @@ void tank_set_bubble_x(tank_t *t, float x) {
 static void place_near_reef(tank_t *t, fish_t *f) {
     f->x = t->reef_x + tank_randf(t, -10, 30); f->y = t->reef_y - 30 + tank_randf(t, -10, 10);
     f->heading = tank_randf(t, -0.6f, 0.6f); tank_fish_face(f);
+    if (PT_TERRARIUM) walk_ground(f);                 /* a hatchling: on the sand under that spot */
 }
 
 void tank_new_population(tank_t *t) {
@@ -553,6 +582,7 @@ int tank_add_bought_fry(tank_t *t, uint32_t body, uint32_t accent) {
     f->parent_a = f->parent_b = -1;
     f->x = TANK_W * 0.5f + tank_randf(t, -30, 30); f->y = tank_glass_top(f->x) + 30;
     f->heading = tank_randf(t, 1.2f, 1.9f); tank_fish_face(f);   /* heading down into the water */
+    if (PT_TERRARIUM) walk_ground(f);                 /* a lizard from the shop: set down on the floor */
     f->hunger = 4; f->trust = 4;
     t->n_fish++;
     return slot;
@@ -724,7 +754,8 @@ bool tank_at_finger(const tank_t *t, int i) {   /* (hold_time, not hold_active: 
  * 0.8/h), and the keeper's pellets are what make a fish FULL - play, bubbles,
  * the reef, a friend: the fed-fish repertoire. The advisor sees only banded
  * hunger, so its training distribution is untouched. */
-#define HUNGER_PER_S       0.010f   /* fed -> starving in ~17 min (shy fish) */
+/* (HUNGER_PER_S, the energy and curiosity rates and the sleep's are tank.h's THE FISH'S DRIVES since P2b: the
+ * aquarium's fish pack carries them) */
 /* the breather (2026-10-21, Strato's 1.8 after a reset: "sluggish", no "first
  * rest in the seagrass"; a Discord keeper's tank the same for days): the v4
  * brain rests at NIGHT - its teacher rested a lit fish only at energy <= 1,
@@ -2968,7 +2999,8 @@ void tank_touch_drag(tank_t *t, float x, float y) {
 }
 
 void tank_set_tool(tank_t *t, int tool) {
-    t->tool = (uint8_t)(tool == TOOL_SPONGE || tool == TOOL_SCISSORS || tool == TOOL_MISTER ? tool : TOOL_HAND);
+    const bool mister = tool == TOOL_MISTER && tank_species(t)->sheds;   /* (the aquarium's fish do not shed: no mister in its box) */
+    t->tool = (uint8_t)(tool == TOOL_SPONGE || tool == TOOL_SCISSORS || mister ? tool : TOOL_HAND);
     t->tool_idle = 0;
     t->mist_hold = t->mist_done = false; t->mist_fish = -1; t->mist_s = 0;
 }
@@ -3245,7 +3277,7 @@ const habitat_t *tank_habitat(const tank_t *t) {
 bool tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id) {
     const habitat_t *h = habitat_get(habitat_id);
     const species_t *s = species_get(pack_id);
-    if (!habitat_fits(h, s)) return false;                 /* (an unknown id fits nothing) */
+    if (!habitat_fits(h, s) || s->world != PT_WORLD_ID) return false;   /* (an unknown id fits nothing; another world's pair is another bin's) */
     t->habitat_id = habitat_id; t->pack_id = pack_id;
     return true;
 }
@@ -3286,16 +3318,25 @@ int tank_humid_hide(const tank_t *t) {
     for (int k = 0; k < h->n_hides; k++) if (h->hides[k].kind == HIDE_HUMID) return k;
     return -1;
 }
+/* the open floor's air at (x, y): the gradient, the night's drop, the lamp's pool round the basking spot */
+static float floor_c(const habitat_t *h, float x, float y, bool lit) {
+    float c = lerpf(h->floor_warm_c, h->floor_cool_c, floor_u(x));
+    if (!lit) return c - h->night_drop_c;                     /* the lamp out, the night's cool */
+    float bx = tank_floor_x(h->bask_u), by = PLACE_Y;
+    float d = tank_dist(x, y, bx, by), r = h->bask_r_px;
+    if (d < r) c += (h->bask_c - c) * (1 - d * d / (r * r));   /* the lamp's pool: bask_c in the middle, blending to the floor's own at its edge */
+    return c;
+}
 float tank_env_c_lit(const tank_t *t, float x, float y, bool lit) {
     const habitat_t *h = tank_habitat(t);
     int k = tank_hide_at(t, x, y);
     if (k >= 0) return lit ? h->hides[k].t_lit_c : h->hides[k].t_dark_c;
-    float c = lerpf(h->floor_warm_c, h->floor_cool_c, floor_u(x));
-    if (!lit) return c - h->night_drop_c;                     /* the lamp out, the night's cool */
-    float bx, by; tank_bask_point(t, &bx, &by);
-    float d = tank_dist(x, y, bx, by), r = h->bask_r_px;
-    if (d < r) c += (h->bask_c - c) * (1 - d * d / (r * r));   /* the lamp's pool: bask_c in the middle, blending to the floor's own at its edge */
-    return c;
+    return floor_c(h, x, y, lit);
+}
+float tank_animal_env_c(const tank_t *t, const fish_t *f, bool lit) {
+    const habitat_t *h = tank_habitat(t);
+    if (f->hide >= 0 && f->hide < h->n_hides) return lit ? h->hides[f->hide].t_lit_c : h->hides[f->hide].t_dark_c;   /* in it: its air */
+    return floor_c(h, f->x, f->y, lit);                       /* out: the floor's, a footprint walked past too */
 }
 float tank_env_c(const tank_t *t, float x, float y) { return tank_env_c_lit(t, x, y, !t->night); }
 int tank_activity_phase(const tank_t *t) { return species_phase(tank_species(t), !t->night, t->light_s); }
@@ -3311,11 +3352,12 @@ static float stuck_floor(const fish_t *f) {
     return f->shed == SHED_STUCK ? fminf(STUCK_STRESS_MAX, STUCK_STRESS_PER_S * f->shed_s) : 0;
 }
 bool tank_in_damp_hide(const tank_t *t, int i) {
-    int k = tank_hide_at(t, t->fish[i].x, t->fish[i].y);
-    return k >= 0 && tank_habitat(t)->hides[k].kind == HIDE_HUMID && t->moist[k] >= SHED_DAMP;
+    int k = t->fish[i].hide;                                  /* in one (THE WALK: it went in), not passing its footprint */
+    return k >= 0 && k < tank_habitat(t)->n_hides && tank_habitat(t)->hides[k].kind == HIDE_HUMID && t->moist[k] >= SHED_DAMP;
 }
 bool tank_shed_growth(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
+    if (!tank_species(t)->sheds) return false;        /* (a pack that does not shed: progression puts the age's stage on at once) */
     if (f->shed == SHED_CLEAN) return false;          /* a shed just off: progression starts the next once it is finished */
     if (f->shed == SHED_NORMAL) { f->shed = SHED_SOON; f->shed_s = tank_species(t)->shed_soon_s; f->shed_damp = 0; }   /* at once, whatever the timer said */
     f->shed_growth = true;                            /* (soon, shedding or stuck: the shed under way is the growth shed) */
@@ -3355,7 +3397,8 @@ static void shed_step(const species_t *p, fish_t *f, float dt, float damp_until)
     }
 }
 void tank_shed_clock(tank_t *t, float dt) {
-    if (dt <= 0) return;
+    const species_t *p = tank_species(t);
+    if (dt <= 0 || !p->sheds) return;                 /* (the aquarium's fish do not shed, and its water keeps no hide damp) */
     const habitat_t *h = tank_habitat(t);
     float damp_until[HABITAT_HIDES_MAX];              /* the part of dt each humid hide stays damp (-1: none) */
     for (int k = 0; k < h->n_hides; k++) {
@@ -3363,16 +3406,15 @@ void tank_shed_clock(tank_t *t, float dt) {
         damp_until[k] = h->hides[k].kind == HIDE_HUMID && m0 >= SHED_DAMP ? (m0 - SHED_DAMP) / h->moist_dry_per_s : -1;
         if (h->hides[k].kind == HIDE_HUMID) t->moist[k] = fmaxf(0, m0 - h->moist_dry_per_s * dt);
     }
-    const species_t *p = tank_species(t);
     for (int i = 0; i < t->n_fish; i++) {
         fish_t *f = &t->fish[i];
         if (f->away) continue;                        /* (next door: its shed waits with its age) */
-        int k = tank_hide_at(t, f->x, f->y);
-        shed_step(p, f, dt, k >= 0 ? damp_until[k] : -1);
+        int k = f->hide;                              /* the hide it is IN (THE WALK), not one it passes */
+        shed_step(p, f, dt, k >= 0 && k < h->n_hides ? damp_until[k] : -1);
     }
 }
 void tank_mist_pass(tank_t *t, int k) {
-    if (k >= 0 && k < HABITAT_HIDES_MAX) t->moist[k] = fminf(1.0f, t->moist[k] + MIST_PASS);
+    if (k >= 0 && k < HABITAT_HIDES_MAX && tank_species(t)->sheds) t->moist[k] = fminf(1.0f, t->moist[k] + MIST_PASS);
 }
 bool tank_mist_soak(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
@@ -3383,23 +3425,22 @@ bool tank_mist_soak(tank_t *t, int i) {
     return true;
 }
 
-/* see tank.h: dark-screen physiology only, rates per real hour of sleep */
-#define SLEEP_HUNGER_PER_H 0.8f    /* fed -> ravenous over ~7 h of sleep */
-#define SLEEP_ENERGY_PER_H 2.0f
-#define SLEEP_STRESS_PER_H 2.0f
+/* see tank.h: dark-screen physiology only, rates per real hour of sleep - the fish's SLEEP_*_PER_H (tank.h THE FISH'S
+ * DRIVES), a lizard's its pack's (species_t.sleep_*_per_h, P2b) */
 #define SLEEP_SLICE_S      300.0f  /* the night's growth and grazing interleave at this grain */
 void tank_tick_sleep(tank_t *t, float seconds) {
     if (seconds <= 0) return;
     float h = seconds / 3600.0f;
     t->clock += seconds;
+    const species_t *sp = tank_species(t);                  /* its pack's sleep (the fish pack's are THE FISH'S DRIVES: the same numbers) */
     for (int i = 0; i < t->n_fish; i++) {
         fish_t *f = &t->fish[i];
         if (f->away) continue;                              /* (living its night next door) */
-        f->hunger = clampf(f->hunger + SLEEP_HUNGER_PER_H * h, 0, 10);   /* (a shed's slower hunger is its appetite awake: update_fish) */
-        f->energy = clampf(f->energy + SLEEP_ENERGY_PER_H * h, 0, 10);
-        f->stress = clampf(f->stress - SLEEP_STRESS_PER_H * h, 0, 10);
+        f->hunger = clampf(f->hunger + sp->sleep_hunger_per_h * h, 0, 10);   /* (a shed's slower hunger is its appetite awake: update_lizard) */
+        f->energy = clampf(f->energy + sp->sleep_energy_per_h * h, 0, 10);
+        f->stress = clampf(f->stress - sp->sleep_stress_per_h * h, 0, 10);
         f->stress = fmaxf(f->stress, stuck_floor(f));
-        body_follow(t, f, tank_env_c_lit(t, f->x, f->y, false), seconds);   /* the body follows the dark terrarium where it sleeps */
+        body_follow(t, f, tank_animal_env_c(t, f, false), seconds);   /* the body follows the dark terrarium where it sleeps (its hide's, in one) */
         f->speed = 0; f->target_speed = 0; f->bored = 0; f->breather = 0;  /* a night's sleep is a fresh start */
         f->goal_age += seconds; f->ask_age += seconds;  /* wake re-asks the advisor at once */
     }
@@ -3638,7 +3679,7 @@ static void eat_nearby_food(tank_t *t, fish_t *f) {
         if (!t->food[i].alive) continue;
         if (tank_dist(f->x, f->y, t->food[i].x, t->food[i].y) < 12 * f->size + 4) {
             t->food[i].alive = false;
-            f->hunger = clampf(f->hunger - 4.3f, 0, 10);
+            f->hunger = clampf(f->hunger - FISH_HUNGER_PER_PELLET, 0, 10);
             f->energy = clampf(f->energy + 1.0f, 0, 10);
             f->curiosity = clampf(f->curiosity + 0.5f, 0, 10);   /* was 0.8: a trickle burst
                                                                      re-synced the school's curiosity */
@@ -3742,7 +3783,7 @@ static void update_fish(tank_t *t, int idx, float dt) {
      * still owns the goal; it just sees an honest drive, and the curiosity
      * band is in the re-ask signature so it gets to react. */
     {
-        float dc = f->goal.id == GOAL_EXPLORE ? 0.08f : -0.025f;
+        float dc = f->goal.id == GOAL_EXPLORE ? FISH_CURIOSITY_PER_S : -0.025f;
         if (f->goal.id == GOAL_VISIT_BUBBLES || f->goal.id == GOAL_INSPECT_REEF) {
             bool bub = f->goal.id == GOAL_VISIT_BUBBLES;
             float sx = t->bubble_x, sy = t->bubble_y - 74;
@@ -3762,8 +3803,8 @@ static void update_fish(tank_t *t, int idx, float dt) {
      * fish cruises ~10 min on a full tank and a rest refills it in ~35 s. */
     bool settled = false;                        /* a breather, settled in the fronds */
     if (f->breather > 0) { float bx, by; breather_spot(t, f, idx, &bx, &by); settled = tank_dist(f->x, f->y, bx, by) < BREATHER_NEAR; }
-    f->energy    = clampf(f->energy + dt * ((f->goal.id == GOAL_REST || settled) ? 0.30f
-                          : -0.012f - f->speed / 4000.0f), 0, 10);
+    f->energy    = clampf(f->energy + dt * ((f->goal.id == GOAL_REST || settled) ? FISH_ENERGY_REST_PER_S
+                          : -FISH_ENERGY_PER_S - f->speed / 4000.0f), 0, 10);
     /* the breather (see BREATHER_AT): in when spent by day, out with the wind
        back, never over a flight, the famine's begging or the night's own rest */
     bool on_door_duty = f->door != DOOR_NONE || f->homeward || f->bolt_home || f->deported;   /* the tank link (0.4): a doorway is decided; a breather waits */
@@ -4202,6 +4243,336 @@ static void update_fish(tank_t *t, int idx, float dt) {
     eat_nearby_food(t, f);
 }
 
+/* ================================================================ THE WALK (pocket-terrarium P2b; tank.h has the
+ * rules): the terrarium's lizards, on the floor. Each frame a lizard's goal becomes a PLAN - a point on the floor to
+ * walk to (or none: it stays where it stands), what its body does there (its pose), the way it faces there, a hide
+ * to go into - and the walk carries it out: a turn about on the spot when the way lies behind it, the stop-and-go
+ * along the floor, the hunt's freeze and lunge, a hide's hidden spells and looks out. The crab's walk (crab_tick) was
+ * the template: planted feet, a pace that is the pack's, stops where it pleases. */
+#define LZ_LANE_PX_S     6.0f       /* a lane change: px/s across the floor's depth (it drifts over walking, never hops) */
+#define LZ_FRONT_ODDS    0.6f       /* a walk takes the front lane this often (the critters' lanes' odds) */
+#define LZ_FREEZE_LO_S   0.5f       /* the hunt's freeze before the lunge */
+#define LZ_FREEZE_HI_S   1.1f
+#define LZ_LUNGE_MAX_S   0.6f       /* a lunge lasts at most this */
+#define LZ_MISS_REST_S   1.2f       /* after a miss: a beat before it stalks again */
+#define LZ_SNOUT         12.0f      /* its snout this x its size ahead of its middle */
+#define LZ_BITE_PX       8.0f       /* a pellet this near its snout (+ 3 x its size) is caught */
+#define LZ_HIDDEN_LO_S   8.0f       /* in a hide: hidden this long (x 1.4 - 0.8 bold: a bold one looks out sooner) ... */
+#define LZ_HIDDEN_HI_S   25.0f
+#define LZ_LOOK_LO_S     2.0f       /* ... then a look out this long */
+#define LZ_LOOK_HI_S     5.0f
+#define LZ_STRESS_SETTLE 0.18f      /* stress settles this a second (the fish's), twice that hidden or lying still */
+#define LZ_NEW_WALK_PX   24.0f      /* a destination this far from the last is a new walk (its lane is rolled again) */
+typedef struct {
+    bool    go;                     /* walk to x (false: it stays where it stands) */
+    float   x;                      /* ... there */
+    float   lane;                   /* the floor depth it settles at once there (a walk keeps its own) */
+    uint8_t pose;                   /* what it does once there, or standing */
+    int     face;                   /* the way it faces once there: +1 right, -1 left, 0 as it came */
+    float   pace, stops;            /* x its walking pace; x its stops' length (0: it walks straight there) */
+    bool    flick;                  /* its stops are tongue flicks (explore, investigate) */
+    int     enter;                  /* the hide it goes into once there (-1 none) */
+    bool    stay_in;                /* in a hide, it stays in (the hide goal's own hide; rest) */
+    int     prey;                   /* the hunt's pellet (-1 none) ... */
+    bool    prey_down;              /* ... on the sand (a strike), or still falling (it waits under it) */
+} walk_plan_t;
+
+int tank_lizard_hide_for(const tank_t *t, int i) {
+    const fish_t *f = &t->fish[i];
+    const habitat_t *h = tank_habitat(t);
+    if (!h->n_hides) return -1;
+    const bool shed = f->shed == SHED_SOON || f->shed == SHED_SHEDDING || f->shed == SHED_STUCK;   /* `shed soon|yes` */
+    const bool in_cool = f->hide >= 0 && f->hide < h->n_hides && h->hides[f->hide].kind == HIDE_COOL;
+    const hide_kind_t want = shed ? HIDE_HUMID
+                           : f->heat >= LZ_HIDE_COOL_AT || (in_cool && f->heat >= LZ_HIDE_COOL_TO) ? HIDE_COOL : HIDE_WARM;
+    int best = -1, any = -1; float bd = 1e9f, ad = 1e9f;
+    for (int k = 0; k < h->n_hides; k++) {                    /* the nearest of the kind; none of it, the nearest of any */
+        float hx, hy; tank_hide_point(t, k, &hx, &hy);
+        float d = fabsf(hx - f->x);
+        if (h->hides[k].kind == want && d < bd) { bd = d; best = k; }
+        if (d < ad) { ad = d; any = k; }
+    }
+    return best >= 0 ? best : any;
+}
+static void lizard_into(fish_t *f, int k) { f->hide = (int8_t)k; f->pose = LZ_POSE_HIDDEN; f->pose_s = 0; f->peek_s = 1.5f; f->speed = f->target_speed = 0; f->strike_s = 0; }
+static void lizard_out(fish_t *f) { f->hide = -1; f->pose = LZ_POSE_STAND; f->pose_s = 0; f->peek_s = 0; }
+bool tank_lizard_enter(tank_t *t, int i, int k) {
+    if (i < 0 || i >= N_FISH_SLOTS || k < 0 || k >= tank_habitat(t)->n_hides) return false;
+    fish_t *f = &t->fish[i];
+    float hx, hy; tank_hide_point(t, k, &hx, &hy);
+    f->x = hx; f->y = hy; f->lane = 0; f->turn_s = 0;
+    lizard_into(f, k);
+    return true;
+}
+void tank_lizard_leave(tank_t *t, int i) { if (i >= 0 && i < N_FISH_SLOTS && t->fish[i].hide >= 0) lizard_out(&t->fish[i]); }
+
+/* the hunt's prey: the pellet nearest along the floor (one still falling is waited for under it); -1 none */
+static int lizard_prey(const tank_t *t, const fish_t *f) {
+    int best = -1; float bd = 1e9f;
+    for (int i = 0; i < MAX_FOOD; i++) {
+        if (!t->food[i].alive) continue;
+        float d = fabsf(t->food[i].x - f->x) + (FOOD_FLOOR_Y - t->food[i].y) * 0.25f;   /* (a pellet down already is the better bet) */
+        if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+}
+static bool prey_down(const food_t *q) { return q->floor_s > 0 || q->y >= FOOD_FLOOR_Y - 12; }
+/* the nearest place to look at that it is not at: a hide's mouth or the basking spot */
+static float lizard_place_near(const tank_t *t, const fish_t *f) {
+    const habitat_t *h = tank_habitat(t);
+    float best = -1, bd = 1e9f, px, py;
+    for (int k = -1; k < h->n_hides; k++) {
+        if (k < 0) tank_bask_point(t, &px, &py); else tank_hide_point(t, k, &px, &py);
+        float d = fabsf(px - f->x);
+        if (d > 40 && d < bd) { bd = d; best = px; }
+    }
+    return best >= 0 ? best : tank_floor_x(0.5f);
+}
+
+static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
+    fish_t *f = &t->fish[idx];
+    w->go = false; w->x = f->x; w->lane = 0; w->pose = LZ_POSE_STAND; w->face = 0;
+    w->pace = 1; w->stops = 1; w->flick = false; w->enter = -1; w->stay_in = false; w->prey = -1; w->prey_down = false;
+    goal_id_t g = f->goal.id;
+    const int pi = lizard_prey(t, f);
+    const bool starving = f->hunger >= 8.0f && pi >= 0;
+    /* the night: the sleep phase is for rest, or a hide (a starving lizard still hunts) */
+    if (tank_activity_phase(t) == PHASE_SLEEP && g != GOAL_LZ_HIDE && !(g == GOAL_LZ_HUNT && starving)) g = GOAL_LZ_REST;
+    /* what outranks the goal, as with the fish: the spawning's pair to the nursery, the setup page's lizard to its
+       spot, a startle's flight - the advisor keeps the goal */
+    if (t->spawning && (idx == t->court_a || idx == t->court_b) && !starving) {
+        float cx, cy, rx; court_site(t, &cx, &cy, &rx);
+        const float side = idx == t->court_a ? -1.0f : 1.0f;
+        w->go = true; w->x = cx + side * 14; w->face = side < 0 ? 1 : -1;   /* side by side, facing each other */
+        return;
+    }
+    if (idx == t->stage_fish) {
+        w->go = true; w->x = t->stage_x; w->lane = LZ_LANE_FRONT;
+        w->face = sinf(anim(t) * 0.7f + f->wander) > 0 ? 1 : -1;     /* it turns about now and then: both flanks show */
+        return;
+    }
+    if (t->startled && tank_dist(f->x, f->y, t->startle_x, t->startle_y) < STARTLE_RADIUS * 1.6f) {
+        w->go = true; w->x = f->x + (f->x >= t->startle_x ? 1 : -1) * 120; w->pace = LZ_LUNGE_X * 0.8f; w->stops = 0;
+        return;
+    }
+    switch (g) {
+    case GOAL_LZ_HUNT: {
+        if (pi < 0) {                                         /* nothing to hunt: a slow walk to where food came last */
+            float sx = t->feed_spot_x >= 0 ? t->feed_spot_x : TANK_W * 0.5f;
+            w->go = fabsf(sx - f->x) > 40; w->x = sx; w->pace = 0.6f; w->stops = 1.5f; w->flick = true; w->pose = LZ_POSE_FLICK;
+            break;
+        }
+        const food_t *q = &t->food[pi];
+        const int dir = q->x >= f->x ? 1 : -1;
+        const float snout = LZ_SNOUT * f->size, ahead = (q->x - (f->x + f->facing * snout)) * f->facing;
+        w->prey = pi; w->prey_down = prey_down(q); w->pose = LZ_POSE_STALK; w->stops = 0.6f;
+        if (ahead >= -snout && ahead <= (w->prey_down ? LZ_STRIKE_PX : 8)) { w->face = f->facing; break; }   /* in reach, ahead of it: from here
+                                                                                                                 (one still falling: right under it) */
+        w->go = true; w->face = dir;
+        w->x = q->x - dir * (snout + (w->prey_down ? LZ_STRIKE_PX * 0.7f : 4));   /* to its striking distance, or under it */
+        break;
+    }
+    case GOAL_LZ_BASK: {
+        float bx, by; tank_bask_point(t, &bx, &by);
+        w->go = true; w->x = bx; w->pose = LZ_POSE_BASK; w->stops = 0.5f;
+        break;
+    }
+    case GOAL_LZ_HIDE: {
+        const int k = tank_lizard_hide_for(t, idx);
+        if (k < 0) { w->pose = LZ_POSE_REST; break; }         /* (a habitat without a hide: it lies low) */
+        if (f->hide == k) { w->stay_in = true; break; }
+        float hx, hy; tank_hide_point(t, k, &hx, &hy);
+        w->go = true; w->x = hx; w->enter = k; w->stops = 0.5f;
+        break;
+    }
+    case GOAL_LZ_EXPLORE: {
+        if (!f->explore_set || fabsf(f->x - f->explore_x) < LZ_ARRIVE_PX) {   /* a floor zone it has not seen for longest (the schema's bottom row) */
+            int cur = zone_of(f->x, f->y), best = -1, second = -1;
+            for (int z = 3; z < 6; z++) {
+                if (z == cur) continue;
+                if (best < 0 || f->zone_seen[z] < f->zone_seen[best]) { second = best; best = z; }
+                else if (second < 0 || f->zone_seen[z] < f->zone_seen[second]) second = z;
+            }
+            const int z = (second >= 0 && (xr(t) % 3) == 0) ? second : best, col = z % 3;
+            float x0, x1; walk_span(f, PLACE_Y, &x0, &x1);
+            const float c0 = fmaxf(x0, col * (TANK_W / 3.0f) + 20), c1 = fminf(x1, (col + 1) * (TANK_W / 3.0f) - 20);
+            f->explore_x = c0 < c1 ? tank_randf(t, c0, c1) : (c0 + c1) * 0.5f; f->explore_y = PLACE_Y;
+            f->explore_set = true;
+        }
+        w->go = true; w->x = f->explore_x; w->lane = f->lane; w->pace = 0.8f; w->stops = 1.5f; w->flick = true; w->pose = LZ_POSE_FLICK;
+        break;
+    }
+    case GOAL_LZ_INVESTIGATE: {
+        float od; const int o = tank_nearest_friend(t, idx, &od);
+        w->pace = 0.8f; w->stops = 1.2f; w->flick = true; w->pose = LZ_POSE_FLICK;
+        if (o >= 0) {                                         /* the other lizard: up to it, or - territorial - a stand-off */
+            const fish_t *q = &t->fish[o];
+            const int dir = q->x >= f->x ? 1 : -1;
+            const bool low = f->sociable < LZ_SOCIAL_LOW;
+            const float want = low ? LZ_STANDOFF_PX : LZ_CONTACT_PX;
+            w->face = dir; w->lane = f->lane;
+            if (low) w->pose = LZ_POSE_STANDOFF;
+            if (fabsf(q->x - f->x) > want + 10) { w->go = true; w->x = q->x - dir * want; }   /* (no nearer: it holds its ground) */
+        } else {                                              /* nobody: a place it is not at - picked once, then it stays at it */
+            if (!f->explore_set) { f->explore_x = lizard_place_near(t, f); f->explore_y = PLACE_Y; f->explore_set = true; }
+            w->go = true; w->x = f->explore_x;
+        }
+        break;
+    }
+    case GOAL_LZ_DIG:
+        w->pose = LZ_POSE_DIG;                                /* where it stands (out of a hide first) */
+        break;
+    default:                                                  /* rest (and a fish goal, which no lizard holds): lie still */
+        w->pose = LZ_POSE_REST; w->stay_in = true;
+        break;
+    }
+}
+
+/* a bite at the hunt's pellet: hunger off by its pack's catch, the meal's bookkeeping as a fish's (eat_nearby_food) */
+static void lizard_bite(tank_t *t, int idx, int i) {
+    fish_t *f = &t->fish[idx];
+    t->food[i].alive = false;
+    f->hunger = clampf(f->hunger - tank_species(t)->hunger_per_cricket, 0, 10);
+    f->energy = clampf(f->energy + 1.0f, 0, 10);
+    f->eaten++;
+    tank_emit(TEV_EAT, idx);
+    if (t->food[i].from_player) {
+        if (!tank_is_visitor(idx)) { f->eaten_player++; f->ms_bits |= MS_FIRST_MEAL_FROM_YOU; f->meal_due = true; }
+        if (t->feed_open) { t->player_feedings++; t->feed_open = false; }   /* the gesture became a meal */
+    }
+}
+
+static void update_lizard(tank_t *t, int idx, float dt) {
+    fish_t *f = &t->fish[idx];
+    const species_t *p = tank_species(t);
+    const int phase = tank_activity_phase(t);
+    walk_ground(f);                                           /* (a newcomer, a staging, a wake: onto the floor first) */
+    f->gdepth = f->gdepth_want = f->pdepth = f->pdepth_want = FISH_DEPTH_FRONT;   /* (render: in front of the grass and the pieces) */
+    f->breather = 0; f->at_bubbles = false; f->door = DOOR_NONE;
+    /* 1. its heat: what it feels - its hide's air, or the floor where it stands - at its pack's pace for its stage */
+    body_follow(t, f, tank_animal_env_c(t, f, !t->night), dt);
+    /* 2. its drives, its pack's rates (last frame's pose says what it was doing) */
+    const bool still = f->hide >= 0 || f->pose == LZ_POSE_REST || f->pose == LZ_POSE_BASK;   /* lying still */
+    const bool busy = f->speed > 0.5f || f->pose == LZ_POSE_DIG;
+    const float cold = f->heat < HEAT_SLOW ? HEAT_SLOW_MIN + (1 - HEAT_SLOW_MIN) * f->heat / HEAT_SLOW : 1.0f;
+    f->hunger = clampf(f->hunger + dt * p->hunger_per_s * (f->shed == SHED_SOON || f->shed == SHED_SHEDDING ? SHED_HUNGER_X : 1.0f), 0, 10);
+    f->energy = clampf(f->energy + dt * (still ? p->energy_rest_per_s * cold                     /* cold slows its recovery */
+                                       : busy ? -p->energy_per_s * (f->pose == LZ_POSE_DIG ? 1.5f : 1.0f) : 0), 0, 10);
+    const bool looking = f->goal.id == GOAL_LZ_EXPLORE || f->goal.id == GOAL_LZ_INVESTIGATE;
+    f->curiosity = clampf(f->curiosity + dt * p->curiosity_per_s * (looking ? -LZ_CURIOSITY_SPEND_X : 1.0f), 0, 10);
+    f->stress = clampf(f->stress - dt * LZ_STRESS_SETTLE * (still ? 2.0f : 1.0f), 0, 10);
+    if (f->heat >= HEAT_HOT) {                                /* overheating pulls stress up (tank.h HEAT_HOT) */
+        float to = 4 + 2 * (f->heat - HEAT_HOT);
+        if (f->stress < to) f->stress = clampf(f->stress + HEAT_HOT_PULL * (to - f->stress) * dt, 0, 10);
+    }
+    f->stress = fmaxf(f->stress, stuck_floor(f));             /* a stuck shed's floor (docs/shed.md) */
+    /* 3. boredom: the fish's numbers (BORED_*), its own pastimes - a need met (food, the hide a shed or the heat
+       wants, warming up) never bores, nor does the night */
+    {
+        const goal_id_t g = f->goal.id;
+        const bool need_hide = f->shed != SHED_NORMAL || f->heat >= LZ_HIDE_COOL_AT;
+        const bool leisure = phase == PHASE_ACTIVE && (g == GOAL_LZ_EXPLORE || g == GOAL_LZ_INVESTIGATE || g == GOAL_LZ_DIG || g == GOAL_LZ_REST
+                             || (g == GOAL_LZ_BASK && f->heat >= 5) || (g == GOAL_LZ_HIDE && !need_hide));
+        f->bored = clampf(f->bored + dt * (leisure ? BORED_PER_S : -BORED_RELIEF_PER_S), 0, 10);
+        int z = zone_of(f->x, f->y);
+        if (z != f->zone_last) {
+            if (f->zone_last >= 0 && t->clock - f->zone_seen[z] > BORED_ZONE_STALE_S) f->bored = clampf(f->bored - BORED_NEW_ZONE, 0, 10);
+            f->zone_last = (int8_t)z;
+        }
+        f->zone_seen[z] = t->clock;
+    }
+    f->wander += dt * (0.65f + f->curiosity * 0.04f);
+    if (f->wander >= 62.831853f) f->wander = fmodf(f->wander, 62.831853f);
+    f->goal_age += dt; f->ask_age += dt;
+
+    /* 4. the plan, and a moment's hesitation over a torn decision (it stands; in a hide it stays in) */
+    walk_plan_t w; lizard_plan(t, idx, &w);
+    if (f->hesitate > 0) {
+        f->hesitate -= dt;
+        w.go = false; w.pose = LZ_POSE_STAND; w.face = 0; w.enter = -1; w.stay_in = true; w.prey = -1;
+    }
+    /* 5. a hide: in it while the plan keeps it there, else out at its mouth */
+    if (f->hide >= 0 && !(w.stay_in || w.enter == f->hide)) lizard_out(f);
+    if (w.go) { float x0, x1; walk_span(f, f->y, &x0, &x1); w.x = clampf(w.x, x0, x1); }   /* (a point past its reach: as near as the glass lets it) */
+
+    /* 6. the walk */
+    float pace = p->walk_px_s[f->stage & 3] * (0.8f + f->goal.urgency * 0.05f) * w.pace;   /* the urgency's 0.8..1.25 */
+    pace *= cold;                                             /* cold: sluggish (x0.5 at heat 0) */
+    if (f->energy < 1.2f) pace *= 0.45f;                      /* spent */
+    float speed = 0, dx = 0;
+    uint8_t pose = w.pose;
+    const food_t *q = w.prey >= 0 ? &t->food[w.prey] : NULL;
+    const float snout = LZ_SNOUT * f->size;
+    if (f->hide >= 0) {                                       /* in a hide: hidden, looking out now and then */
+        pose = f->pose == LZ_POSE_PEEK ? LZ_POSE_PEEK : LZ_POSE_HIDDEN;
+        if ((f->peek_s -= dt) <= 0) {
+            if (pose == LZ_POSE_HIDDEN) { pose = LZ_POSE_PEEK; f->peek_s = tank_randf(t, LZ_LOOK_LO_S, LZ_LOOK_HI_S); }
+            else { pose = LZ_POSE_HIDDEN; f->peek_s = tank_randf(t, LZ_HIDDEN_LO_S, LZ_HIDDEN_HI_S) * (1.4f - 0.8f * clampf(f->bold, 0, 1)) * (phase == PHASE_SLEEP ? 3 : 1); }
+        }
+    } else if (f->turn_s > 0) {                               /* turning about on the spot: it stands while its yaw swings */
+        f->turn_s -= dt; pose = LZ_POSE_TURN;
+    } else if (f->pose == LZ_POSE_LUNGE && f->strike_s > 0 && q && w.prey_down) {   /* the lunge: at the prey, flat out */
+        f->strike_s -= dt; pose = LZ_POSE_LUNGE;
+        dx = q->x - (f->x + f->facing * snout);
+        if (fabsf(dx) <= LZ_BITE_PX + 3 * f->size) {
+            const float miss = LZ_MISS + (f->heat < HEAT_SLOW ? LZ_MISS_COLD : 0);
+            if (tank_randf(t, 0, 1) >= miss) lizard_bite(t, idx, w.prey);   /* caught */
+            pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S;   /* (caught or missed: a beat) */
+        } else if (dx * f->facing > 0) speed = pace * LZ_LUNGE_X;
+        else { pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S; }   /* past it: a miss */
+        if (f->strike_s <= 0 && pose == LZ_POSE_LUNGE) { pose = LZ_POSE_STAND; f->pause_s = LZ_MISS_REST_S; }
+    } else {
+        dx = w.go ? w.x - f->x : 0;
+        const bool there = !w.go || fabsf(dx) <= LZ_ARRIVE_PX;
+        const int face = !there ? (dx > 0 ? 1 : -1) : w.face ? w.face : f->facing;
+        if (face != f->facing) {                              /* the way lies behind it: it turns about where it stands */
+            walk_face(f, face); f->turn_s = p->turn_s; pose = LZ_POSE_TURN; f->walk_s = 0; f->strike_s = 0;
+        } else if (!there) {                                  /* walking: a bout, a stop, a bout ... */
+            if (fabsf(w.x - f->to_x) > LZ_NEW_WALK_PX) {      /* a new walk: its lane */
+                f->to_x = w.x;
+                f->lane = tank_randf(t, 0, 1) < LZ_FRONT_ODDS ? LZ_LANE_FRONT : LZ_LANE_BACK;
+            }
+            if (f->pause_s > 0) {
+                f->pause_s -= dt; pose = w.flick ? LZ_POSE_FLICK : LZ_POSE_STAND;
+                if (f->pause_s <= 0) f->walk_s = tank_randf(t, p->bout_s[0], p->bout_s[1]);
+            } else {
+                if (f->walk_s <= 0) f->walk_s = tank_randf(t, p->bout_s[0], p->bout_s[1]);
+                speed = pace; pose = LZ_POSE_WALK;
+                if ((f->walk_s -= dt) <= 0 && w.stops > 0) f->pause_s = tank_randf(t, p->pause_s[0], p->pause_s[1]) * w.stops;
+            }
+            f->strike_s = 0;
+        } else {                                              /* there: what the goal does here */
+            f->walk_s = 0;
+            if (f->pause_s > 0) { f->pause_s -= dt; pose = LZ_POSE_STAND; }   /* (a beat after a strike) */
+            else if (w.enter >= 0) { lizard_into(f, w.enter); pose = LZ_POSE_HIDDEN; }
+            else if (q && w.prey_down) {                      /* the strike: a freeze, then the lunge */
+                if (f->pose != LZ_POSE_STALK || f->strike_s <= 0) {
+                    if (f->pose == LZ_POSE_STALK) { pose = LZ_POSE_LUNGE; f->strike_s = LZ_LUNGE_MAX_S; }   /* the freeze is over */
+                    else { pose = LZ_POSE_STALK; f->strike_s = tank_randf(t, LZ_FREEZE_LO_S, LZ_FREEZE_HI_S); }
+                } else { f->strike_s -= dt; pose = LZ_POSE_STALK; if (f->strike_s <= 0) { pose = LZ_POSE_LUNGE; f->strike_s = LZ_LUNGE_MAX_S; } }
+            }
+        }
+    }
+    /* 7. the step: along its facing, never past the point (the lunge runs on to the prey), the lane drifting - but not
+       while it turns about: it stands, its y too (on a narrowing floor - the bowl's, the watch's corners - a drift across
+       the depth moves the glass's edge, and the footing would push it along) */
+    if (speed > 0) {
+        float step = speed * dt;
+        if (pose != LZ_POSE_LUNGE && fabsf(dx) < step) step = fabsf(dx);
+        f->x += f->facing * step;
+    }
+    if (pose != LZ_POSE_TURN) {
+        const float lane_y = PLACE_Y + (f->hide >= 0 ? 0 : speed > 0 ? f->lane : w.lane);
+        f->y += clampf(lane_y - f->y, -LZ_LANE_PX_S * dt, LZ_LANE_PX_S * dt);
+    }
+    walk_ground(f);
+    f->speed = speed; f->target_speed = speed;
+    f->yaw = f->turn_s > 0 ? f->facing * (1 - 2 * clampf(f->turn_s / p->turn_s, 0, 1)) : f->facing;   /* a turn swings it through head-on */
+    if (pose != f->pose) { f->pose = pose; f->pose_s = 0; } else f->pose_s += dt;
+    tank_fish_trail(f, dt);                                   /* (render's body and tail follow, as a fish's) */
+    fish_beat(f, dt);
+}
+
 /* Coarse state signature (the browser prototype's "blunt" gate): banded
  * drives plus bucketed sightings. Excludes clock bearings and exact drive
  * digits, which only steer - a change here is a reason to re-decide. */
@@ -4223,10 +4594,17 @@ static uint32_t state_signature(const tank_t *t, int idx) {
      * only decides WHEN it is asked. */
     float fd = 1e9f; int fi = tank_nearest_food(t, f, &fd);
     int food = (fi < 0 || band3(f->hunger) == 0) ? 0 : fd < 70 ? 2 : 1;
-    return (uint32_t)band3(f->hunger) | (uint32_t)band3(f->energy) << 2 | (uint32_t)band3(f->stress) << 4
-         | (uint32_t)food << 6
-         | (uint32_t)t->night << 10 | (uint32_t)band3(f->curiosity) << 11
-         | (uint32_t)band3(f->bored) << 13;      /* a fish going stale is asked again (2026-09-14) */
+    uint32_t sig = (uint32_t)band3(f->hunger) | (uint32_t)band3(f->energy) << 2 | (uint32_t)band3(f->stress) << 4
+                 | (uint32_t)food << 6
+                 | (uint32_t)t->night << 10 | (uint32_t)band3(f->curiosity) << 11
+                 | (uint32_t)band3(f->bored) << 13;      /* a fish going stale is asked again (2026-09-14) */
+    if (PT_TERRARIUM) {   /* a lizard is asked again as its heat crosses a band (cold, cool, comfortable, warm, hot), a shed
+                             comes or goes, the light's phase turns (P2b: the L1 line's heat, shed and phase) */
+        const int hb = f->heat < 3 ? 0 : f->heat < 5 ? 1 : f->heat < 7 ? 2 : f->heat < HEAT_HOT ? 3 : 4;
+        const int sh = f->shed == SHED_SOON ? 1 : f->shed == SHED_SHEDDING || f->shed == SHED_STUCK ? 2 : 0;
+        sig |= (uint32_t)hb << 16 | (uint32_t)sh << 19 | (uint32_t)tank_activity_phase(t) << 21;
+    }
+    return sig;
 }
 
 void tank_tick(tank_t *t, float dt, advisor_fn advise) {
@@ -4273,6 +4651,8 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
     for (int i = 0; i < N_FISH_SLOTS; i++)
         if (tank_swims(t, i) && t->fish[i].hunger > hungriest) hungriest = t->fish[i].hunger;
     bool hold = (t->ravenous && !t->ravenous_fed) || t->trickle_off || t->autofeed_off;   /* (AUTO FEED off: the keeper's alone, 0.3.2) */
+    if (PT_TERRARIUM && tank_activity_phase(t) != PHASE_ACTIVE) hold = true;   /* (P2b: nobody feeds lizards after lights-out - settle or sleep;
+                                                                                 P2c's crickets replace the pellets. The aquarium's as ever) */
     if (!hold && live_food < 2 && hungriest >= TRICKLE_HUNGER &&
         tank_randf(t, 0, 1) < TRICKLE_RATE * dt)
         tank_scatter_food(t, 1);
@@ -4327,7 +4707,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
             uint32_t sig = state_signature(t, i);
             /* prototype's urgent path: starving with food in view gets
              * asked NOW instead of waiting its turn */
-            bool urgent = f->hunger > 8.0f && f->goal.id != GOAL_SEEK_FOOD &&
+            bool urgent = f->hunger > 8.0f && f->goal.id != GOAL_W_FOOD &&
                           f->goal_age > 0.8f && tank_nearest_food(t, f, 0) >= 0;
             bool changed = sig != f->sig && f->ask_age > ADVISOR_MIN_INTERVAL;
             bool idle = f->ask_age > ADVISOR_IDLE_CEILING;
@@ -4337,17 +4717,20 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
                 f->sig = sig; f->ask_age = 0; t->advisor_asks++;
                 t->ask_rr = (i + 1) % N_FISH_SLOTS;
             }
-            if (g.id < GOAL_COUNT && g.id != f->goal.id) {
+            if (g.id < GOAL_COUNT && goal_in_world(g.id) && g.id != f->goal.id) {   /* (only its world's goals: GOAL_FIRST..) */
                 /* a genuinely new pastime relieves boredom; bouncing back to
                  * the one just left (bubbles -> friend -> bubbles) does not */
                 if (g.id != f->goal_prev) f->bored = clampf(f->bored - BORED_NEW_GOAL, 0, 10);
                 f->goal_prev = f->goal.id;
-                if (g.id == GOAL_EXPLORE) f->explore_set = false;   /* pick a fresh destination */
+                if (g.id == GOAL_W_EXPLORE || g.id == GOAL_LZ_INVESTIGATE) f->explore_set = false;   /* pick a fresh destination (a lizard's
+                                                                                                         investigate alone: a fresh place) */
                 if (f->door == DOOR_HEADING || f->door == DOOR_ASKED) f->door = DOOR_NONE;   /* the model changed its mind: no visit (one already passing goes on) */
                 f->goal = g;
                 f->goal_age = 0;
-                f->gdepth_want = depth_pick(t, f, g.id);   /* SWIM DEPTH: how it goes about it */
-                f->pdepth_want = pdepth_pick(t, f, g.id);
+                if (!PT_TERRARIUM) {                           /* SWIM DEPTH: how it goes about it (a lizard walks the floor's lanes) */
+                    f->gdepth_want = depth_pick(t, f, g.id);
+                    f->pdepth_want = pdepth_pick(t, f, g.id);
+                }
                 /* visible deliberation, scaled by how torn the advisor was */
                 bool calm = g.id != GOAL_FLEE_SHADOW && g.urgency < 8 && g.confidence < 0.6f;
                 f->hesitate = calm ? (0.6f - g.confidence) * 2.5f : 0;
@@ -4366,16 +4749,17 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
     for (int i = 0; i < N_FISH_SLOTS; i++) {
         if (!tank_swims(t, i)) continue;
         fish_t *f = &t->fish[i];
-        if (f->hunger > 8.5f && f->goal.id != GOAL_SEEK_FOOD &&
+        if (f->hunger > 8.5f && f->goal.id != GOAL_W_FOOD &&
             f->goal.id != GOAL_FLEE_SHADOW && f->goal_age > 4.0f &&
             !f->starve_flagged && tank_nearest_food(t, f, 0) >= 0) {
             f->starve_flagged = true;          /* count once per episode */
             tank_reflex_overrides++;
         }
-        if (f->goal.id == GOAL_SEEK_FOOD || f->hunger < 8.0f) f->starve_flagged = false;
+        if (f->goal.id == GOAL_W_FOOD || f->hunger < 8.0f) f->starve_flagged = false;
     }
 
-    for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) update_fish(t, i, dt);
+    /* the bodies: the aquarium's fish swim, the terrarium's lizards walk (world.h; both kept, each world uses its own) */
+    for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) { if (PT_TERRARIUM) update_lizard(t, i, dt); else update_fish(t, i, dt); }
     for (int k = 0; k < N_VISIT_MAX; k++) if (t->vis_used[k]) t->vis_age[k] += dt;   /* a visitor grows here as it would at home */
 
     /* consume the hold AFTER the fish have seen it (the platform re-asserts

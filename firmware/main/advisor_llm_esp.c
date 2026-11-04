@@ -106,7 +106,7 @@ static int pick_next(const tank_t *t) {
         if (g_pending[i] && !tank_swims(t, i)) g_pending[i] = false;
         if (!g_pending[i]) continue;
         const fish_t *f = &t->fish[i];
-        if (f->hunger > 8.0f && f->goal.id != GOAL_SEEK_FOOD) return i;
+        if (f->hunger > 8.0f && f->goal.id != GOAL_W_FOOD) return i;
     }
     for (int k = 0; k < N_FISH_SLOTS; k++) {
         int i = (g_next + k) % N_FISH_SLOTS;

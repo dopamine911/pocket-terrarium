@@ -8,12 +8,14 @@
 static q4_model_t *g_model;
 static word_tok_t  g_tok;
 static int   g_schema;                /* 2 | 3 | 4 | ADVISOR_SCHEMA_L1 */
-static int   g_goal_ids[GOAL_COUNT];  /* token id of each goal word: GOAL_* order (fish), LZ_* order in the first LZ_GOALS (L1) */
-static int   g_n_goals = GOAL_COUNT;  /* the candidates in use: GOAL_COUNT (fish), LZ_GOALS (L1) */
+static int   g_goal_ids[GOAL_COUNT];  /* token id of each of the model's goal words, its own order (candidate k) */
+static int   g_n_goals = FISH_GOALS;  /* the candidates: the fish's eight (v2-v4) or the lizard's seven (L1) */
+static goal_id_t g_goal_base = GOAL_FISH_FIRST;   /* candidate k is goal g_goal_base + k (tank.h THE GOALS) */
+static bool  g_bridge;                /* BRIDGE: a fish model thinking for the terrarium (THE TEMPORARY FISH-MODEL BRIDGE) */
 static int g_urgency_id = -1;                  /* the literal " urgency" (THE TWO-PASS DECISION) */
 bool advisor_core_two_pass = true;
 static uint32_t g_rng = 0x9E3779B9u;
-static float g_last_p[GOAL_COUNT];
+static float g_last_p[GOAL_COUNT];   /* the last decision's odds by goal id: its world's goals filled, the rest 0 */
 static volatile bool g_damaged;   /* a decision's odds came back not a number: the model is damaged (notice.h) */
 static bool not_a_number(float v) { uint32_t u; memcpy(&u, &v, 4); return (u & 0x7f800000u) == 0x7f800000u; }   /* NaN or inf, by the bits (no isfinite: a fast-math build may drop it) */
 bool  advisor_core_sample = true;
@@ -66,6 +68,10 @@ static float wall_contact(const fish_t *f, float *wx, float *wy) {
     return dists[side];
 }
 
+static void bridge_encode(const tank_t *t, int idx, char *out, size_t n);   /* BRIDGE (below) */
+/* the fish's line (v2-v4) of fish idx: its bubble and reef sightings at (bx, by) and (rx, ry), `last` = last - the
+ * tank's own column, reef and goal for a fish; the bridge's stand-ins for a lizard */
+static void encode_fish(const tank_t *t, int idx, float bx, float by, float rx, float ry, goal_id_t last, char *out, size_t n);
 void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
     if (g_schema == ADVISOR_SCHEMA_L1) {
         l1_snap_t s;
@@ -73,6 +79,11 @@ void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
         advisor_core_encode_l1(&s, out, n);
         return;
     }
+    if (g_bridge) { bridge_encode(t, idx, out, n); return; }   /* BRIDGE: a fish model, a lizard (P6: gone) */
+    float rx, ry; tank_reef_spot(t, &rx, &ry);     /* the cluster once the keeper owns one, else the grass corner's spot */
+    encode_fish(t, idx, t->bubble_x, t->bubble_y, rx, ry, t->fish[idx].goal.id, out, n);
+}
+static void encode_fish(const tank_t *t, int idx, float bx, float by, float rx, float ry, goal_id_t last, char *out, size_t n) {
     const fish_t *f = &t->fish[idx];
     int zone = zone_of(f);
 
@@ -88,9 +99,8 @@ void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
     if (strcmp(frs, "none") == 0) snprintf(friend_s, sizeof friend_s, "none");
     else if (g_schema >= 3) snprintf(friend_s, sizeof friend_s, "%s", frs);            /* v3: no names */
     else snprintf(friend_s, sizeof friend_s, "%s %s", t->fish[fr].model_name, frs);
-    sighting(f, t->bubble_x, t->bubble_y, true, bubble_s, sizeof bubble_s);
-    { float rx, ry; tank_reef_spot(t, &rx, &ry);   /* the cluster once the keeper owns one, else the grass corner's spot */
-      sighting(f, rx, ry, true, reef_s, sizeof reef_s); }
+    sighting(f, bx, by, true, bubble_s, sizeof bubble_s);
+    sighting(f, rx, ry, true, reef_s, sizeof reef_s);
 
     /* wall: nearest side, world-frame contact point, heading-relative clock */
     float wx, wy, wd = wall_contact(f, &wx, &wy);
@@ -107,7 +117,7 @@ void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
             zone, drive9(f->hunger), drive9(f->energy), drive9(f->stress), drive9(f->curiosity),
             bold9, soc9, STAGE_NAMES[f->stage], drive9(f->trust), drive9(f->bored),
             food_s, friend_s, bubble_s, reef_s, wall_s,
-            GOAL_NAMES[f->goal.id], t->night ? "night" : "day");
+            GOAL_NAMES[last], t->night ? "night" : "day");
     else if (g_schema >= 3)
         snprintf(out, n,
             "zone %d hunger %d energy %d stress %d curiosity %d bold %d social %d stage %s trust %d "
@@ -115,7 +125,7 @@ void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
             zone, drive9(f->hunger), drive9(f->energy), drive9(f->stress), drive9(f->curiosity),
             bold9, soc9, STAGE_NAMES[f->stage], drive9(f->trust),
             food_s, shadow_s, friend_s, bubble_s, reef_s, wall_s,
-            GOAL_NAMES[f->goal.id], t->night ? "night" : "day");
+            GOAL_NAMES[last], t->night ? "night" : "day");
     else
         snprintf(out, n,
             "fish %s zone %d hunger %d energy %d stress %d curiosity %d bold %d social %d stage %s "
@@ -124,7 +134,7 @@ void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n) {
             drive9(f->hunger), drive9(f->energy), drive9(f->stress), drive9(f->curiosity),
             bold9, soc9, STAGE_NAMES[f->stage],
             food_s, shadow_s, friend_s, bubble_s, reef_s, wall_s,
-            GOAL_NAMES[f->goal.id], t->night ? "night" : "day");
+            GOAL_NAMES[last], t->night ? "night" : "day");
 }
 
 /* ---- schema L1 (model/schema-lizard.md): must match model/gen_traces.py encode_l1_snap exactly ---- */
@@ -166,32 +176,6 @@ void advisor_core_encode_l1(const l1_snap_t *s, char *out, size_t n) {
         LZ_GOAL_NAMES[last], PHASE_NAMES[clampi(s->phase, 0, PHASE_N - 1)]);
 }
 
-int advisor_core_l1_goal_of(goal_id_t g) {
-    switch (g) {
-    case GOAL_SEEK_FOOD:     return LZ_HUNT;
-    case GOAL_VISIT_BUBBLES: return LZ_BASK;
-    case GOAL_INSPECT_REEF:  return LZ_HIDE;
-    case GOAL_FOLLOW_FRIEND: return LZ_INVESTIGATE;
-    case GOAL_EXPLORE:       return LZ_EXPLORE;
-    case GOAL_REST:          return LZ_REST;
-    case GOAL_DART_PLAY:     return LZ_DIG;
-    case GOAL_FLEE_SHADOW:   return LZ_HIDE;
-    default:                 return LZ_EXPLORE;
-    }
-}
-goal_id_t advisor_core_fish_goal_of(int lz) {
-    switch (lz) {
-    case LZ_HUNT:        return GOAL_SEEK_FOOD;
-    case LZ_BASK:        return GOAL_VISIT_BUBBLES;
-    case LZ_HIDE:        return GOAL_INSPECT_REEF;
-    case LZ_EXPLORE:     return GOAL_EXPLORE;
-    case LZ_INVESTIGATE: return GOAL_FOLLOW_FRIEND;
-    case LZ_DIG:         return GOAL_DART_PLAY;
-    case LZ_REST:        return GOAL_REST;
-    default:             return GOAL_COUNT;
-    }
-}
-
 void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s) {
     const fish_t *f = &t->fish[idx];
     memset(s, 0, sizeof *s);
@@ -204,18 +188,59 @@ void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s) {
     s->bold = f->bold; s->social = f->sociable;
     s->stage = (int)f->stage;
     s->shed = f->shed == SHED_SOON ? 1 : (f->shed == SHED_SHEDDING || f->shed == SHED_STUCK) ? 2 : 0;
-    s->last = advisor_core_l1_goal_of(f->goal.id);
+    s->last = goal_lz(f->goal.id) >= 0 ? goal_lz(f->goal.id) : LZ_EXPLORE;   /* (the lizard's own goal; a fish goal is no lizard's) */
     s->phase = tank_activity_phase(t);
     int fi = tank_nearest_food(t, f, NULL);
     if (fi >= 0) { s->prey.on = true; s->prey.x = t->food[fi].x; s->prey.y = t->food[fi].y; }
     int fr = tank_nearest_friend(t, idx, NULL);
     if (fr >= 0) { s->other.on = true; s->other.x = t->fish[fr].x; s->other.y = t->fish[fr].y; }
     s->warm.on = true; tank_bask_point(t, &s->warm.x, &s->warm.y);
-    int h = tank_nearest_hide(t, f->x, f->y, NULL);
+    int h = f->hide >= 0 ? f->hide : tank_nearest_hide(t, f->x, f->y, NULL);   /* the hide it is in, or the nearest */
     if (h >= 0) { s->shelter.on = true; tank_hide_point(t, h, &s->shelter.x, &s->shelter.y); }
-    s->in_shelter = tank_hide_at(t, f->x, f->y) >= 0;
+    s->in_shelter = f->hide >= 0;                       /* in one: hidden or peeking (THE WALK) - walking past is not in */
     s->wall.on = true; wall_contact(f, &s->wall.x, &s->wall.y);   /* the encoder decides near/mid vs clear */
 }
+
+/* ==== THE TEMPORARY FISH-MODEL BRIDGE (P2b) - DELETE IN P6, when the lizard model lands (world.h THE BRAIN) ====
+ * Until then the terrarium's bin thinks with the v4 fish model. All of the bridge is here: the lizard goal each fish
+ * answer plays (seek_food hunt, visit_bubbles bask, inspect_reef and flee_shadow hide, follow_friend investigate,
+ * explore explore, rest rest, dart_play dig), the fish goal each lizard goal reads as on the v4 line's `last`, and the
+ * v4 line of a lizard (its bubble the basking spot, its reef the hide it is in or the nearest). P6: delete this block,
+ * its declarations in advisor_core.h, and the lines marked BRIDGE in advisor_core_init / _encode / _infer (a fish
+ * tokenizer in the terrarium is then refused, as an L1 one is in the aquarium). */
+goal_id_t advisor_bridge_lizard_goal(goal_id_t fish) {
+    switch (fish) {
+    case GOAL_SEEK_FOOD:     return GOAL_LZ_HUNT;
+    case GOAL_VISIT_BUBBLES: return GOAL_LZ_BASK;
+    case GOAL_INSPECT_REEF:  return GOAL_LZ_HIDE;
+    case GOAL_FLEE_SHADOW:   return GOAL_LZ_HIDE;
+    case GOAL_FOLLOW_FRIEND: return GOAL_LZ_INVESTIGATE;
+    case GOAL_EXPLORE:       return GOAL_LZ_EXPLORE;
+    case GOAL_REST:          return GOAL_LZ_REST;
+    case GOAL_DART_PLAY:     return GOAL_LZ_DIG;
+    default:                 return goal_lz(fish) >= 0 ? fish : GOAL_COUNT;   /* (a lizard goal is itself) */
+    }
+}
+goal_id_t advisor_bridge_fish_goal(goal_id_t lizard) {
+    switch (lizard) {
+    case GOAL_LZ_HUNT:        return GOAL_SEEK_FOOD;
+    case GOAL_LZ_BASK:        return GOAL_VISIT_BUBBLES;
+    case GOAL_LZ_HIDE:        return GOAL_INSPECT_REEF;
+    case GOAL_LZ_INVESTIGATE: return GOAL_FOLLOW_FRIEND;
+    case GOAL_LZ_EXPLORE:     return GOAL_EXPLORE;
+    case GOAL_LZ_DIG:         return GOAL_DART_PLAY;
+    case GOAL_LZ_REST:        return GOAL_REST;
+    default:                  return lizard < GOAL_LZ_FIRST ? lizard : GOAL_EXPLORE;   /* (a fish goal is itself) */
+    }
+}
+static void bridge_encode(const tank_t *t, int idx, char *out, size_t n) {
+    const fish_t *f = &t->fish[idx];
+    float bx, by, rx = 0, ry = 0; tank_bask_point(t, &bx, &by);
+    int h = f->hide >= 0 ? f->hide : tank_nearest_hide(t, f->x, f->y, NULL);
+    if (h >= 0) tank_hide_point(t, h, &rx, &ry); else tank_reef_spot(t, &rx, &ry);
+    encode_fish(t, idx, bx, by, rx, ry, advisor_bridge_fish_goal(f->goal.id), out, n);
+}
+/* ==== END OF THE TEMPORARY FISH-MODEL BRIDGE ==== */
 
 bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
                        const uint8_t *tok_bin, size_t tok_len,
@@ -232,13 +257,17 @@ bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
         if (strcmp(p, " heat") == 0) g_schema = ADVISOR_SCHEMA_L1;        /* the lizard's (it has trust and bored too) */
         if (strcmp(p, " urgency") == 0) g_urgency_id = id;
     }
-    /* the goal words: the lizard's seven (LZ_* order) for L1, the fish's GOAL_NAMES otherwise */
-    bool l1 = g_schema == ADVISOR_SCHEMA_L1;
-    g_n_goals = l1 ? LZ_GOALS : GOAL_COUNT;
+    /* the model's goal words, its own set (tank.h THE GOALS): the lizard's seven for L1, the fish's eight otherwise. A
+       lizard model is the terrarium's alone: the aquarium's bin refuses it */
+    const bool l1 = g_schema == ADVISOR_SCHEMA_L1;
+    if (l1 && !PT_TERRARIUM) { g_model = NULL; return false; }
+    g_bridge = PT_TERRARIUM && !l1;                     /* BRIDGE: the fish model thinks for the terrarium until P6 */
+    g_n_goals = l1 ? LZ_GOALS : FISH_GOALS;
+    g_goal_base = l1 ? GOAL_LZ_FIRST : GOAL_FISH_FIRST;
     for (int id = 0; id < g_tok.vocab_size; id++) {
         const char *p = word_tok_piece(&g_tok, id);
         for (int g = 0; g < g_n_goals; g++)
-            if (p[0] == ' ' && strcmp(p + 1, l1 ? LZ_GOAL_NAMES[g] : GOAL_NAMES[g]) == 0) g_goal_ids[g] = id;
+            if (p[0] == ' ' && strcmp(p + 1, GOAL_NAMES[g_goal_base + g]) == 0) g_goal_ids[g] = id;
     }
     for (int g = 0; g < g_n_goals; g++) if (g_goal_ids[g] < 0) return false;   /* not our vocab */
     if (seed) g_rng = seed;
@@ -263,35 +292,31 @@ goal_t advisor_core_infer(const char *state, int *tokens_out) {
     /* THE TWO-PASS DECISION: the goal and the literal " urgency" that follows it go as one
        batched pass, the digit read from it (q4_model.c); the old three passes otherwise */
     bool two = advisor_core_two_pass && g_urgency_id >= 0;
-    bool l1 = g_schema == ADVISOR_SCHEMA_L1;
-    float p_lz[LZ_GOALS];   /* L1: the seven lizard goals' odds, LZ_* order (g_last_p stays in the fish's order) */
+    float p_model[GOAL_COUNT];   /* the model's own candidates' odds, its order (candidate k) */
     int nout = q4_model_decide_follow(g_model, toks, n, g_goal_ids, g_n_goals, temp, &g_rng,
-                                      l1 ? p_lz : g_last_p, out, 3, two ? &g_urgency_id : NULL, two ? 1 : 0);
+                                      p_model, out, 3, two ? &g_urgency_id : NULL, two ? 1 : 0);
     if (tokens_out) *tokens_out = n + nout;
     /* first token is the goal (one of the candidates); then "urgency <d>" */
     int k = -1;
     if (nout >= 1)
         for (int i = 0; i < g_n_goals; i++) if (out[0] == g_goal_ids[i]) { k = i; break; }
-    if (l1) {
-        /* THE TEMPORARY GOAL BRIDGE: the lizard's answer as the fish goal the reflex performs; its odds into
-           the fish's order, 0 for the goal no lizard goal plays (flee_shadow). nout 0: no odds came back */
-        if (nout >= 1) {
-            for (int i = 0; i < LZ_GOALS; i++) if (not_a_number(p_lz[i])) { g_damaged = true; break; }
-            for (int i = 0; i < GOAL_COUNT; i++) g_last_p[i] = 0;
-            for (int i = 0; i < LZ_GOALS; i++) g_last_p[advisor_core_fish_goal_of(i)] = p_lz[i];
+    /* the odds by goal id - the model's candidates, each the world's goal it is (over the BRIDGE: the lizard goal a fish
+       answer plays, two fish answers adding up on hide). nout 0: no odds came back */
+    if (nout >= 1) {
+        for (int i = 0; i < g_n_goals; i++) if (not_a_number(p_model[i])) { g_damaged = true; break; }
+        for (int i = 0; i < GOAL_COUNT; i++) g_last_p[i] = 0;
+        for (int i = 0; i < g_n_goals; i++) {
+            goal_id_t gi = (goal_id_t)(g_goal_base + i);
+            if (g_bridge) gi = advisor_bridge_lizard_goal(gi);   /* BRIDGE */
+            g_last_p[gi] += p_model[i];
         }
-        if (k >= 0) g.id = advisor_core_fish_goal_of(k);
-    } else {
-        if (k >= 0) g.id = (goal_id_t)k;
-        for (int i = 0; i < GOAL_COUNT; i++) if (not_a_number(g_last_p[i])) { g_damaged = true; break; }
     }
+    if (k >= 0) { g.id = (goal_id_t)(g_goal_base + k); if (g_bridge) g.id = advisor_bridge_lizard_goal(g.id); }   /* BRIDGE */
     if (g.id < GOAL_COUNT) {
         g.confidence = g_last_p[g.id];
         int ru = -1;
-        for (int i = 0; i < GOAL_COUNT; i++) {
-            if (l1 && advisor_core_fish_goal_of(advisor_core_l1_goal_of((goal_id_t)i)) != (goal_id_t)i) continue;   /* no lizard goal plays it */
+        for (int i = GOAL_FIRST; i < GOAL_FIRST + GOAL_N; i++)          /* the runner-up: its world's goals */
             if (i != (int)g.id && (ru < 0 || g_last_p[i] > g_last_p[ru])) ru = i;
-        }
         g.runner_up = ru >= 0 ? (goal_id_t)ru : GOAL_COUNT;
     }
     for (int i = 0; i + 1 < nout; i++) {

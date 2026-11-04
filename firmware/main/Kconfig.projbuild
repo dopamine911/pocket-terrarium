@@ -1,4 +1,20 @@
 menu "pocket-tank"
+    choice POCKET_TANK_WORLD
+        prompt "The WORLD this bin is: the terrarium (lizards) or the aquarium (pocket-tank's fish)"
+        default POCKET_TANK_WORLD_TERRARIUM
+        help
+            One core, a bin per world (common/world.h PT_WORLD, PLAN.md D11), compiled in - never
+            chosen at run time. It picks the brain (the model and the tokenizer world.h names), the
+            packs a tank holds, the goal set, the locomotion (the walk, or the swim) and the toolbox.
+            The terrarium is the default; the aquarium is today's pocket-tank fish tank. Build the
+            aquarium with SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.aquarium" (with a board's
+            overlay after it: "sdkconfig.defaults;sdkconfig.round;sdkconfig.aquarium") into its own
+            build directory and sdkconfig.
+        config POCKET_TANK_WORLD_TERRARIUM
+            bool "terrarium: the lizards, walking (PT_WORLD 2)"
+        config POCKET_TANK_WORLD_AQUARIUM
+            bool "aquarium: pocket-tank's fish, swimming (PT_WORLD 1)"
+    endchoice
     config POCKET_TANK_DISPLAY_SH8601
         bool "Drive the Waveshare 1.8in AMOLED (SH8601 / CO5300 over QSPI)"
         default n
