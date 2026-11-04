@@ -6,6 +6,14 @@
 #include <stdint.h>
 #include "esp_now.h"
 #include "link.h"
+#include "esp_idf_version.h"
+
+/* the send callback's first argument: IDF 5.5 passes the tx info, 5.4 the peer's MAC (neither is read here) */
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+#define LP_SENT_TO const esp_now_send_info_t *to
+#else
+#define LP_SENT_TO const uint8_t *to
+#endif
 
 /* the bare radio (the spike uses it with its own callbacks) */
 bool lp_radio_up(esp_now_recv_cb_t on_recv, esp_now_send_cb_t on_sent);
