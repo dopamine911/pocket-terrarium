@@ -585,7 +585,7 @@ int selftest_doors(void) {
     d_fails = 0; dnow = 1000; dqn = 0;
     tank_init(&DA, 31); progression_fresh(&DA); tank_ensure_ids(&DA);   /* (progression booted for A: scenario 6 runs its tick) */
     tank_init(&DB, 32); tank_new_population(&DB); tank_ensure_ids(&DB);
-    for (int i = 0; i < 2; i++) { progression_set_age(&DA, i, STAGE_ADULT_AGE + 60); DA.fish[i].stage = STAGE_ADULT; DB.fish[i].stage = STAGE_ADULT; }
+    for (int i = 0; i < 2; i++) { progression_set_age(&DA, i, progression_stage_age(&DA, STAGE_ADULT) + 60); DA.fish[i].stage = STAGE_ADULT; DB.fish[i].stage = STAGE_ADULT; }
     /* the room: a 5-fish limit per tank, home fish and visitors alike (Strato 2026-10-05) */
     { static tank_t R; memset(&R, 0, sizeof R); tank_init(&R, 33); tank_new_population(&R); int n0 = R.n_fish;
       for (int n = 2; n <= N_FISH_MAX; n++) {
@@ -1620,7 +1620,7 @@ int selftest_doors(void) {
         passport_from_fish(&ev.pp, &DA.fish[k], DA.uid, old_elder);
         tank_link_event(&DA, LA, &ev);
         DCHECK(!DA.fish[k].away && DA.fish[k].stage == STAGE_ELDER, "7t: a 30 h elder home from a visit: stage %d away %d (want ELDER)", DA.fish[k].stage, DA.fish[k].away);
-        DA.fish[k] = keep; progression_set_age(&DA, k, STAGE_ADULT_AGE + 60);
+        DA.fish[k] = keep; progression_set_age(&DA, k, progression_stage_age(&DA, STAGE_ADULT) + 60);
         int got = 0, n = 0;
         for (int r = 0; r < 3; r++) {                                   /* three trips: given at 9.6, tapped to 10 here */
             passport_from_fish(&pp, &el, DB.uid, old_elder); pp.uid ^= 0x1000u * (uint32_t)(r + 1); pp.trust = 9.6f;
@@ -1684,7 +1684,7 @@ int selftest_fry_cap(void) {
     d_fails = 0; fc_over = 0; dnow = 1000; dqn = 0; d_deaf[0] = d_deaf[1] = false;
     tank_init(&DA, 41); progression_fresh(&DA); tank_ensure_ids(&DA);
     tank_init(&DB, 42); tank_new_population(&DB); tank_ensure_ids(&DB);
-    for (int i = 0; i < 2; i++) { progression_set_age(&DA, i, STAGE_ADULT_AGE + 60); DA.fish[i].stage = STAGE_ADULT; DB.fish[i].stage = STAGE_ADULT; }
+    for (int i = 0; i < 2; i++) { progression_set_age(&DA, i, progression_stage_age(&DA, STAGE_ADULT) + 60); DA.fish[i].stage = STAGE_ADULT; DB.fish[i].stage = STAGE_ADULT; }
     LA = calloc(1, (size_t)link_size()); LB = calloc(1, (size_t)link_size());
     link_host_t ha = tank_link_host(&DA, d_send), hb = tank_link_host(&DB, d_send);
     link_init(LA, DA.uid, &ha, 1, dnow); link_init(LB, DB.uid, &hb, 2, dnow);

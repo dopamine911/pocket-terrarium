@@ -361,6 +361,7 @@ bool tank_link_event(tank_t *t, link_t *L, const link_ev_t *e) {
         fish_t *f = &t->fish[N_FISH_MAX + k];
         memset(f, 0, sizeof *f);
         passport_to_fish(&e->pp, f);
+        tank_lizard_fresh(t, f);                                /* (P2a: its heat and shed; a passport carries neither) */
         f->goal.id = GOAL_EXPLORE; f->goal.urgency = 3; f->goal.confidence = 1; f->goal.runner_up = GOAL_COUNT;
         f->goal_prev = GOAL_COUNT; f->zone_last = -1; f->ask_age = 99; f->sig = 0xffffffffu;
         f->wander = (float)(e->uid % 628) / 100.0f; f->turn_rate = f->turn_rate > 0 ? f->turn_rate : 2.4f;

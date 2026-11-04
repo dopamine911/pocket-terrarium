@@ -6,7 +6,8 @@
  * Build from firmware/host_test:
  *   cc -O2 -I../../common -I../../common/llm -Wl,-undefined,dynamic_lookup -o decide_host decide_host.c \
  *     ../../common/llm/advisor_core.c ../../common/llm/q4_model.c ../../common/llm/word_tok.c -lm
- * (advisor_core_encode's tank calls are never made here: dynamic_lookup leaves them unresolved)
+ * (advisor_core_encode's tank and species calls are never made here: dynamic_lookup leaves them unresolved;
+ *  the data it reads - tank.c's and species.c's name lists - is defined below)
  *   ./decide_host ../../model/out/model_q4.bin ../../model/out/tokenizer.bin */
 #include "advisor_core.h"
 #include "word_tok.h"
@@ -22,6 +23,9 @@ const char *const GOAL_NAMES[GOAL_COUNT] = { "seek_food", "flee_shadow", "visit_
 #define GOALS GOAL_NAMES
 const char *const STAGE_NAMES[4] = { "fry", "juv", "adult", "elder" };
 #define STAGES STAGE_NAMES
+/* species.c's lists, likewise: advisor_core_init reads LZ_GOAL_NAMES (an L1 tokenizer), the L1 encoder PHASE_NAMES */
+const char *const LZ_GOAL_NAMES[LZ_GOALS] = { "hunt", "bask", "hide", "explore", "investigate", "dig", "rest" };
+const char *const PHASE_NAMES[PHASE_N] = { "active", "settle", "sleep" };
 static const char *SIGHT[] = { "none", "near 3", "near 11", "mid 6", "mid 1", "far 9", "far 12" };
 static const char *WALL[] = { "clear", "near 9", "mid 3", "near 12" };
 static uint32_t rs = 12345u;

@@ -418,6 +418,15 @@ void tank_make_fish(tank_t *t, int slot, int preset, float sociable, float bold,
     f->away = false; f->homeward = false; f->follow_uid = 0; f->door = DOOR_NONE; f->door_edge = 0; f->door_seen = -1e6f; f->door_refused = 0;
     f->door_sent = false; f->deported = false; f->bolt_home = false;   /* (2026-11-02: a slot a fish was GIVEN out of kept its door_sent - the next
                                                                          fish made there hovered at every open door and never asked to cross) */
+    tank_lizard_fresh(t, f);
+}
+/* a lizard new to this tank (made here, or in from next door): comfortable in its species' band, a fresh shed clock
+   for its stage (docs/shed.md) - never 0 C (a visitor is built from its passport, which carries neither) */
+void tank_lizard_fresh(const tank_t *t, fish_t *f) {
+    const species_t *sp = tank_species(t);
+    f->body_c = (sp->t_lo + sp->t_hi) * 0.5f; f->heat = species_heat_of(sp, f->body_c);
+    f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_clean = 0; f->shed_damp = 0;
+    f->shed_s = sp->shed_every_s[f->stage & 3];
 }
 
 void tank_set_bubble_x(tank_t *t, float x) {
@@ -568,6 +577,7 @@ bool tank_remove_fish(tank_t *t, int idx) {
     t->courting = false; t->court_a = t->court_b = -1; t->court_active = 0;   /* progression picks the pair again */
     t->spawning = false; t->spawn_danced = 0;
     t->stage_fish = -1;
+    t->mist_fish = -1; t->mist_s = 0;                 /* (the mister's hold picks again: the slots moved) */
     t->roster_gen++; t->removed_slot = (int8_t)idx;
     return true;
 }
@@ -653,6 +663,10 @@ void tank_init(tank_t *t, uint32_t seed) {
     t->coral_x = 0; t->coral_z = DECOR_Z_FRONT; t->coral_rgb = 0; t->coral_growth = 0; t->coral_acc = 0;
     t->cluster_x = 0; t->cluster_z = DECOR_Z_FRONT; t->cluster_scheme = 0; t->cluster_growth = 0; t->cluster_acc = 0;
     t->tank_ms_bits = 0; t->tank_ms_seen = 0; t->ask_rr = 0; t->advisor_asks = 0;
+    t->pack_id = SPECIES_DEFAULT; t->habitat_id = HABITAT_DEFAULT; t->light_s = 0;
+    {   const habitat_t *h = tank_habitat(t);         /* the humid hides at the habitat's start (the rest hold none) */
+        for (int k = 0; k < HABITAT_HIDES_MAX; k++) t->moist[k] = k < h->n_hides && h->hides[k].kind == HIDE_HUMID ? h->moist_start : 0; }
+    t->mist_stroke = 0; t->mist_hold = t->mist_done = false; t->mist_x = t->mist_y = t->mist_s = 0; t->mist_fish = -1;
     tank_scatter_food(t, 2);
 }
 
@@ -2881,6 +2895,7 @@ void tank_decor_set(tank_t *t, int item, float x, int z) {
 
 void tank_touch_hold(tank_t *t, float x, float y) {
     tank_handled(t);
+    if (t->tool == TOOL_MISTER) { t->mist_hold = true; t->mist_x = x; t->mist_y = y; return; }   /* the mister held on a lizard: the soak (touch_tick) */
     if (t->tool != TOOL_HAND) return;            /* a tool in hand: the glass takes its strokes and nothing else (2026-10-04) */
     t->hold_active = true; t->hold_x = x; t->hold_y = y;
 }
@@ -2905,9 +2920,17 @@ void tank_touch_drag(tank_t *t, float x, float y) {
             if (!veg_near_frond(t, b, x, y, SLASH_START_SIDE_PX, SLASH_START_PX))
                 t->slash_wall = (int8_t)veg_wall_frond(t, b, x, y, SLASH_START_PX);
         if (t->slash_wall) t->slash_armed = true;
-        if (t->tool == TOOL_SPONGE || (t->tool == TOOL_HAND && t->tools_locked)) { t->slash_armed = false; t->slash_wall = 0; }   /* the sponge never cuts, nor does a locked bare finger */
+        if (t->tool == TOOL_SPONGE || t->tool == TOOL_MISTER || (t->tool == TOOL_HAND && t->tools_locked)) { t->slash_armed = false; t->slash_wall = 0; }   /* the sponge and the mister never cut, nor does a locked bare finger */
         t->slash_engaged = t->slash_cut = false; t->wipe_sounded = false;
         t->slash_x0 = x; t->slash_y0 = y; t->slash_h = t->slash_v = 0;
+    }
+    if (t->tool == TOOL_MISTER) {                     /* a stroke or a tap over a humid hide: one pass each (docs/shed.md), once a stroke */
+        const habitat_t *h = tank_habitat(t);
+        for (int k = 0; k < h->n_hides; k++) {
+            if (h->hides[k].kind != HIDE_HUMID || (t->mist_stroke >> k & 1)) continue;
+            float hx, hy; tank_hide_point(t, k, &hx, &hy);
+            if (tank_dist(x, y, hx, hy) < MIST_HIDE_R) { tank_mist_pass(t, k); t->mist_stroke |= (uint8_t)(1u << k); }
+        }
     }
     if (t->drag_has_prev) {
         float sdx = x - t->drag_px, sdy = y - t->drag_py;
@@ -2945,8 +2968,9 @@ void tank_touch_drag(tank_t *t, float x, float y) {
 }
 
 void tank_set_tool(tank_t *t, int tool) {
-    t->tool = (uint8_t)(tool == TOOL_SPONGE || tool == TOOL_SCISSORS ? tool : TOOL_HAND);
+    t->tool = (uint8_t)(tool == TOOL_SPONGE || tool == TOOL_SCISSORS || tool == TOOL_MISTER ? tool : TOOL_HAND);
     t->tool_idle = 0;
+    t->mist_hold = t->mist_done = false; t->mist_fish = -1; t->mist_s = 0;
 }
 
 void tank_lock_tools(tank_t *t, bool lock) { t->tools_locked = lock; }
@@ -3112,6 +3136,26 @@ static void touch_tick(tank_t *t, float dt) {
             tank_court_puff(t, 2);                  /* a flirt of bubbles, from the grass */
         }
     } else t->court_active = 0;
+    /* the mister held on a lizard (docs/shed.md "The mister"): SOAK_HOLD_S on the same one soaks it - a stuck
+     * shed comes off, anything else is a spray it dislikes - once a hold. The lizard under the finger at the
+     * hold's start is the one; it is let go if it gets MIST_KEEP_R away (it may walk off) */
+    if (t->mist_hold && t->tool == TOOL_MISTER) {
+        if (t->mist_fish < 0 && !t->mist_done) {
+            float bd = MIST_PICK_R;
+            for (int i = 0; i < N_FISH_SLOTS; i++) {
+                if (!tank_swims(t, i)) continue;
+                float d = tank_dist(t->fish[i].x, t->fish[i].y, t->mist_x, t->mist_y);
+                if (d < bd) { bd = d; t->mist_fish = (int8_t)i; }
+            }
+            t->mist_s = 0;
+        }
+        if (t->mist_fish >= 0) {
+            const fish_t *f = &t->fish[t->mist_fish];
+            if (!tank_swims(t, t->mist_fish) || tank_dist(f->x, f->y, t->mist_x, t->mist_y) > MIST_KEEP_R) { t->mist_fish = -1; t->mist_s = 0; }
+            else if (!t->mist_done && (t->mist_s += dt) >= SOAK_HOLD_S) { t->mist_done = true; tank_mist_soak(t, t->mist_fish); }
+        }
+    } else { t->mist_fish = -1; t->mist_s = 0; t->mist_done = false; }
+    t->mist_hold = false;                          /* (the platform says it again every frame the finger stays) */
     /* a tool nobody has used for a while goes back in the box */
     if (t->tool && !t->drag_active && (t->tool_idle += dt) > TOOL_IDLE_S) t->tool = TOOL_HAND;
     /* a lifted finger ends the wipe/slash stroke (platform re-asserts while down) */
@@ -3119,6 +3163,7 @@ static void touch_tick(tank_t *t, float dt) {
         t->drag_has_prev = false; t->drag_dist = 0;
         t->slash_armed = t->slash_engaged = t->slash_cut = false;
         t->slash_h = t->slash_v = 0;
+        t->mist_stroke = 0;                        /* the next stroke may mist again */
     }
     t->drag_active = false;
 }
@@ -3188,6 +3233,156 @@ void tank_scatter_food(tank_t *t, int n) {
     }
 }
 
+/* ---- the packs' world (pocket-terrarium P2a: tank.h "the packs' world") ---- */
+const species_t *tank_species(const tank_t *t) {
+    const species_t *p = species_get(t->pack_id);
+    return p ? p : species_get(SPECIES_DEFAULT);
+}
+const habitat_t *tank_habitat(const tank_t *t) {
+    const habitat_t *h = habitat_get(t->habitat_id);
+    return h ? h : habitat_get(HABITAT_DEFAULT);
+}
+bool tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id) {
+    const habitat_t *h = habitat_get(habitat_id);
+    const species_t *s = species_get(pack_id);
+    if (!habitat_fits(h, s)) return false;                 /* (an unknown id fits nothing) */
+    t->habitat_id = habitat_id; t->pack_id = pack_id;
+    return true;
+}
+static void floor_span(float *x0, float *x1) {
+    *x0 = tank_glass_x0(PLACE_Y) + PLACE_MARGIN; *x1 = tank_glass_x1(PLACE_Y) - PLACE_MARGIN;
+}
+float tank_floor_x(float u) { float x0, x1; floor_span(&x0, &x1); return x0 + (x1 - x0) * u; }
+static float floor_u(float x) {                         /* 0 at the floor's warm end .. 1 at its cool end */
+    float x0, x1; floor_span(&x0, &x1);
+    return clampf((x - x0) / (x1 - x0), 0, 1);
+}
+void tank_hide_point(const tank_t *t, int k, float *x, float *y) {
+    const habitat_t *h = tank_habitat(t);
+    *x = tank_floor_x(k >= 0 && k < h->n_hides ? h->hides[k].u : 0.5f); *y = PLACE_Y;
+}
+void tank_bask_point(const tank_t *t, float *x, float *y) { *x = tank_floor_x(tank_habitat(t)->bask_u); *y = PLACE_Y; }
+int tank_hide_at(const tank_t *t, float x, float y) {
+    const habitat_t *h = tank_habitat(t);
+    for (int k = 0; k < h->n_hides; k++) {
+        float hx, hy; tank_hide_point(t, k, &hx, &hy);
+        if (tank_dist(x, y, hx, hy) < HIDE_R) return k;
+    }
+    return -1;
+}
+int tank_nearest_hide(const tank_t *t, float x, float y, float *dist) {
+    const habitat_t *h = tank_habitat(t);
+    int best = -1; float bd = 1e9f;
+    for (int k = 0; k < h->n_hides; k++) {
+        float hx, hy; tank_hide_point(t, k, &hx, &hy);
+        float d = tank_dist(x, y, hx, hy);
+        if (d < bd) { bd = d; best = k; }
+    }
+    if (dist) *dist = bd;
+    return best;
+}
+int tank_humid_hide(const tank_t *t) {
+    const habitat_t *h = tank_habitat(t);
+    for (int k = 0; k < h->n_hides; k++) if (h->hides[k].kind == HIDE_HUMID) return k;
+    return -1;
+}
+float tank_env_c_lit(const tank_t *t, float x, float y, bool lit) {
+    const habitat_t *h = tank_habitat(t);
+    int k = tank_hide_at(t, x, y);
+    if (k >= 0) return lit ? h->hides[k].t_lit_c : h->hides[k].t_dark_c;
+    float c = lerpf(h->floor_warm_c, h->floor_cool_c, floor_u(x));
+    if (!lit) return c - h->night_drop_c;                     /* the lamp out, the night's cool */
+    float bx, by; tank_bask_point(t, &bx, &by);
+    float d = tank_dist(x, y, bx, by), r = h->bask_r_px;
+    if (d < r) c += (h->bask_c - c) * (1 - d * d / (r * r));   /* the lamp's pool: bask_c in the middle, blending to the floor's own at its edge */
+    return c;
+}
+float tank_env_c(const tank_t *t, float x, float y) { return tank_env_c_lit(t, x, y, !t->night); }
+int tank_activity_phase(const tank_t *t) { return species_phase(tank_species(t), !t->night, t->light_s); }
+/* the body's heat toward env over dt seconds (exact, so dt may be a whole night) at its pack's tau for its stage */
+static void body_follow(const tank_t *t, fish_t *f, float env, float dt) {
+    const species_t *p = tank_species(t);
+    f->body_c = env + (f->body_c - env) * expf(-dt / p->tau_s[f->stage & 3]);
+    f->heat = species_heat_of(p, f->body_c);
+}
+/* a stuck shed's floor under the stress: STUCK_STRESS_PER_S a tended second stuck, up to STUCK_STRESS_MAX
+ * (docs/shed.md "Stuck shed"; a floor, not a push: the reflex's stress settles ~0.18 a second) */
+static float stuck_floor(const fish_t *f) {
+    return f->shed == SHED_STUCK ? fminf(STUCK_STRESS_MAX, STUCK_STRESS_PER_S * f->shed_s) : 0;
+}
+bool tank_in_damp_hide(const tank_t *t, int i) {
+    int k = tank_hide_at(t, t->fish[i].x, t->fish[i].y);
+    return k >= 0 && tank_habitat(t)->hides[k].kind == HIDE_HUMID && t->moist[k] >= SHED_DAMP;
+}
+bool tank_shed_growth(tank_t *t, int i) {
+    fish_t *f = &t->fish[i];
+    if (f->shed == SHED_CLEAN) return false;          /* a shed just off: progression starts the next once it is finished */
+    if (f->shed == SHED_NORMAL) { f->shed = SHED_SOON; f->shed_s = tank_species(t)->shed_soon_s; f->shed_damp = 0; }   /* at once, whatever the timer said */
+    f->shed_growth = true;                            /* (soon, shedding or stuck: the shed under way is the growth shed) */
+    return true;
+}
+/* one animal's shed through dt tended seconds: the timers, and the damp time while it is in a humid hide that is still
+ * damp - the first damp_until seconds of dt (the hide dries as dt goes; < 0: not damp, or not in one). Off clean = CLEAN,
+ * the moment the soak is done; the rest of dt waits for progression to finish the shed (the timer restarts there) */
+static void shed_step(const species_t *p, fish_t *f, float dt, float damp_until) {
+    float at = 0;                                     /* how much of dt is lived */
+    for (int guard = 0; at < dt && guard < 8; guard++) {
+        float left = dt - at;
+        switch (f->shed) {
+        case SHED_NORMAL: case SHED_SOON:
+            if (f->shed_s > left) { f->shed_s -= left; at = dt; break; }
+            at += fmaxf(0, f->shed_s);
+            if (f->shed == SHED_NORMAL) { f->shed = SHED_SOON; f->shed_s = p->shed_soon_s; }
+            else { f->shed = SHED_SHEDDING; f->shed_s = p->shed_window_s; f->shed_damp = 0; }
+            break;
+        case SHED_SHEDDING: case SHED_STUCK: {
+            bool stuck = f->shed == SHED_STUCK;
+            float step = stuck ? left : fminf(left, fmaxf(0, f->shed_s));
+            float damp = fmaxf(0, fminf(at + step, damp_until) - at);
+            if (damp > 0 && f->shed_damp + damp >= SHED_SOAK_S) {   /* enough damp time: off clean */
+                float need = SHED_SOAK_S - f->shed_damp;
+                f->shed_s += stuck ? need : -need;
+                f->shed_damp = SHED_SOAK_S; f->shed = SHED_CLEAN; at = dt;
+                break;
+            }
+            f->shed_damp += damp;
+            if (stuck) { f->shed_s += step; at = dt; break; }
+            f->shed_s -= step; at += step;
+            if (f->shed_s <= 0) { f->shed = SHED_STUCK; f->shed_s = 0; f->shed_damp = 0; }   /* the window ran out: it sticks */
+            break; }
+        default: at = dt; break;                      /* CLEAN: a moment (progression) */
+        }
+    }
+}
+void tank_shed_clock(tank_t *t, float dt) {
+    if (dt <= 0) return;
+    const habitat_t *h = tank_habitat(t);
+    float damp_until[HABITAT_HIDES_MAX];              /* the part of dt each humid hide stays damp (-1: none) */
+    for (int k = 0; k < h->n_hides; k++) {
+        float m0 = t->moist[k];
+        damp_until[k] = h->hides[k].kind == HIDE_HUMID && m0 >= SHED_DAMP ? (m0 - SHED_DAMP) / h->moist_dry_per_s : -1;
+        if (h->hides[k].kind == HIDE_HUMID) t->moist[k] = fmaxf(0, m0 - h->moist_dry_per_s * dt);
+    }
+    const species_t *p = tank_species(t);
+    for (int i = 0; i < t->n_fish; i++) {
+        fish_t *f = &t->fish[i];
+        if (f->away) continue;                        /* (next door: its shed waits with its age) */
+        int k = tank_hide_at(t, f->x, f->y);
+        shed_step(p, f, dt, k >= 0 ? damp_until[k] : -1);
+    }
+}
+void tank_mist_pass(tank_t *t, int k) {
+    if (k >= 0 && k < HABITAT_HIDES_MAX) t->moist[k] = fminf(1.0f, t->moist[k] + MIST_PASS);
+}
+bool tank_mist_soak(tank_t *t, int i) {
+    fish_t *f = &t->fish[i];
+    f->stress = clampf(f->stress + 1.0f, 0, 10);     /* the spray: they dislike it, soaked or not */
+    if (f->shed != SHED_STUCK) return false;
+    f->shed = SHED_CLEAN;                             /* the soak: it comes off at once (progression finishes it) */
+    if (f->trust >= 6.0f) f->trust = fminf(10, f->trust + 0.2f);   /* helped by a hand it knows */
+    return true;
+}
+
 /* see tank.h: dark-screen physiology only, rates per real hour of sleep */
 #define SLEEP_HUNGER_PER_H 0.8f    /* fed -> ravenous over ~7 h of sleep */
 #define SLEEP_ENERGY_PER_H 2.0f
@@ -3200,12 +3395,15 @@ void tank_tick_sleep(tank_t *t, float seconds) {
     for (int i = 0; i < t->n_fish; i++) {
         fish_t *f = &t->fish[i];
         if (f->away) continue;                              /* (living its night next door) */
-        f->hunger = clampf(f->hunger + SLEEP_HUNGER_PER_H * h, 0, 10);
+        f->hunger = clampf(f->hunger + SLEEP_HUNGER_PER_H * h, 0, 10);   /* (a shed's slower hunger is its appetite awake: update_fish) */
         f->energy = clampf(f->energy + SLEEP_ENERGY_PER_H * h, 0, 10);
         f->stress = clampf(f->stress - SLEEP_STRESS_PER_H * h, 0, 10);
+        f->stress = fmaxf(f->stress, stuck_floor(f));
+        body_follow(t, f, tank_env_c_lit(t, f->x, f->y, false), seconds);   /* the body follows the dark terrarium where it sleeps */
         f->speed = 0; f->target_speed = 0; f->bored = 0; f->breather = 0;  /* a night's sleep is a fresh start */
         f->goal_age += seconds; f->ask_age += seconds;  /* wake re-asks the advisor at once */
     }
+    t->light_s += seconds;                              /* (the phase: the light as it was, for that much longer) */
     t->idle_s = 0;                                      /* the wake press is handling: lights up */
     for (int i = 0; i < MAX_FOOD; i++)                  /* overnight pellets go stale */
         if (t->food[i].alive && (t->food[i].age += seconds) > 45) t->food[i].alive = false;
@@ -3528,8 +3726,11 @@ static bool grass_clear(const tank_t *t, const fish_t *f) {
 }
 static void update_fish(tank_t *t, int idx, float dt) {
     fish_t *f = &t->fish[idx];
-    /* drives (prototype rates, speed rescaled by the same 0.55) */
-    f->hunger    = clampf(f->hunger + dt * (HUNGER_PER_S + f->bold * HUNGER_BOLD_PER_S +
+    /* the lizard's body heat follows where it is (tank.h THE HEAT FIELD), at its pack's pace for its stage */
+    body_follow(t, f, tank_env_c(t, f->x, f->y), dt);
+    /* drives (prototype rates, speed rescaled by the same 0.55); before a shed it goes off its food (docs/shed.md) */
+    float shed_hunger = f->shed == SHED_SOON || f->shed == SHED_SHEDDING ? SHED_HUNGER_X : 1.0f;
+    f->hunger    = clampf(f->hunger + dt * shed_hunger * (HUNGER_PER_S + f->bold * HUNGER_BOLD_PER_S +
                           (f->goal.id == GOAL_DART_PLAY ? HUNGER_DART_PER_S : 0)), 0, 10);
     /* curiosity: exploring feeds it (prototype) and - new 2026-09-01 -
      * satisfying it SPENDS it: a fish that has reached the bubbles or the
@@ -3614,6 +3815,12 @@ static void update_fish(tank_t *t, int idx, float dt) {
         else
             f->stress = clampf(f->stress - dt * (0.18f * gmean + (hidden ? 0.18f : 0)), 0, 10);
     }
+    /* overheating pulls stress up (tank.h HEAT_HOT), and a stuck shed holds a floor under it (docs/shed.md) */
+    if (f->heat >= HEAT_HOT) {
+        float to = 4 + 2 * (f->heat - HEAT_HOT);
+        if (f->stress < to) f->stress = clampf(f->stress + HEAT_HOT_PULL * (to - f->stress) * dt, 0, 10);
+    }
+    f->stress = fmaxf(f->stress, stuck_floor(f));
 
     f->wander += dt * (0.65f + f->curiosity * 0.04f) + sinf(anim(t) + f->x * 0.01f) * dt * 0.12f;
     if (f->wander >= 62.831853f) f->wander = fmodf(f->wander, 62.831853f);   /* (20 pi: its every multiple is tenths - the lap is seamless;
@@ -3925,6 +4132,7 @@ static void update_fish(tank_t *t, int idx, float dt) {
     f->yaw += clampf(face - f->yaw, -yrate, yrate);
     float want = touch_speed >= 0 ? touch_speed : hes_speed >= 0 ? hes_speed : tg.speed * ugain;
     f->target_speed = want * (f->energy < 1.2f && f->breather <= 0 ? 0.45f : 1) * (glancing ? 0.6f : 1);
+    if (f->heat < HEAT_SLOW) f->target_speed *= HEAT_SLOW_MIN + (1 - HEAT_SLOW_MIN) * f->heat / HEAT_SLOW;   /* cold: sluggish (x0.5 at heat 0) */
     if (through) f->target_speed = f->bolt_home ? DOOR_BOLT_SPEED : DOOR_SWIM_SPEED;        /* through a doorway at a swim, never a dawdle (the hand-off waits LINK_CROSS_MS) */
     /* swimming through a canopy is slow going (a fleeing fish crashes through) */
     if (f->goal.id != GOAL_FLEE_SHADOW)
@@ -4033,7 +4241,8 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
              : t->hold_light ? false
              : !t->light_auto ? t->light_manual_off              /* MANUAL (default): the double-tap's state */
              : t->idle_s > (float)t->light_idle_s;                      /* AUTO: the idle rule */
-    if (t->night != was_night) tank_emit(t->night ? TEV_LIGHT_OFF : TEV_LIGHT_ON, -1);
+    if (t->night != was_night) { tank_emit(t->night ? TEV_LIGHT_OFF : TEV_LIGHT_ON, -1); t->light_s = 0; }
+    else t->light_s += dt;                                   /* (the pack's phase: how long the light has been as it is) */
 
     touch_tick(t, dt);
 

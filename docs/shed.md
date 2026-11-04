@@ -32,8 +32,8 @@ stateDiagram-v2
 | stuck | `shed yes` | until helped | white rings left on toes and tail tip |
 | clean | `shed no` | a moment | the old skin off in one piece; the gecko eats it |
 
-`soon` and `shedding` raise hunger more slowly (× 0.5) and make strikes less
-likely to be attempted, as real pre-shed lizards go off their food. The model
+`soon` and `shedding` raise hunger more slowly (× 0.5, awake: it is the appetite; the sleep's own rate is
+unchanged) and make strikes less likely to be attempted, as real pre-shed lizards go off their food. The model
 also reads `shed soon|yes` and leans toward `hide` (schema rule 3).
 
 ## Growing up: a shed comes first
@@ -73,7 +73,9 @@ upkeep before it.
 
 If the window ends without enough damp time, the shed sticks:
 - `stress` is pushed up `STUCK_STRESS_PER_S` = 0.005 /s (about +18 an hour) while it lasts, but never past 6
-  by this alone: uncomfortable, not panicked.
+  by this alone: uncomfortable, not panicked. As built (P2a): the reflex's stress settles by itself at ~0.18 a
+  second, so a plain +0.005 /s would never show; the push is a **floor** under the stress that rises 0.005 a
+  tended second stuck, to 6 (6 after 20 stuck minutes awake), and goes with the shed.
 - The model keeps seeing `shed yes`, so the lizard keeps seeking the humid hide.
 - Growth: a stuck growth shed holds the stage back until it comes off (above).
 
@@ -86,7 +88,9 @@ Two ways off:
 ## Moisture
 
 Each humid hide has `moisture` 0..1, saved with the terrarium.
-- Dries at `MOIST_DRY_PER_S` = 1/10,800 awake (full to dry in ~3 h), a quarter of that asleep.
+- Dries at `MOIST_DRY_PER_S` = 1/10,800 awake (full to dry in ~3 h), a quarter of that asleep: a tended
+  second, the shed's own clock. As built (P2a) the rate and the start are the habitat's (`common/habitat.h`
+  `moist_dry_per_s`, `moist_start`; the desert's are these).
 - Each mister pass over the hide adds `MIST_PASS` = 0.35, up to 1.
 - Shown on the hide: the substrate at its mouth darkens with moisture; at 0 it looks pale and dusty.
 - A fresh terrarium starts at 0.6.
@@ -116,11 +120,13 @@ tools it splits in thirds.
 | CLEAN RUN | five clean sheds in a row (tank-wide) |
 | FIRST MIST | the keeper's first mister pass (tank-wide) |
 
-## Saved (P5's save format)
+## Saved
 
 Per lizard: shed state, seconds left in it, damp seconds accrued, whether it is
 a growth shed, clean-shed count. Per terrarium: each humid hide's moisture, the
-clean-run counter.
+clean-run counter. P2a writes all of it but the clean-run counter (a P5 milestone) in the save's packs tail
+(`progression.c`, SAVE LAYOUT LOCK: 1956..2095), with the species' and the habitat's ids and each lizard's
+body temperature; P5's new format keeps the same fields.
 
 ## Tests (P2)
 

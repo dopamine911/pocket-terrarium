@@ -266,6 +266,20 @@ typedef struct {
     /* the seahorse's time with the keeper in whole seconds + 1 (0.4; 0 = an older save): sh_s at 1864 is a float,
      * which stops adding a frame at ~12 days - it is still written, for a rollback to read */
     uint32_t sh_secs;
+    /* the packs (pocket-terrarium P2a: species.h, habitat.h, docs/shed.md): pack_v 1 = this tail is written (an
+     * older save's zeros: a new tank's defaults - the default species in the default habitat, comfortable bodies,
+     * a fresh shed clock per fish, the humid hides at the habitat's start); the species' and the habitat's ids
+     * (a pair that does not fit, or an id this build lacks: the defaults); per fish SLOT the shed's state, whether
+     * it is a growth shed, its clean sheds, the body's heat (C), the shed's seconds (tank.h fish_t.shed_s) and
+     * its damp seconds; each of the habitat's hides' moisture, by index; and the prints of the fish this tail
+     * was written for (pack_slot): an older build that writes fish_print itself (0.4, this port's P0/P1) may
+     * sell or breed under this tail, and its prints are then of its own order, not this tail's */
+    uint8_t  pack_v, pack_id, habitat_id, pad_packs;
+    uint8_t  shed_state[N_FISH_MAX], shed_growth[N_FISH_MAX];
+    uint16_t shed_clean[N_FISH_MAX];
+    float    body_c[N_FISH_MAX], shed_s[N_FISH_MAX], shed_damp[N_FISH_MAX];
+    float    moist[HABITAT_HIDES_MAX];
+    uint32_t pack_print[N_FISH_MAX];
     /* never a field: where this build's fields end and a newer build's tail
      * begins (SAVE_FIELDS_END; new fields go above it) */
     uint8_t  newer_tail[];
@@ -386,6 +400,12 @@ _Static_assert(sizeof(save_t) >= 1952, "SAVE LAYOUT LOCK: save_t only ever grows
 SAVE_AT(sh_secs, 1952);                                                                                 /* the seahorse's days, precise, 0.4 */
 _Static_assert(sizeof(save_t) >= 1960, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 1956 of fields, padded to 8 */
 /* (the next field: SAVE_AT(its_name, 1956 or its type's alignment past it);) */
+SAVE_AT(pack_v, 1956); SAVE_AT(pack_id, 1957); SAVE_AT(habitat_id, 1958); SAVE_AT(pad_packs, 1959);   /* the packs, pocket-terrarium P2a */
+SAVE_AT(shed_state, 1960); SAVE_AT(shed_growth, 1966); SAVE_AT(shed_clean, 1972);
+SAVE_AT(body_c, 1984); SAVE_AT(shed_s, 2008); SAVE_AT(shed_damp, 2032); SAVE_AT(moist, 2056);       /* (moist: HABITAT_HIDES_MAX is a bound of the lock too) */
+SAVE_AT(pack_print, 2072);                                                                             /* (its own prints: pack_slot) */
+_Static_assert(sizeof(save_t) >= 2096, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2096 of fields */
+/* (the next field: SAVE_AT(its_name, 2096 or its type's alignment past it);) */
 /* A ROLLBACK keeps the newer build's tail (2026-10-05): a save longer than
  * this build's fields loads its head, and every save writes the bytes past
  * SAVE_FIELDS_END back as they were - so the update back up finds its tail
@@ -722,17 +742,27 @@ const char *const *progression_sd_earn_lines(void) {
 }
 static void set_tms(tank_t *t, uint32_t bit) { if (!(t->tank_ms_bits & bit)) { t->tank_ms_bits |= bit; mark_dirty(); } }
 
-/* the stage the age has earned. Only the director's set_age (`down`) takes
- * one away: a fish grown up under shorter stage times (0.3.4 and before)
- * keeps its stage on the longer ones and grows on from there. */
-static void apply_stage(fish_t *f, double age, bool down) {
-    stage_t st = age >= STAGE_ELDER_AGE ? STAGE_ELDER : age >= STAGE_ADULT_AGE ? STAGE_ADULT
-               : age >= STAGE_JUV_AGE ? STAGE_JUV : STAGE_FRY;
-    if (st < f->stage && !down) st = f->stage;
-    if (st != f->stage) { f->stage = st; mark_dirty(); }         /* silent surprise */
-    if (st >= STAGE_JUV)   set_ms(f, MS_REACHED_JUV);
-    if (st >= STAGE_ADULT) set_ms(f, MS_REACHED_ADULT);
-    if (st >= STAGE_ELDER) set_ms(f, MS_REACHED_ELDER);
+/* the stage a tended age has earned on the terrarium's pack (species_t.stage_s) */
+static stage_t stage_for(const tank_t *t, double age) {
+    const species_t *p = tank_species(t);
+    return age >= p->stage_s[2] ? STAGE_ELDER : age >= p->stage_s[1] ? STAGE_ADULT : age >= p->stage_s[0] ? STAGE_JUV : STAGE_FRY;
+}
+float progression_stage_age(const tank_t *t, stage_t st) {
+    return st <= STAGE_FRY ? 0 : tank_species(t)->stage_s[(st > STAGE_ELDER ? STAGE_ELDER : st) - 1];
+}
+/* GROWING UP (docs/shed.md "Growing up: a shed comes first"): an age past its stage starts a growth shed at once - or
+ * makes the shed under way the growth shed - and the stage changes only when that shed comes off clean (shed_done),
+ * never at the age itself. Only the director's set_age (`down`) puts the age's own stage on at once, up or down (a
+ * fish grown up under shorter stage times keeps its stage on the longer ones: nothing else takes one away). The
+ * badges follow the stage it has. */
+static void apply_stage(tank_t *t, int i, bool down) {
+    fish_t *f = &t->fish[i];
+    stage_t st = stage_for(t, s_age[i]);
+    if (down) { if (st != f->stage) { f->stage = st; mark_dirty(); } }
+    else if (st > f->stage && !f->shed_growth && tank_shed_growth(t, i)) mark_dirty();
+    if (f->stage >= STAGE_JUV)   set_ms(f, MS_REACHED_JUV);
+    if (f->stage >= STAGE_ADULT) set_ms(f, MS_REACHED_ADULT);
+    if (f->stage >= STAGE_ELDER) set_ms(f, MS_REACHED_ELDER);
 }
 
 /* size: base by stage, plus a meal-fed bonus; never shrinks below stage base */
@@ -740,6 +770,45 @@ static void apply_growth(fish_t *f) {
     static const float stage_scale[4] = { 0.55f, 0.78f, 1.04f, 1.23f };  /* elder +14% (2026-08-30) */
     float fed = 1.0f + clampf(f->eaten / 60.0f, 0, 1) * 0.18f;
     f->size = f->base_size * stage_scale[f->stage] * fed;
+}
+
+/* a shed come off clean (SHED_CLEAN: a damp stay or a soak, tank.c): one more clean shed, the timer restarted for the
+ * stage it has now, and a growth shed's stage on (silent, as every stage change; the new skin shows it in P3) */
+static void shed_done(tank_t *t, int i) {
+    fish_t *f = &t->fish[i];
+    if (f->shed != SHED_CLEAN) return;
+    bool grew = f->shed_growth && stage_for(t, s_age[i]) > f->stage;
+    if (grew) f->stage = (stage_t)(f->stage + 1);
+    if (f->shed_clean < 65535) f->shed_clean++;
+    f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_damp = 0;
+    f->shed_s = tank_species(t)->shed_every_s[f->stage & 3];
+    mark_dirty();
+    apply_stage(t, i, false);                    /* the badges, and the next stage already due (a long absence): its shed at once */
+    if (grew) apply_growth(f);
+}
+/* TENDED TIME for the lizards here - awake every second (x progression_time_scale), asleep SLEEP_GROWTH_FRAC of it: the
+ * age, the shed's clock and the humid hide drying (tank_shed_clock), a shed come off clean finished, and a stage's age
+ * starting its growth shed the moment it is reached - the step is cut there, so the step's shed time is lived before
+ * it. A step of nothing still runs the stage rule. */
+static void live_tended(tank_t *t, double tended) {
+    const species_t *p = tank_species(t);
+    do {
+        double step = tended; int cut = -1;
+        for (int i = 0; i < t->n_fish; i++) {       /* the next stage's age inside this step: the step ends there */
+            const fish_t *f = &t->fish[i];
+            if (f->away || f->shed_growth || f->stage >= STAGE_ELDER) continue;
+            double to = p->stage_s[f->stage] - s_age[i];
+            if (to > 1e-6 && to < step) { step = to; cut = i; }
+        }
+        for (int i = 0; i < t->n_fish; i++) {
+            if (t->fish[i].away) continue;          /* it grows next door: its passport's age comes back with it */
+            s_age[i] += step;
+            if (i == cut && s_age[i] < p->stage_s[t->fish[i].stage]) s_age[i] = p->stage_s[t->fish[i].stage];   /* (exactly there) */
+        }
+        tank_shed_clock(t, (float)step);
+        for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away) { shed_done(t, i); apply_stage(t, i, false); }
+        tended -= step;
+    } while (tended > 1e-9);
 }
 
 static const uint32_t POP_TMS[N_FISH_MAX + 1] = { 0, 0, TMS_PAIR, TMS_TRIO, TMS_QUARTET, TMS_QUINTET, TMS_SEXTET };
@@ -1143,17 +1212,17 @@ static int care_gates(const tank_t *t, gate_t g[CARE_GATES_MAX]) {
          * fish's accumulated drift pressure (tank.h drift_acc): the same
          * ~26 lit minutes fed and calm, and impossible to soft-lock for a fry
          * born on a trait clamp (inheritance puts them there). */
-        GATE(FRY_REQ_GROW, age, (float)STAGE_JUV_AGE, t->fish[last].stage >= STAGE_JUV);
+        GATE(FRY_REQ_GROW, age, progression_stage_age(t, STAGE_JUV), t->fish[last].stage >= STAGE_JUV);
         GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(40), t->player_feedings >= MEALS(40));
         GATE(FRY_REQ_CHANGE, t->fish[last].drift_acc, DRIFT_CHANGE, t->fish[last].drift_acc >= DRIFT_CHANGE);
         break;
     case 4:
-        GATE(FRY_REQ_GROW, age, (float)STAGE_ADULT_AGE, t->fish[last].stage >= STAGE_ADULT);
+        GATE(FRY_REQ_GROW, age, progression_stage_age(t, STAGE_ADULT), t->fish[last].stage >= STAGE_ADULT);
         GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(80), t->player_feedings >= MEALS(80));
         GATE(FRY_REQ_TRUST, min_trust, 7.0f, min_trust >= 7.0f);
         break;
     default:
-        GATE(FRY_REQ_GROW, age, (float)STAGE_ADULT_AGE, t->fish[last].stage >= STAGE_ADULT);
+        GATE(FRY_REQ_GROW, age, progression_stage_age(t, STAGE_ADULT), t->fish[last].stage >= STAGE_ADULT);
         GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(140), t->player_feedings >= MEALS(140));
         GATE(FRY_REQ_TRUST, min_trust, 8.0f, min_trust >= 8.0f);
         break;
@@ -1245,7 +1314,7 @@ int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *stag
             const fish_t *f = &t->fish[t->n_fish - 1];
             snprintf(r->title, sizeof r->title, "GROW");
             snprintf(r->words, sizeof r->words, "THE YOUNGEST FISH MUST");
-            snprintf(r->words2, sizeof r->words2, need >= STAGE_ADULT_AGE ? "GROW INTO AN ADULT" : "GROW INTO A JUVENILE");
+            snprintf(r->words2, sizeof r->words2, need >= progression_stage_age(t, STAGE_ADULT) ? "GROW INTO AN ADULT" : "GROW INTO A JUVENILE");
             snprintf(r->progress, sizeof r->progress, "%s IS %s", f->name, STAGE_WORDS[f->stage & 3]);
             break; }
         case FRY_REQ_CHANGE: {
@@ -1341,6 +1410,17 @@ static int tail_slot(const save_t *sv, int i, uint32_t *used) {
     }
     return sv->fish_print[i] ? -1 : i;
 }
+/* ... and in the packs tail (P2a): by the prints that tail was written with (save_t.pack_print), its own slot first;
+   -1 = no lizard of this tail is this fish (one an older build bred, or a slot it never wrote: fresh ones) */
+static int pack_slot(const save_t *sv, int i, uint32_t *used) {
+    const fish_save_t *s = &sv->fish[i];
+    uint32_t p = fish_print(s->preset, s->bold0, s->sociable0);
+    for (int k = 0; k < N_FISH_MAX; k++) {
+        int j = (i + k) % N_FISH_MAX;
+        if (sv->pack_print[j] == p && !(*used & 1u << j)) { *used |= 1u << j; return j; }
+    }
+    return -1;
+}
 
 void progression_fresh(tank_t *t) {
     newer_drop();                    /* a new tank: no older save's tail goes with it */
@@ -1377,7 +1457,7 @@ void progression_reset(tank_t *t, uint32_t seed) {
 static void set_age(tank_t *t, int idx, float seconds, bool down) {
     if (idx < 0 || idx >= t->n_fish) return;
     s_age[idx] = seconds < 0 ? 0 : seconds;
-    apply_stage(&t->fish[idx], s_age[idx], down);
+    apply_stage(t, idx, down);
     apply_growth(&t->fish[idx]);
     mark_dirty();
 }
@@ -1442,8 +1522,10 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     *saved_unix = sv.saved_unix; s_loaded_unix = sv.saved_unix;
     s_loaded_release = sv.saved_release;
     t->n_fish = 0;
+    /* the packs first: every fish is made on its species (an older save, an id this build lacks, a pair that does not fit: the defaults) */
+    if (!sv.pack_v || !tank_set_packs(t, sv.habitat_id, sv.pack_id)) { t->habitat_id = HABITAT_DEFAULT; t->pack_id = SPECIES_DEFAULT; }
     bool upgraded = false;                    /* a fish from before 0.4: its genes / IDs made up at this load */
-    uint32_t tail_used = 0; bool any_away = false;
+    uint32_t tail_used = 0, pack_used = 0; bool any_away = false;
     for (int i = 0; i < sv.n_fish; i++) {
         const fish_save_t *s = &sv.fish[i];
         tank_make_fish(t, i, s->preset % tank_roster_count(), s->sociable, s->bold, (stage_t)(s->stage & 3));
@@ -1476,8 +1558,26 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         if (ts >= 0 && sv.fish_uid[ts]) { f->uid = sv.fish_uid[ts]; f->parent_uid[0] = sv.parent_uid[ts][0]; f->parent_uid[1] = sv.parent_uid[ts][1]; }
         else upgraded = true;
         if (ts >= 0 && (sv.link_away >> ts & 1)) { f->away = true; any_away = true; }   /* next door when it was saved */
+        int ps = sv.pack_v ? pack_slot(&sv, i, &pack_used) : -1;
+        if (ps >= 0) {                            /* the lizard (P2a): its heat and its shed, by the tail's own print; nonsense = tank_make_fish's fresh ones */
+            const species_t *sp = tank_species(t);
+            float bc = sv.body_c[ps], ss = sv.shed_s[ps], sd = sv.shed_damp[ps];
+            if (bc > -40 && bc < 80) { f->body_c = bc; f->heat = species_heat_of(sp, bc); }   /* (a NaN fails both) */
+            if (sv.shed_state[ps] < SHED_STATES && ss >= 0 && ss < 1e7f && sd >= 0 && sd <= SHED_SOAK_S) {
+                f->shed = sv.shed_state[ps]; f->shed_growth = sv.shed_growth[ps] != 0;
+                f->shed_s = ss; f->shed_damp = sd;
+            }
+            f->shed_clean = sv.shed_clean[ps];
+        }
     }
     if (any_away) t->link_restore_at = t->clock + LINK_BOOT_RESTORE_S;   /* home from bubbles once the host's lease is surely over */
+    {   const habitat_t *h = tank_habitat(t);     /* each humid hide's moisture (an older save: the habitat's start) */
+        for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
+            float m = sv.moist[k];
+            bool humid = k < h->n_hides && h->hides[k].kind == HIDE_HUMID;
+            t->moist[k] = !humid ? 0 : sv.pack_v && m >= 0 && m <= 1 ? m : h->moist_start;
+        }
+    }
     if (sv.tank_uid) t->uid = sv.tank_uid;
     tank_ensure_ids(t);                       /* a pre-0.4 save: fresh IDs, the parents' from their slots */
     s_setup_pending = sv.setup_pending != 0;
@@ -1624,17 +1724,22 @@ uint32_t progression_blob_unlocks(const void *blob, size_t len) {
     return u;
 }
 
+#define SLEPT_SLICE_S 300.0f              /* the night lived at tank_tick_sleep's own grain (it is the same in one span or many) */
 void progression_slept(tank_t *t, float seconds) {
     if (seconds <= 0) return;
-    tank_tick_sleep(t, seconds);
-    for (int i = 0; i < t->n_fish; i++)       /* the meal pay's wait runs through sleep */
-        t->fish[i].meal_pay_wait = fmaxf(0, t->fish[i].meal_pay_wait - seconds);
-    fry_age(t, seconds);                      /* the fry offer ages asleep too, in full */
-    for (int i = 0; i < t->n_fish; i++) {     /* and they grew, slowly, in the dark */
-        if (t->fish[i].away) continue;
-        s_age[i] += seconds * SLEEP_GROWTH_FRAC;
-        apply_stage(&t->fish[i], s_age[i], false); apply_growth(&t->fish[i]);
+    /* a slice at a time: the body's heat, the age and its growth sheds, the shed's clock and the humid hide drying,
+       all at SLEEP_GROWTH_FRAC - so a stage reached in the night has its shed in progress (or done) in the morning,
+       as it would have been lived (docs/shed.md "Growing up"), and a stuck shed's stress is where it would be */
+    for (double left = seconds; left > 0; left -= SLEPT_SLICE_S) {
+        float dt = left < SLEPT_SLICE_S ? (float)left : SLEPT_SLICE_S;
+        tank_tick_sleep(t, dt);
+        live_tended(t, dt * SLEEP_GROWTH_FRAC);
     }
+    for (int i = 0; i < t->n_fish; i++) {      /* the meal pay's wait runs through sleep; they grew, slowly, in the dark */
+        t->fish[i].meal_pay_wait = fmaxf(0, t->fish[i].meal_pay_wait - seconds);
+        if (!t->fish[i].away) apply_growth(&t->fish[i]);
+    }
+    fry_age(t, seconds);                      /* the fry offer ages asleep too, in full */
     /* the tank milestone (2026-09-15, was "first quiet night" - every fish
        resting under the old day/night cycle): one unbroken stretch of device
        sleep as long as a night. The cap keeps a week's absence a single span. */
@@ -1677,13 +1782,12 @@ void progression_tick(tank_t *t, float dt) {
     progression_cap_check(t, "progression_tick");   /* (any path, once a tick: a compare) */
     if (t->cap_over && fish_held(t) < t->cap_over) t->cap_over = (int8_t)(fish_held(t) > POP_CAP ? fish_held(t) : 0);   /* (an older save's extra fish, gone: the cap again) */
     float aged = dt * progression_time_scale;                    /* growth: every awake second, lit or not */
+    live_tended(t, aged);                                        /* the age, the growth sheds, the shed's clock */
     float tended = t->night ? 0 : aged;                          /* drift: pressure only while lit and lived-in */
     int n_dart = 0; bool changed_someone = false, reef_visit = false;
     for (int i = 0; i < t->n_fish; i++) {
         fish_t *f = &t->fish[i];
         if (f->away) continue;                               /* it grows next door: its passport's age comes back with it */
-        s_age[i] += aged;
-        apply_stage(f, s_age[i], false);
         apply_growth(f);
         /* trait drift, slow: calm + fed -> bolder; startled -> shyer; and it
          * settles back toward the temper it was born with (2026-10-29: calm +
@@ -1923,7 +2027,12 @@ bool progression_save(tank_t *t) {
         sv.fish_uid[i] = f->uid; sv.parent_uid[i][0] = f->parent_uid[0]; sv.parent_uid[i][1] = f->parent_uid[1];
         sv.fish_print[i] = fish_print(f->preset, f->bold0, f->sociable0);
         if (f->away) sv.link_away |= (uint8_t)(1u << i);
+        sv.shed_state[i] = f->shed; sv.shed_growth[i] = f->shed_growth; sv.shed_clean[i] = f->shed_clean;   /* the packs tail (P2a) */
+        sv.body_c[i] = f->body_c; sv.shed_s[i] = f->shed_s; sv.shed_damp[i] = f->shed_damp;
+        sv.pack_print[i] = fish_print(f->preset, f->bold0, f->sociable0);
     }
+    sv.pack_v = 1; sv.pack_id = t->pack_id; sv.habitat_id = t->habitat_id;
+    for (int k = 0; k < HABITAT_HIDES_MAX; k++) sv.moist[k] = t->moist[k];
     sv.tank_uid = t->uid;
     const void *out = &sv; size_t out_n = sizeof sv; uint8_t *joined = NULL;
     if (s_newer && (joined = malloc(SAVE_FIELDS_END + s_newer_n))) {   /* a newer build's tail, as it left it */

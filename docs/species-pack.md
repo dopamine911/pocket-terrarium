@@ -81,7 +81,12 @@ change faster). The model's `heat` is a piecewise-linear map of `T`:
 
 So digits 5–6 always mean "comfortable for this species", 0 "as cold as it can
 stand", 9 "dangerously hot". Effects in the reflex layer, also normalised:
-heat < 3 slows movement (× 0.5 at heat 0) and spoils strikes; heat ≥ 8 adds stress.
+heat < 3 slows movement (× 0.5 at heat 0, rising straight to × 1 at heat 3) and spoils strikes; heat ≥ 8 adds
+stress. As built in P2a (`tank.h` HEAT_*): the engine's stress settles by itself at ~0.18 a second, so the
+stress is a pull toward 4 + 2 × (heat − 8) at 0.15 a second (it settles near 3 at heat 8, 7 at heat 10).
+`T_env` is the habitat's (`common/habitat.h`: the enclosure is a pack of its own, apart from the species - the
+floor's profile, the basking spot, the hides, the humid hide's moisture; the desert's numbers are in
+`common/habitat/desert.c`), and a species lists the habitats it lives in (`species_t.habitats`, same `world`).
 
 ### Phase
 
@@ -110,12 +115,12 @@ about how a pastime feels, not about the species.
 | settle_s | 600 | ten minutes of winding down after lights-out |
 | t_cold / t_lo / t_hi / t_hot | 20 / 28 / 32 / 38 °C | keepers aim for a 28–32 warm side; under 20 they stop eating; over 38 is dangerous |
 | tau_s (hatch, juv, adult, elder) | 60, 90, 120, 150 | a hatchling warms in about a minute |
-| hunger_per_s | 0.0065 | fed → starving in ~25 min awake (fish: ~17) |
-| hunger_per_cricket | 2.0 | about four crickets from starving to full |
+| hunger_per_s | 0.0045 | fed → starving in ~33 min awake (fish: ~17) |
+| hunger_per_cricket | 3.0 | three crickets from starving to full; ~5–6 crickets an awake hour to hold steady |
 | energy_per_s / energy_rest_per_s | 0.006 / 0.05 | |
 | curiosity_per_s | 0.004 | |
-| sleep_*_per_h | hunger +0.6, energy +2.0, stress −2.0 | the fish's numbers, hunger slower |
-| stage_s | juv 1,200, adult 5,400, elder 28,800 | the fish's 20 min / 90 min / 8 h; reaching one starts a growth shed and the stage changes when it comes off clean (`docs/shed.md`) |
+| sleep_*_per_h | hunger rises 0.6, energy rises 2.0, stress falls 2.0 (all stored as positive rates) | the fish's numbers, hunger slower |
+| stage_s | juv 1,200, adult 5,400, elder 28,800 | 20 min / 90 min / 8 h, a POC's pace (the fish's are 2 h / 12 h / 96 h since pocket-tank 0.3.5, `progression.h`); reaching one starts a growth shed and the stage changes when it comes off clean (`docs/shed.md`) |
 | pop_cap | 3 | solitary; three already crowds a low-social lizard |
 | shed_every_s (hatch, juv, adult, elder) | 900, 1,800, 10,800, 21,600 | from the end of one shed to the next pre-shed; hatchlings shed often |
 | shed_soon_s / shed_window_s | 300 / 600 | |

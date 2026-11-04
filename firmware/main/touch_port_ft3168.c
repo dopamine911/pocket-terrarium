@@ -771,7 +771,8 @@ void touch_port_poll(tank_t *t) {
                                                                                      pick a tool up, or put the one in hand back */
                 int tl = render_tools_hit(s_px, s_py);
                 tank_set_tool(t, t->tool == tl ? TOOL_HAND : tl); s_sel = -1;
-                ESP_LOGI(TAG, "toolbox tap at %.0f,%.0f -> %s", s_px, s_py, t->tool == TOOL_SPONGE ? "SPONGE" : t->tool == TOOL_SCISSORS ? "SCISSORS" : "bare hands");
+                ESP_LOGI(TAG, "toolbox tap at %.0f,%.0f -> %s", s_px, s_py, t->tool == TOOL_SPONGE ? "SPONGE" : t->tool == TOOL_SCISSORS ? "SCISSORS"
+                                                                     : t->tool == TOOL_MISTER ? "MISTER" : "bare hands");   /* (its strokes and holds: tank.c, as the sponge's) */
                 goto released;
             }
             if (s_sel >= 0 && s_sel < t->n_fish && render_lock_hit(s_px, s_py)) {   /* the LOCK beside it (0.3.5): bare fingers

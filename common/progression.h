@@ -12,6 +12,9 @@
  *    with time - every awake second, light on or off (2026-09-14, Strato:
  *    "fish don't stop growing with the light off"), and a slept span at
  *    SLEEP_GROWTH_FRAC of its length; stage changes are silent surprises.
+ *    pocket-terrarium (P2a): a stage's age starts a growth shed and the stage
+ *    changes when it comes off clean; the shed and the humid hide's drying run
+ *    on the same tended clock (docs/shed.md, tank.h THE SHED).
  *  - Trait drift: bold and social creep with experience (hours of pressure).
  *  - Milestones: firsts are DETECTED from what the fish actually did (the
  *    model's own choices), per fish and per tank; render shows them.
@@ -383,19 +386,15 @@ const char *const *progression_sd_earn_lines(void);
 /* the population ceiling, POP_CAP (5), is tank.h's: one cap for the sim and every board */
 
 /* stage thresholds, in seconds of grown life: awake time in full (the light
- * makes no difference), sleep at SLEEP_GROWTH_FRAC. A desk companion is
- * glanced at over weeks, so the arc is hours/days, not minutes. */
-/* tended seconds to each stage (2026-08-30, halved from 1/6/48 h: a fresh
- * tank now starts as FRY, so the first growth spurt lands in the keeper's
- * first session and elder stays a multi-day achievement). 0.3.5 (2026-10-14,
- * Strato: "all of the age stages should last longer, they happen quite fast
- * now"): four times as long - 2 h / 12 h / 4 days. The fry gates read the
- * same numbers (a new fry waits on the youngest growing up), so the tank
- * fills more slowly too. A fish already past a stage under the old numbers
- * keeps it (apply_stage never takes a stage away). */
-#define STAGE_JUV_AGE    (2 * 3600)
-#define STAGE_ADULT_AGE  (12 * 3600)
-#define STAGE_ELDER_AGE  (96 * 3600)
+ * makes no difference), sleep at SLEEP_GROWTH_FRAC. pocket-terrarium (P2a):
+ * they are the species pack's (species_t.stage_s; the gecko's 20 min / 90 min
+ * / 8 h), and reaching one starts a GROWTH SHED - the stage changes when that
+ * shed comes off clean, never at the age itself (docs/shed.md). The fish's
+ * own were 2 h / 12 h / 4 days (0.3.5). progression_stage_age is the age a
+ * stage is due at (0 for a hatchling). A fish already past a stage keeps it
+ * (nothing but the director's set_age takes a stage away). The fry gates read
+ * the same numbers. */
+float progression_stage_age(const tank_t *t, stage_t st);
 /* trait drift: one full unit (0.11 of the 0..1 trait) per this many hours of
  * sustained pressure */
 #define DRIFT_HOURS      2.0f

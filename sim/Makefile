@@ -42,6 +42,8 @@ LDFLAGS := $(ARCH) $(SDL_LIBS) -lm
 APP_SRCS  := main.c selftest_link.c advisor_llm.c persist_port_sim.c net_port_sim.c ../common/tank.c ../common/update.c ../common/advanced.c ../common/shelf.c ../common/boot_show.c ../common/advisor.c ../common/render.c ../common/icons.c ../common/progression.c ../common/setup.c ../common/audio.c ../common/notice.c ../common/sounds.c ../common/battery.c ../common/passport.c ../common/link.c ../common/tank_link.c ../common/collection.c ../common/gift.c ../common/llm/q4_model.c ../common/llm/word_tok.c ../common/llm/advisor_core.c
 
 APP_SRCS  += selftest_coll.c   # the visitor collection's pages (0.4)
+APP_SRCS  += ../common/species.c ../common/species/gecko.c ../common/habitat.c ../common/habitat/desert.c   # the packs (pocket-terrarium P2a)
+APP_SRCS  += selftest_packs.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the L1 encoder against the Python fixture (R4)
 LVGL_SRCS := $(shell find lvgl/src -name '*.c')
 OBJS      := $(patsubst %.c,$(BUILD)/%.o,$(filter-out ../common/%,$(APP_SRCS)) $(LVGL_SRCS)) $(patsubst ../common/%.c,$(BUILD)/common/%.o,$(filter ../common/%,$(APP_SRCS)))
 
@@ -53,6 +55,7 @@ SELFTESTS := --selftest --selftest-hunger --selftest-shop --selftest-battery \
              --selftest-saves --selftest-update --selftest-genes --selftest-passport --selftest-link --selftest-doors --selftest-fry-cap --selftest-give --selftest-advanced --selftest-model --selftest-restore --selftest-grasscache --selftest-floor --selftest-stack --selftest-shelf --selftest-shelf-safe --selftest-shelf-away --selftest-temper --selftest-board --selftest-critter-nav --selftest-pumpkin-light --selftest-breather --selftest-hold --selftest-grassloop --selftest-grasspatch --selftest-touch-lock --selftest-shelf-rename --selftest-depth --selftest-footprint --selftest-bake-order --selftest-place --selftest-order-squares --square-boot --selftest-cave --selftest-roost --selftest-boot-show --selftest-front-keep --selftest-seahorse-stack --selftest-depth-pop --selftest-castle-keep --selftest-hold-emerge --selftest-seahorse-post --selftest-clock --selftest-under-card --selftest-fish-pair
 SELFTESTS += --selftest-coll-pages
 SELFTESTS += --selftest-double-tap   # a double tap never buys: the shop, MY TANKS, a card's SELL (0.4 rc)
+SELFTESTS += --selftest-packs --selftest-heat --selftest-shed --selftest-mister --selftest-l1-encode   # pocket-terrarium P2a
 # the dev repo does not track model/out (the public one does): NOMODEL=1 runs
 # the same checks without the LLM selftest, for a checkout with no model
 ifdef NOMODEL

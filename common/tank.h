@@ -20,6 +20,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <math.h>
+#include "species.h"
+#include "habitat.h"
 
 #ifdef TANK_ROUND               /* the round 466 px glass (Waveshare 1.75C, 2026-10-01): the frame is the square around a bowl */
 #define TANK_W 466
@@ -447,6 +449,18 @@ typedef struct {
     int8_t   door, door_edge;
     double   door_seen;         /* tank clock of its last visit next door (the neighbor ages like a zone) */
     double   door_refused;      /* tank clock until which a door refused it is glass for it */
+    /* the lizard (pocket-terrarium P2a: docs/species-pack.md "Heat", docs/shed.md). body_c (C) follows the
+     * surroundings (tank_env_c where it is) at its pack's tau for its stage, awake and asleep; heat is body_c
+     * on the pack's map, 0..10 (species_heat_of; the L1 line's `heat` is its drive9). The shed: SHED_*; shed_s
+     * - NORMAL: tended seconds to the next pre-shed, SOON / SHEDDING: tended seconds left in it, STUCK: tended
+     * seconds stuck so far; shed_damp - damp seconds in the humid hide this shedding (or this stuck spell)
+     * toward SHED_SOAK_S; shed_growth - a growth shed: the stage changes when it comes off clean; shed_clean -
+     * clean sheds in its life. All saved (progression.c, the terrarium tail) */
+    float    body_c, heat;
+    uint8_t  shed;
+    bool     shed_growth;
+    uint16_t shed_clean;
+    float    shed_s, shed_damp;
 } fish_t;
 enum { DOOR_NONE, DOOR_HEADING, DOOR_ASKED, DOOR_PASSING, DOOR_ENTERING };
 
@@ -951,6 +965,22 @@ typedef struct tank {
                                     to the cap (fish leave on their own: a sale, a gift); 0 = none. Nobody is taken away */
     double   link_restore_at;      /* > 0: at this clock, fish still away come home from bubbles (a boot found them away) */
     uint32_t uid_n;                /* IDs this tank has handed out (mixed into the next when no entropy hook is set) */
+    /* the packs (pocket-terrarium P2a): the species pack and the habitat it lives in (species.h, habitat.h) -
+     * SPECIES_DEFAULT in HABITAT_DEFAULT for a new tank, only a pair that fits (tank_set_packs); saved. moist:
+     * each of the habitat's hides' moisture 0..1 (by its index; only a humid hide's is read: docs/shed.md
+     * "Moisture"), the habitat's moist_start for a new tank; saved. light_s: seconds since the light last
+     * switched, either way (the species' phase, tank_phase_now); not saved */
+    uint8_t  pack_id, habitat_id;
+    float    moist[HABITAT_HIDES_MAX];
+    float    light_s;
+    /* the mister in hand (TOOL_MISTER, docs/shed.md "The mister"): the humid hides this stroke has misted (a
+     * bit each: once a stroke); the mister held still on the glass this frame (tank_touch_hold sets it, the
+     * tick consumes it like hold_active) at mist_x, mist_y; the animal under it (-1 none), held on for
+     * mist_s; this hold has acted (the soak or the spray, once a hold). None saved */
+    uint8_t  mist_stroke;
+    bool     mist_hold, mist_done;
+    float    mist_x, mist_y, mist_s;
+    int8_t   mist_fish;
 } tank_t;
 
 /* Advisor interface (Track 1 model, rule stub, or firmware LLM core).
@@ -1048,6 +1078,67 @@ void  tank_tick(tank_t *t, float dt, advisor_fn advise);
  * fish make no decisions, so the advisor contract is untouched. Safe to call
  * with hours at a time. */
 void  tank_tick_sleep(tank_t *t, float seconds);
+
+/* ---- the packs' world: places, heat, shed (pocket-terrarium P2a; world-neutral names, one core for both builds) ----
+ * The species (species.h) and its habitat (habitat.h) are the tank's two packs (tank_t.pack_id, habitat_id):
+ * tank_set_packs takes a pair only when it fits (habitat_fits) - false otherwise, the tank as it was.
+ * PLACES: the habitat's hides and its basking spot are logical points on the floor, laid out on every board
+ * from TANK_BOT and the glass at the floor: the floor's span is the glass at PLACE_Y inset PLACE_MARGIN, a
+ * place's fraction u runs along it from the warm (left, 0) end to the cool (right, 1) end, all at PLACE_Y
+ * (an animal's middle standing on the sand). An animal within HIDE_R of a hide's point is inside it. */
+#define PLACE_Y      (TANK_BOT - 24.0f)
+#define PLACE_MARGIN 30.0f
+#define HIDE_R       28.0f              /* inside a hide: this close to its point (a lizard's half length; the engine's, every pack's) */
+const species_t *tank_species(const tank_t *t);           /* the tank's species pack (SPECIES_DEFAULT's for an unknown id) */
+const habitat_t *tank_habitat(const tank_t *t);           /* ... and its habitat (HABITAT_DEFAULT's for an unknown id) */
+bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id);   /* a new pair: both known and it fits, else false */
+float tank_floor_x(float u);                              /* the x a floor fraction stands at on this board */
+void  tank_hide_point(const tank_t *t, int k, float *x, float *y);      /* the habitat's hide k */
+void  tank_bask_point(const tank_t *t, float *x, float *y);             /* its basking spot */
+int   tank_hide_at(const tank_t *t, float x, float y);    /* the hide (its index) the point is inside, -1 none */
+int   tank_nearest_hide(const tank_t *t, float x, float y, float *dist);   /* the nearest hide (its point's distance), -1 none */
+/* THE HEAT FIELD (degrees C at a point), all from the habitat: lit, the floor runs straight from floor_warm_c
+ * at its warm end to floor_cool_c at its cool end, and the lamp's pool round the basking spot rises to bask_c
+ * at its middle from the floor's own at bask_r_px; inside a hide, the hide's own (t_lit_c). Dark, the lamp is
+ * out, the floor is night_drop_c cooler and a hide is at its t_dark_c. (The desert: 31 -> 25 C, the spot 35 C,
+ * the warm / humid / cool hides 30 / 28 / 24 C; dark 26 -> 20 C and 30 / 25 / 21 C.) tank_env_c reads the
+ * light as it is, tank_env_c_lit as given (asleep: off). */
+float tank_env_c(const tank_t *t, float x, float y);
+float tank_env_c_lit(const tank_t *t, float x, float y, bool lit);
+/* its effects, normalised to the species (docs/species-pack.md "Heat"): heat under HEAT_SLOW slows it - its
+ * speed x HEAT_SLOW_MIN at heat 0, rising straight to x1 at HEAT_SLOW; heat HEAT_HOT and up pulls stress
+ * toward 4 + 2 x (heat - 8) at HEAT_HOT_PULL a second (the engine's stress settles ~0.18 a second, so a push
+ * has to be a pull to show: heat 8 settles it ~3, heat 10 ~7) */
+#define HEAT_SLOW      3.0f
+#define HEAT_SLOW_MIN  0.5f
+#define HEAT_HOT       8.0f
+#define HEAT_HOT_PULL  0.15f
+/* the species' activity phase now (PHASE_*, species_phase): the light and how long it has been as it is */
+int   tank_activity_phase(const tank_t *t);
+/* THE SHED (docs/shed.md): normal -> soon -> shedding -> clean or stuck; stuck -> clean; clean -> normal.
+ * The clock is the tended one - progression drives it: awake every second in full, asleep at
+ * SLEEP_GROWTH_FRAC - and so is the humid hides' drying (the habitat's moist_dry_per_s). CLEAN lasts a
+ * moment: progression finishes it (the timer restarted, a growth shed's stage changed). */
+enum { SHED_NORMAL, SHED_SOON, SHED_SHEDDING, SHED_STUCK, SHED_CLEAN, SHED_STATES };
+#define SHED_SOAK_S        60.0f        /* damp seconds in a humid hide that bring it off clean (or clear it stuck) */
+#define SHED_DAMP          0.35f        /* ... damp: the hide's moisture at least this */
+#define STUCK_STRESS_PER_S 0.005f       /* stuck: a stress floor that rises this a tended second ... */
+#define STUCK_STRESS_MAX   6.0f         /* ... to here, never past it by itself (uncomfortable, not panicked) */
+#define SHED_HUNGER_X      0.5f         /* soon and shedding: hunger rises at this share (awake: its appetite) */
+#define MIST_PASS          0.35f        /* one mister pass over a humid hide */
+#define MIST_HIDE_R        44.0f        /* a stroke or tap this close to a humid hide's point is over it (a fingertip's reach) */
+#define SOAK_HOLD_S        3.0f         /* the mister held on an animal this long (from the platform's first hold report) */
+#define MIST_PICK_R        40.0f        /* the animal under the mister: its middle this close to the finger at the hold's start ... */
+#define MIST_KEEP_R        64.0f        /* ... and kept while it stays this close */
+void  tank_lizard_fresh(const tank_t *t, fish_t *f);   /* a new arrival's body and shed: mid-band, a fresh shed clock (tank_make_fish; a visitor) */
+bool  tank_shed_growth(tank_t *t, int i);          /* a stage's age reached: a growth shed starts now (normal), or the one
+                                                      under way becomes it; false for a shed just come off (CLEAN) */
+void  tank_shed_clock(tank_t *t, float tended);    /* tended seconds of the shed for every animal here, and the humid hides drying */
+bool  tank_in_damp_hide(const tank_t *t, int i);   /* fish i is inside a humid hide and it is damp */
+int   tank_humid_hide(const tank_t *t);            /* the habitat's first humid hide, -1 none */
+void  tank_mist_pass(tank_t *t, int k);            /* a mister pass over hide k: + MIST_PASS, up to 1 */
+bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on animal i done: a stuck shed comes off (stress +1, trust
+                                                      +0.2 on a trusting one; true), anything else is sprayed (stress +1; false) */
 /* Tank light (2026-09-15). It is on while the device is being handled and
  * goes off LIGHT_IDLE_S after the last handling - the tank sitting still on
  * a desk is night: the fish rest, the palette dims, the panel dims. The
@@ -1145,7 +1236,8 @@ void  tank_touch_drag(tank_t *t, float x, float y);
  * SCISSORS: a stroke cuts and never wipes, and it need not begin on a frond -
  * any mostly-sideways stroke cuts every frond it crosses, at the height it
  * crosses it. A tap still selects, feeds, flips the light. */
-enum { TOOL_HAND = 0, TOOL_SPONGE, TOOL_SCISSORS };
+enum { TOOL_HAND = 0, TOOL_SPONGE, TOOL_SCISSORS, TOOL_MISTER, TOOL_N };   /* the MISTER (pocket-terrarium, docs/shed.md): strokes and taps over the
+                                                                            humid hide mist it (once a stroke), a 3 s hold on a lizard soaks it */
 #define TOOL_IDLE_S 120.0f
 void  tank_set_tool(tank_t *t, int tool);
 /* the LOCK beside the toolbox (0.3.5, 2026-10-14, Strato: "people only want

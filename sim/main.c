@@ -106,6 +106,11 @@ int selftest_fry_cap(void);   /* selftest_link.c: a cross-tank fry never takes a
 int selftest_give(void);   /* selftest_link.c: fish handed over for good (phase 6), crashes anywhere */
 int selftest_coll_pages(void);          /* selftest_coll.c: the visitor collection's pages (0.4) */
 int coll_shot(const char *prefix);      /* selftest_coll.c: --coll-shot, the paged look */
+int selftest_packs(void);               /* selftest_packs.c (pocket-terrarium P2a): every species and habitat pack, and the pairs a tank can hold */
+int selftest_heat(void);                /* ... the heat field and the body's heat */
+int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
+int selftest_mister(void);              /* ... the third tool */
+int selftest_l1_encode(void);           /* selftest_l1.c: the L1 encoder against the Python fixture (R4) */
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
 
@@ -951,7 +956,8 @@ static void away_stage(void) {
     tank_init(&tank, 777);
     progression_boot(&tank);
     while (tank.n_fish < 5) tank_add_fish(&tank, 0, 1);
-    for (int i = 0; i < tank.n_fish; i++) progression_set_age(&tank, i, i == 0 ? STAGE_ELDER_AGE + 1 : i < 3 ? STAGE_ADULT_AGE + 1 : 600.0f * (i + 1));
+    for (int i = 0; i < tank.n_fish; i++) progression_set_age(&tank, i, i == 0 ? progression_stage_age(&tank, STAGE_ELDER) + 1 : i < 3 ? progression_stage_age(&tank, STAGE_ADULT) + 1
+                                                                     : progression_stage_age(&tank, STAGE_JUV) * (i + 1) / 12.0f);   /* (the young ones the same share of the way to juvenile as at 600 s x (i + 1) of 2 h) */
     tank.sd_balance = 5000;
     static const int BUY[] = { 0, 1, 3, 4, 5, 6, 7, 10 };     /* plant, snail, coral, cluster, shrimp, urchin, seahorse, crab */
     for (unsigned k = 0; k < sizeof BUY / sizeof BUY[0]; k++)
@@ -2233,9 +2239,9 @@ static int selftest_genes(void) {
  * tail reading as the defaults - and again after a save and a reload. */
 #ifndef _MSC_VER
 #include <dirent.h>
-static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960 };
-#define SAVE_NOW 1960                    /* today's sizeof(save_t): the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
-#define SAVE_FIELDS 1956                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
+static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096 };
+#define SAVE_NOW 2096                    /* today's sizeof(save_t): the packs, pocket-terrarium P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
+#define SAVE_FIELDS 2096                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
 #define SAVE_032 1688                    /* 0.3.2's save: an older build's head */
 static uint32_t sv_u32(const uint8_t *e, size_t off) { uint32_t v; memcpy(&v, e + off, 4); return v; }
 static float    sv_f32(const uint8_t *e, size_t off) { float v; memcpy(&v, e + off, 4); return v; }
@@ -2346,6 +2352,30 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
         uint32_t w = sv_u32(e, 1936);
         if (w ? fabsf(tank.cr_find_cool - (float)(w - 1)) > 1 : (tank.cr_find_cool < CR_FIND_FIRST_LO_S || tank.cr_find_cool > CR_FIND_FIRST_HI_S))
             SV_FAIL("the crab's next find in %.0f s (the file's %u)", tank.cr_find_cool, (unsigned)w);
+    }
+    {   /* the packs (pocket-terrarium P2a, 1956): pack_v 0 (every fixture: an older save) = the default species in the default habitat,
+           each lizard comfortable with a fresh shed clock for its stage, the humid hides at the habitat's start; 1 = as written (by slot:
+           our own saves keep their prints in order) - a pair that does not fit loads as the defaults */
+        const bool pv = e[1956] != 0;
+        uint8_t pid = pv ? e[1957] : SPECIES_DEFAULT, hid = pv ? e[1958] : HABITAT_DEFAULT;
+        if (!habitat_fits(habitat_get(hid), species_get(pid))) { pid = SPECIES_DEFAULT; hid = HABITAT_DEFAULT; }
+        if (tank.pack_id != pid || tank.habitat_id != hid) SV_FAIL("species %d in habitat %d, want %d in %d", tank.pack_id, tank.habitat_id, pid, hid);
+        const species_t *sp = tank_species(&tank); const habitat_t *hb = tank_habitat(&tank);
+        for (int i = 0; i < n; i++) {
+            const fish_t *f = &tank.fish[i];
+            uint8_t st = pv ? e[1960 + i] : SHED_NORMAL; bool gr = pv && e[1966 + i];
+            uint16_t cl = pv ? (uint16_t)(e[1972 + 2 * i] | e[1973 + 2 * i] << 8) : 0;
+            float bc = pv ? sv_f32(e, 1984 + 4 * i) : (sp->t_lo + sp->t_hi) * 0.5f, ss = pv ? sv_f32(e, 2008 + 4 * i) : sp->shed_every_s[f->stage & 3];
+            float sd = pv ? sv_f32(e, 2032 + 4 * i) : 0;
+            if (f->shed != st || f->shed_growth != gr || f->shed_clean != cl || f->body_c != bc || f->shed_s != ss || f->shed_damp != sd || f->heat != species_heat_of(sp, bc))
+                SV_FAIL("fish %d: shed %d growth %d clean %d, %.2f C (heat %.2f), %.1f s / %.1f damp - want %d %d %d, %.2f C, %.1f / %.1f", i, f->shed, f->shed_growth, f->shed_clean,
+                        f->body_c, f->heat, f->shed_s, f->shed_damp, st, gr, cl, bc, ss, sd);
+        }
+        for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
+            bool humid = k < hb->n_hides && hb->hides[k].kind == HIDE_HUMID;
+            float want = !humid ? 0 : pv ? sv_f32(e, 2056 + 4 * k) : hb->moist_start;
+            if (tank.moist[k] != want) SV_FAIL("hide %d's moisture %.3f, want %.3f", k, tank.moist[k], want);
+        }
     }
     return 0;
     #undef SV_FAIL
@@ -2532,6 +2562,53 @@ static int selftest_saves(void) {
         progression_save(&tank); tank_init(&tank, 23); progression_wake(&tank, 0);
         if (tank.fish[i].away) { printf("FAIL: home again, it was saved as away\n"); return 1; }
         printf("selftest-saves: a fish next door at the save: away after the reboot, home from bubbles 10 s in, saved home\n");
+    }
+    /* the packs tail (pocket-terrarium P2a): the pair, each lizard's heat and shed and the hides' moisture come back as saved -
+       by print, like the genes (a fish sold under an older build moved the rest down: theirs follow them); a pair that does not
+       fit, or an id this build lacks, loads as the default pair */
+    {
+        remove(getenv("POCKET_TANK_SAVE"));
+        tank_init(&tank, 24); progression_wake(&tank, 0);
+        while (tank.n_fish < 3) tank_add_fish(&tank, 0, 1);
+        if (!tank_set_packs(&tank, HABITAT_DESERT, SPECIES_TEST_WARM)) { printf("FAIL: the desert refused the test pack\n"); return 1; }
+        const int humid = tank_humid_hide(&tank);
+        static const uint8_t ST[3] = { SHED_STUCK, SHED_SOON, SHED_SHEDDING };
+        for (int i = 0; i < 3; i++) {
+            fish_t *f = &tank.fish[i];
+            f->shed = ST[i]; f->shed_s = 100.5f + 11 * i; f->shed_damp = 2.25f * i; f->shed_growth = i != 1; f->shed_clean = (uint16_t)(7 + i);
+            f->body_c = 33.75f - 4 * i; f->heat = species_heat_of(tank_species(&tank), f->body_c);
+        }
+        tank.moist[humid] = 0.4375f;
+        uint32_t uid1 = tank.fish[2].uid;
+        progression_save(&tank);
+        static uint8_t pk[4096]; long l = saves_read(pk, sizeof pk);
+        if (l != SAVE_NOW || pk[1956] != 1 || pk[1957] != SPECIES_TEST_WARM || pk[1958] != HABITAT_DESERT) { printf("FAIL: the packs tail was not written (%ld bytes, %d %d %d)\n", l, pk[1956], pk[1957], pk[1958]); return 1; }
+        tank_init(&tank, 25); progression_wake(&tank, 0);
+        if (tank.pack_id != SPECIES_TEST_WARM || tank.habitat_id != HABITAT_DESERT || tank.n_fish != 3 || fabsf(tank.moist[humid] - 0.4375f) > 0) {
+            printf("FAIL: the packs tail came back as species %d in habitat %d, %d fish, the humid hide at %.4f\n", tank.pack_id, tank.habitat_id, tank.n_fish, tank.moist[humid]); return 1; }
+        for (int i = 0; i < 3; i++) {
+            const fish_t *f = &tank.fish[i];
+            if (f->shed != ST[i] || f->shed_s != 100.5f + 11 * i || f->shed_damp != 2.25f * i || f->shed_growth != (i != 1) || f->shed_clean != 7 + i || f->body_c != 33.75f - 4 * i
+                || f->heat != species_heat_of(tank_species(&tank), f->body_c)) {
+                printf("FAIL: lizard %d came back shed %d %.1f s %.2f damp growth %d clean %d, %.2f C\n", i, f->shed, f->shed_s, f->shed_damp, f->shed_growth, f->shed_clean, f->body_c); return 1; }
+        }
+        /* an older build sold lizard 1 under the kept tail: the rest move down a slot, their tails find them by print */
+        tank_remove_fish(&tank, 1); progression_save(&tank);
+        static uint8_t head[4096]; if (saves_read(head, sizeof head) != SAVE_NOW) { printf("FAIL: the sold tank's save\n"); return 1; }
+        memcpy(head + 1956, pk + 1956, SAVE_NOW - 1956);                /* its own head over the tail as it was before the sale */
+        FILE *wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(head, 1, SAVE_NOW, wf); fclose(wf);
+        tank_init(&tank, 26); progression_wake(&tank, 0);
+        if (tank.n_fish != 2 || tank.fish[1].uid != uid1 || tank.fish[1].shed != ST[2] || tank.fish[1].shed_clean != 9 || tank.fish[1].body_c != 33.75f - 8) {
+            printf("FAIL: after a sale under an older head, slot 1 is %08x (want %08x) shed %d clean %d %.2f C - its tail is not its own\n",
+                   (unsigned)tank.fish[1].uid, (unsigned)uid1, tank.fish[1].shed, tank.fish[1].shed_clean, tank.fish[1].body_c); return 1; }
+        /* a pair that does not fit, and one this build has no pack for */
+        for (int bad = 0; bad < 2; bad++) {
+            pk[1957] = bad ? 99 : SPECIES_GECKO; pk[1958] = bad ? HABITAT_DESERT : 77;
+            wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(pk, 1, SAVE_NOW, wf); fclose(wf);
+            tank_init(&tank, 27); progression_wake(&tank, 0);
+            if (tank.pack_id != SPECIES_DEFAULT || tank.habitat_id != HABITAT_DEFAULT) { printf("FAIL: a save of species %d in habitat %d loaded as %d in %d, not the defaults\n", pk[1957], pk[1958], tank.pack_id, tank.habitat_id); return 1; }
+        }
+        printf("selftest-saves: the packs tail: the test pack in the desert, three lizards' heat and shed and the humid hide's moisture come back as saved, by print after a sale; an unknown pair loads as the defaults\n");
     }
     remove(getenv("POCKET_TANK_SAVE"));
     for (int k = 0; k < nf; k++) free(names[k]);
@@ -3163,7 +3240,8 @@ static int selftest_tend(void) {
         for (int i = 0; i < (int)(TOOL_IDLE_S * 60) + 120; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
         if (tank.tool != TOOL_HAND) { printf("FAIL: the scissors stayed in hand after %.0f s untouched\n", TOOL_IDLE_S); return 1; }
         const int by = RENDER_TOOLS_Y + RENDER_TOOLS_H / 2;
-        if (render_tools_hit(RENDER_TOOLS_X + 20, by) != TOOL_SPONGE || render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W - 20, by) != TOOL_SCISSORS ||
+        if (render_tools_hit(RENDER_TOOLS_X + 20, by) != TOOL_SPONGE || render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W / 2, by) != TOOL_SCISSORS ||   /* (in thirds since the mister, P2a) */
+            render_tools_hit(RENDER_TOOLS_X + RENDER_TOOLS_W - 20, by) != TOOL_MISTER ||
             render_tools_hit(RENDER_TOOLS_X + 20, RENDER_CARD_Y + RENDER_CARD_H - 4) >= 0 || !RENDER_CARD_HIT(RENDER_TOOLS_X + 20, RENDER_TOOLS_Y - 2)) {
             printf("FAIL: the toolbox's tap test\n"); return 1; }
         for (int i = 0; i < ALGAE_CELLS; i++) tank.algae[i] = 0;
@@ -3963,7 +4041,7 @@ static uint16_t *hero_stage(void) {               /* the hero tank staged and dr
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;                          /* well fed: the size bonus */
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1 : STAGE_ADULT_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER : STAGE_ADULT) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     /* the card's fish is an old friend: trusting, and its traits seen (render.c
@@ -4268,7 +4346,8 @@ static int selftest_keeper(void) {
         progression_boot(&tank); progression_setup_done(&tank);
         while (tank.n_fish < nf) { progression_force_arrival(&tank); progression_newborn_done(&tank); }
         if (tank.n_fish != nf) KEEP_FAIL("%d fish staged, want %d", tank.n_fish, nf);
-        static const float AGE[N_FISH_MAX] = { STAGE_ELDER_AGE + 60, STAGE_ADULT_AGE + 60, STAGE_JUV_AGE + 60, STAGE_ELDER_AGE + 90, STAGE_ADULT_AGE + 30, 60 };
+        const float AGE[N_FISH_MAX] = { progression_stage_age(&tank, STAGE_ELDER) + 60, progression_stage_age(&tank, STAGE_ADULT) + 60, progression_stage_age(&tank, STAGE_JUV) + 60,
+                                        progression_stage_age(&tank, STAGE_ELDER) + 90, progression_stage_age(&tank, STAGE_ADULT) + 30, 60 };
         for (int i = 0; i < nf; i++) {                    /* every form; the youngest a fry (the GROW gate) */
             progression_set_age(&tank, i, i == nf - 1 ? 60 : AGE[i]);
             fish_t *f = &tank.fish[i];
@@ -4298,7 +4377,7 @@ static int selftest_keeper(void) {
             case 4: tank.player_feedings += 3; break;
             case 5: tank.tank_ms_bits |= TMS_FIRST_FEEDING | TMS_FIRST_TRIM; break;
             case 6: tank.tank_ms_seen |= TMS_FIRST_FEEDING; break;
-            case 7: progression_set_age(&tank, nf - 1, STAGE_JUV_AGE + 5); progression_tick(&tank, 0.04f); break;   /* the fry grows: GROW met */
+            case 7: progression_set_age(&tank, nf - 1, progression_stage_age(&tank, STAGE_JUV) + 5); progression_tick(&tank, 0.04f); break;   /* the fry grows: GROW met */
             }
             if (kp_run(&tank, 6, KP_PAGE, sc)) return 1;
         }
@@ -4534,7 +4613,7 @@ static int selftest_depth(void) {
     if (getenv("PT_ROOT_CUT")) render_debug_root_cut(true);   /* (the control: the 0.3.9.4 cut at the roots - the critters' BEHIND rows fail) */
     tank_init(&tank, 2024); tank_new_population(&tank);
     tank_make_fish(&tank, 0, 0, 0.6f, 0.6f, STAGE_ADULT); tank.n_fish = 1;
-    tank.fish[0].eaten = 60; progression_set_age(&tank, 0, STAGE_ADULT_AGE + 1);
+    tank.fish[0].eaten = 60; progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_ADULT) + 1);
     tank_veg_set(&tank, 0, 0.7f); tank_veg_set(&tank, 1, 0.7f); tank_veg_set(&tank, 2, 0.7f);
     memset(tank.algae, 0, sizeof tank.algae); tank.night = false;
     float x0, x1, top; int nf; tank_veg_bed(&tank, 0, &x0, &x1, &top, &nf);
@@ -6175,8 +6254,8 @@ static int clip(const char *prefix, int seconds) {
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1
-                                    : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT_AGE + 1 : STAGE_JUV_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER
+                                                                 : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT : STAGE_JUV) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_CLUSTER | SD_ITEM_URCHIN | SD_ITEM_SHRIMP | SD_ITEM_SEAHORSE;
@@ -6235,7 +6314,7 @@ static int fluid(const char *prefix) {
             tank_make_fish(&tank, 0, 1, 0.6f, 0.6f, STAGE_ELDER);
             tank.n_fish = 1;
             fish_t *f = &tank.fish[0];
-            progression_set_age(&tank, 0, STAGE_ELDER_AGE + 1);
+            progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_ELDER) + 1);
             f->shape = (uint8_t)FORM[form].sh; f->fins = (uint8_t)FORM[form].fi; f->pattern = PATTERN_BARS;
             f->hunger = 2; f->stress = 0; f->energy = 8; f->size = 1.3f;
             f->x = TANK_W * 0.36f; f->y = TANK_H * 0.48f; f->heading = 0; f->speed = 28; f->goal.urgency = 3;
@@ -6324,8 +6403,8 @@ static void forms_cast(int count) {
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1
-                                    : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT_AGE + 1 : STAGE_JUV_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER
+                                                                 : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT : STAGE_JUV) + 1);
     }
 }
 
@@ -6615,7 +6694,7 @@ static int pumpkin_fish_shot(const char *prefix) {
     tank_init(&tank, 2024);
     tank_new_population(&tank);
     tank_make_fish(&tank, 0, 3, 0.6f, 0.6f, STAGE_ADULT); tank.n_fish = 1;
-    progression_set_age(&tank, 0, STAGE_ADULT_AGE + 1);
+    progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_ADULT) + 1);
     tank.fish[0].eaten = 60; tank.fish[0].hunger = 2; tank.fish[0].stress = 1; tank.fish[0].energy = 8;
     tank.sd_unlocks |= SD_ITEM_PUMPKIN;
     tank_pumpkin_place(&tank);
@@ -6679,7 +6758,7 @@ static int pumpkin_fish_hunt(const char *prefix) {
     tank_new_population(&tank);
     for (int i = 0; i < 4; i++) tank_make_fish(&tank, i, i, 0.6f, 0.6f, STAGE_ADULT);
     tank.n_fish = 4;
-    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, STAGE_ADULT_AGE + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
+    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
     tank.sd_unlocks |= SD_ITEM_PUMPKIN | SD_ITEM_CORAL | SD_ITEM_CASTLE | SD_ITEM_CLUSTER | SD_ITEM_VOLCANO;
     tank_castle_place(&tank); tank_coral_place(&tank); tank_cluster_place(&tank); tank_volcano_place(&tank); tank_pumpkin_place(&tank);
     float b0x0, b0x1; tank_veg_bed(&tank, 0, &b0x0, &b0x1, NULL, NULL);
@@ -6771,7 +6850,7 @@ static int dp_run(const char *prefix, float secs, int seed, int vz, bool verbose
     tank_new_population(&tank);
     for (int i = 0; i < 4; i++) tank_make_fish(&tank, i, i, 0.3f + 0.2f * i, 0.3f + 0.15f * i, STAGE_ADULT);
     tank.n_fish = 4;
-    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, STAGE_ADULT_AGE + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
+    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
     tank.sd_unlocks |= SD_ITEM_CORAL | SD_ITEM_CASTLE | SD_ITEM_CLUSTER | SD_ITEM_VOLCANO | SD_ITEM_SHRIMP;
     tank_castle_place(&tank); tank_coral_place(&tank); tank_cluster_place(&tank); tank_volcano_place(&tank);
     tank_shrimp_place(&tank, 8);
@@ -6902,7 +6981,7 @@ static int selftest_fish_pair(const char *prefix) {
     render_debug_fish_slot_order(old); render_debug_dep_home_only(old);
     tank_init(&tank, 2024); tank_new_population(&tank);
     tank_make_fish(&tank, 0, 0, 0.6f, 0.6f, STAGE_ADULT); tank_make_fish(&tank, 1, 1, 0.6f, 0.6f, STAGE_ADULT); tank.n_fish = 2;
-    for (int i = 0; i < 2; i++) { tank.fish[i].eaten = 60; progression_set_age(&tank, i, STAGE_ADULT_AGE + 1); }
+    for (int i = 0; i < 2; i++) { tank.fish[i].eaten = 60; progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1); }
     tank_veg_set(&tank, 0, 0.7f); tank_veg_set(&tank, 1, 0.7f); tank_veg_set(&tank, 2, 0.7f);
     memset(tank.algae, 0, sizeof tank.algae); tank.night = false;
     float x0, x1, top; int nf; tank_veg_bed(&tank, 0, &x0, &x1, &top, &nf);
@@ -7006,7 +7085,7 @@ static int castle_shot(const char *prefix) {
     tank_new_population(&tank);
     for (int i = 0; i < 4; i++) tank_make_fish(&tank, i, i, 0.5f, 0.5f, STAGE_ADULT);
     tank.n_fish = 4;
-    for (int i = 0; i < 4; i++) progression_set_age(&tank, i, STAGE_ADULT_AGE + 1);
+    for (int i = 0; i < 4; i++) progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1);
     tank.sd_unlocks |= SD_ITEM_CASTLE;
     tank_castle_place(&tank);
     const int z = getenv("CS_Z") ? atoi(getenv("CS_Z")) : DECOR_Z_FRONT;
@@ -7061,7 +7140,7 @@ static int selftest_castle_keep(const char *prefix) {
     tank_new_population(&tank);
     for (int i = 0; i < 4; i++) tank_make_fish(&tank, i, i, 0.5f, 0.5f, STAGE_ADULT);
     tank.n_fish = 4;
-    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, STAGE_ADULT_AGE + 1); tank.fish[i].x = -400; tank.fish[i].speed = tank.fish[i].target_speed = 0; }
+    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1); tank.fish[i].x = -400; tank.fish[i].speed = tank.fish[i].target_speed = 0; }
     tank.sd_unlocks |= SD_ITEM_CASTLE;
     tank_castle_place(&tank);
     tank_decor_set(&tank, 2, tank_decor_x(&tank, 2), DECOR_Z_FRONT);
@@ -7152,7 +7231,7 @@ static int castle_keep_hunt(const char *prefix) {
     tank_new_population(&tank);
     for (int i = 0; i < 4; i++) tank_make_fish(&tank, i, i, 0.3f + 0.2f * i, 0.3f + 0.15f * i, STAGE_ADULT);
     tank.n_fish = 4;
-    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, STAGE_ADULT_AGE + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
+    for (int i = 0; i < 4; i++) { progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1); tank.fish[i].eaten = 60; tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 0.5f + i; }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_SHRIMP | SD_ITEM_PLANT | (getenv("CK_SEAHORSE") ? SD_ITEM_SEAHORSE : 0);
     tank_castle_place(&tank); tank_coral_place(&tank); tank_shrimp_place(&tank, 8);
     if (getenv("CK_SEAHORSE")) tank_seahorse_place(&tank);
@@ -7267,7 +7346,7 @@ static int selftest_hold_emerge(const char *prefix) {
         const uint8_t hg = VZ[v] == DECOR_Z_FRONT ? FISH_DEPTH_FRONT : FISH_DEPTH_BEHIND;
         for (int i = 0; i < 4; i++) {
             fish_t *f = &tank.fish[i];
-            progression_set_age(&tank, i, STAGE_ADULT_AGE + 1);
+            progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 1);
             f->eaten = 60; f->hunger = 2; f->stress = 1; f->energy = 6; f->trust = 8;
             f->x = vx - 30 + 20 * i; f->y = vy + (i & 1 ? 20 : -15); f->speed = f->target_speed = 0;
             f->gdepth = f->gdepth_want = f->gdepth_rest = hg; f->pdepth = f->pdepth_want = FISH_DEPTH_BEHIND;
@@ -7417,7 +7496,7 @@ static int pumpkin_shot(const char *prefix) {
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1 : STAGE_ADULT_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER : STAGE_ADULT) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_URCHIN | SD_ITEM_SHRIMP | SD_ITEM_SEAHORSE | SD_ITEM_PUMPKIN;
@@ -7559,7 +7638,7 @@ static int volcano_shot(const char *prefix) {
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1 : STAGE_ADULT_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER : STAGE_ADULT) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_URCHIN | SD_ITEM_SHRIMP | SD_ITEM_SEAHORSE | SD_ITEM_VOLCANO;
@@ -8564,8 +8643,8 @@ static int selftest_floor(const char *prefix) {
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;                        /* well fed: the size bonus, the biggest a fish gets */
         if (CAST[i].stage != STAGE_FRY)
-            progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1
-                                        : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT_AGE + 1 : STAGE_JUV_AGE + 1);
+            progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER
+                                                                     : CAST[i].stage == STAGE_ADULT ? STAGE_ADULT : STAGE_JUV) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL;
@@ -9739,10 +9818,10 @@ static int selftest_shop(void) {
 #undef SHOP_ATE
     }
     /* stages: paid once each, in order, and never again after a save round-trip */
-    progression_set_age(&tank, 0, STAGE_JUV_AGE + 1);   SHOP_TICK(2); want += SD_STAGE_JUV;   SHOP_WANT("juvenile");
-    progression_set_age(&tank, 0, STAGE_ADULT_AGE + 1); SHOP_TICK(2); want += SD_STAGE_ADULT; SHOP_WANT("adult");
-    progression_set_age(&tank, 0, STAGE_ELDER_AGE + 1); SHOP_TICK(2); want += SD_STAGE_ELDER; SHOP_WANT("elder");
-    progression_set_age(&tank, 1, STAGE_ADULT_AGE + 1); SHOP_TICK(2); want += SD_STAGE_JUV + SD_STAGE_ADULT; SHOP_WANT("fish 1 adult");
+    progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_JUV) + 1);   SHOP_TICK(2); want += SD_STAGE_JUV;   SHOP_WANT("juvenile");
+    progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_ADULT) + 1); SHOP_TICK(2); want += SD_STAGE_ADULT; SHOP_WANT("adult");
+    progression_set_age(&tank, 0, progression_stage_age(&tank, STAGE_ELDER) + 1); SHOP_TICK(2); want += SD_STAGE_ELDER; SHOP_WANT("elder");
+    progression_set_age(&tank, 1, progression_stage_age(&tank, STAGE_ADULT) + 1); SHOP_TICK(2); want += SD_STAGE_JUV + SD_STAGE_ADULT; SHOP_WANT("fish 1 adult");
     progression_save(&tank);
     tank_init(&tank, 4242); progression_boot(&tank); tank.trickle_off = true;
     SHOP_TICK(2); SHOP_WANT("stages after a save round-trip");
@@ -12210,7 +12289,8 @@ static int selftest_card(const char *prefix) {
     }
     if (tank.n_fish != 5) CARD_FAIL("three arrivals should make 5 fish (%d)", tank.n_fish);
     static const char *const NM[5] = { "ada", "bo", "cy", "dee", "eli" };
-    static const float AGE[5] = { STAGE_ELDER_AGE + 60, STAGE_ADULT_AGE + 60, STAGE_JUV_AGE + 60, STAGE_ADULT_AGE + 120, 60 };
+    const float AGE[5] = { progression_stage_age(&tank, STAGE_ELDER) + 60, progression_stage_age(&tank, STAGE_ADULT) + 60, progression_stage_age(&tank, STAGE_JUV) + 60,
+                           progression_stage_age(&tank, STAGE_ADULT) + 120, 60 };
     static const int WORTH[5] = { SD_FISH_ELDER, SD_FISH_ADULT, SD_FISH_JUV, SD_FISH_ADULT, SD_FISH_FRY };
     for (int i = 0; i < 5; i++) {
         tank_set_name(&tank, i, NM[i]); progression_set_age(&tank, i, AGE[i]);
@@ -12310,7 +12390,7 @@ static int selftest_card(const char *prefix) {
     printf("selftest-card: SELL: armed by one tap, a doubled tap refused, the second sold bo for %d; slots, clocks, ledger and parents moved down\n", SD_FISH_ADULT);
 
     /* the slot is earned again: every other gate met, the fry still waits for SELL_FRY_MEALS meals */
-    progression_set_age(&tank, 3, STAGE_ADULT_AGE + 60);
+    progression_set_age(&tank, 3, progression_stage_age(&tank, STAGE_ADULT) + 60);
     for (int i = 0; i < tank.n_fish; i++) { tank.fish[i].trust = 9; tank.fish[i].hunger = 2; }
     memset(tank.algae, 0, sizeof tank.algae);
     {
@@ -12411,7 +12491,7 @@ static int selftest_clock(void) {
         tank_init(&tank, 91 + d); progression_boot(&tank); progression_setup_done(&tank);
         progression_force_arrival(&tank); progression_newborn_done(&tank);
         progression_force_arrival(&tank); progression_newborn_done(&tank);
-        for (int i = 0; i < tank.n_fish; i++) { progression_set_age(&tank, i, STAGE_ADULT_AGE + 60); tank.fish[i].trust = 9; tank.fish[i].hunger = 2; }
+        for (int i = 0; i < tank.n_fish; i++) { progression_set_age(&tank, i, progression_stage_age(&tank, STAGE_ADULT) + 60); tank.fish[i].trust = 9; tank.fish[i].hunger = 2; }
         tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_SNAIL; tank_castle_place(&tank); tank.sd_balance = 10;
         memset(tank.algae, 0, sizeof tank.algae);
         ck_live(2);
@@ -12955,7 +13035,7 @@ static int crab_shot(const char *prefix) {
     tank.n_fish = n;
     for (int i = 0; i < n; i++) {
         tank.fish[i].eaten = 60;
-        progression_set_age(&tank, i, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER_AGE + 1 : STAGE_ADULT_AGE + 1);
+        progression_set_age(&tank, i, progression_stage_age(&tank, CAST[i].stage == STAGE_ELDER ? STAGE_ELDER : STAGE_ADULT) + 1);
         tank.fish[i].hunger = 2; tank.fish[i].stress = 1; tank.fish[i].energy = 8;
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_URCHIN | SD_ITEM_VOLCANO | SD_ITEM_CRAB;
@@ -13084,6 +13164,11 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--page-shot") == 0 && a + 1 < argc) return page_shot(argv[a + 1]);
         if (strcmp(argv[a], "--coll-shot") == 0 && a + 1 < argc) return coll_shot(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-coll-pages") == 0) return selftest_coll_pages();
+        if (strcmp(argv[a], "--selftest-packs") == 0) return selftest_packs();
+        if (strcmp(argv[a], "--selftest-heat") == 0) return selftest_heat();
+        if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
+        if (strcmp(argv[a], "--selftest-mister") == 0) return selftest_mister();
+        if (strcmp(argv[a], "--selftest-l1-encode") == 0) return selftest_l1_encode();
         if (strcmp(argv[a], "--genes") == 0 && a + 1 < argc) return genes_shot(argv[a + 1]);
         if (strcmp(argv[a], "--plant-order") == 0) return plant_order();
         if (strcmp(argv[a], "--place-shot") == 0 && a + 1 < argc) return place_shot(argv[a + 1]);
@@ -13480,7 +13565,8 @@ int main(int argc, char **argv) {
                     /* the toolbox under the card (2026-10-01): pick a tool up (or put the one in hand back), the card goes */
                     int tl = render_tools_hit((float)press_x, (float)press_y);
                     tank_set_tool(&tank, tank.tool == tl ? TOOL_HAND : tl); selected_fish = -1;
-                    printf("toolbox: %s\n", tank.tool == TOOL_SPONGE ? "the SPONGE - strokes only wipe" : tank.tool == TOOL_SCISSORS ? "the SCISSORS - strokes only cut" : "back to bare hands");
+                    printf("toolbox: %s\n", tank.tool == TOOL_SPONGE ? "the SPONGE - strokes only wipe" : tank.tool == TOOL_SCISSORS ? "the SCISSORS - strokes only cut"
+                                          : tank.tool == TOOL_MISTER ? "the MISTER - a stroke or tap over the humid hide mists it, a 3 s hold on a lizard soaks it" : "back to bare hands");
                 }
                 else if (selected_fish >= 0 && selected_fish < tank.n_fish && render_lock_hit((float)press_x, (float)press_y)) {
                     /* the LOCK beside the toolbox (0.3.5): the card stays */

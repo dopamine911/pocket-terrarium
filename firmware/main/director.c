@@ -144,7 +144,7 @@ static void make_room(tank_t *t) {
     t->n_fish--;
     ESP_LOGI(TAG, "tank at the cap: %s steps out for the scene (the parked tank keeps it)", t->fish[t->n_fish].name);
 }
-static const float STAGE_AGE[4] = { 0, STAGE_JUV_AGE + 60, STAGE_ADULT_AGE + 60, STAGE_ELDER_AGE + 60 };
+static float stage_age(const tank_t *t, int st) { return st <= STAGE_FRY ? 0 : progression_stage_age(t, (stage_t)st) + 60; }   /* a minute past the species' age for it */
 static int stage_of(const char *s) {
     for (int i = 0; i < 4; i++) if (!strcasecmp(s, STAGE_NAMES[i])) return i;
     if (!strcasecmp(s, "juvenile")) return STAGE_JUV;
@@ -1033,16 +1033,16 @@ static void run(tank_t *t, char *line) {
     } else if (!strcmp(c, "stages")) {
         if (!stage_guard(t)) return;
         int n = t->n_fish < 4 ? t->n_fish : 4;
-        for (int i = 0; i < n; i++) progression_set_age(t, i, STAGE_AGE[4 - n + i]);
+        for (int i = 0; i < n; i++) progression_set_age(t, i, stage_age(t, 4 - n + i));
         ESP_LOGI(TAG, "one fish per stage");
         show_state(t);
     } else if (!strcmp(c, "stage") && argc > 2) {
         int st = stage_of(argv[2]);
         if (st < 0) { ESP_LOGW(TAG, "stage is fry|juv|adult|elder"); return; }
         if (!stage_guard(t)) return;
-        if (!strcmp(argv[1], "all")) for (int i = 0; i < t->n_fish; i++) progression_set_age(t, i, STAGE_AGE[st]);
+        if (!strcmp(argv[1], "all")) for (int i = 0; i < t->n_fish; i++) progression_set_age(t, i, stage_age(t, st));
         else { int who = find_fish(t, argv[1]); if (who < 0) { ESP_LOGW(TAG, "no fish '%s'", argv[1]); return; }
-               progression_set_age(t, who, STAGE_AGE[st]); }
+               progression_set_age(t, who, stage_age(t, st)); }
         show_state(t);
     } else if (!strcmp(c, "overgrown")) {
         if (!stage_guard(t)) return;

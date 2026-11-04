@@ -164,12 +164,13 @@ void render_modal_cache_on(bool on);   /* false: drawn whole (the bakes kept) - 
 void render_crab_cache(bool on);        /* the crab's pose grids kept (on, the default) or built every pose change: the selftest's A/B (0.3.9.1) */
 int  render_crab_builds(void);          /* the crab's grid builds so far */
 /* The TOOLBOX (2026-10-01): under a fish's card, a little apart from it so
- * MORE keeps its own ground, a box in the card's dress with two big buttons
- * - the SPONGE and the SCISSORS (tank.h TOOL_*). render_stats_card draws it
- * with a fish's card; the one in hand is lit (a white double edge on a
- * lighter fill - brightness, not hue). render_tools_hit(x, y) is the tap
- * test while a fish's card is up: TOOL_SPONGE / TOOL_SCISSORS, or -1 (the
- * box's half, from its top edge down to the bezel, plus side slop). */
+ * MORE keeps its own ground, a box in the card's dress with three buttons -
+ * the SPONGE, the SCISSORS and the MISTER (pocket-terrarium P2a, tank.h
+ * TOOL_*; the icons at 1x to fit three). render_stats_card draws it with a
+ * fish's card; the one in hand is lit (a white double edge on a lighter fill
+ * - brightness, not hue). render_tools_hit(x, y) is the tap test while a
+ * fish's card is up: TOOL_SPONGE / TOOL_SCISSORS / TOOL_MISTER, or -1 (the
+ * box's third, from its top edge down to the bezel, plus side slop). */
 #define RENDER_TOOLS_X RENDER_CARD_X
 #define RENDER_TOOLS_Y (RENDER_CARD_Y + RENDER_CARD_H + RENDER_TOOLS_GAP)
 #define RENDER_TOOLS_W RENDER_CARD_W

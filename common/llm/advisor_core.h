@@ -13,16 +13,56 @@
 #include <stddef.h>
 
 /* open model + tokenizer; alloc is the run-state allocator (PSRAM on device).
- * Detects the schema from the tokenizer (a " trust" token = v3). */
+ * Detects the schema from the tokenizer (a " trust" token = v3, " bored" = v4,
+ * " heat" = the lizard's L1: model/schema-lizard.md). */
 bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
                        const uint8_t *tok_bin, size_t tok_len,
                        void *(*alloc)(size_t), uint32_t seed);
-int  advisor_core_schema(void);                 /* 2 or 3; 0 if not loaded */
+#define ADVISOR_SCHEMA_L1 100                   /* advisor_core_schema() with a lizard tokenizer */
+int  advisor_core_schema(void);                 /* 2, 3, 4 or ADVISOR_SCHEMA_L1; 0 if not loaded */
 const q4_config_t *advisor_core_config(void);
 q4_model_t *advisor_core_model(void);           /* for q4_model_bench */
 
-/* encode fish idx's state line per schema (no trailing " ->") */
+/* encode fish idx's state line per schema (no trailing " ->"): the fish's
+ * v2-v4, or L1 (advisor_core_l1_snap + advisor_core_encode_l1) */
 void advisor_core_encode(const tank_t *t, int idx, char *out, size_t n);
+
+/* ---- schema L1 (model/schema-lizard.md) ----
+ * One lizard as the L1 line sees it: exactly the fields of the parity
+ * fixture's `snap` (model/testdata/l1_parity.jsonl, written by
+ * model/make_l1_parity.py; R4 in PLAN.md), so advisor_core_encode_l1 is a
+ * pure function the C and Python encoders can be diffed on. */
+typedef struct { bool on; float x, y; } l1_point_t;   /* a sighting's point; on = false: none */
+typedef struct {
+    uint8_t    pack;                    /* species pack id (species.h): body_c -> heat on its map */
+    int        zone;                    /* 1..6, precomputed (the encoder computes no zones) */
+    float      x, y, heading;           /* the lizard: px, radians - for every distance and clock */
+    float      body_c;                  /* degrees C */
+    float      hunger, energy, stress, curiosity, trust, bored;   /* 0..10: drive9 */
+    float      bold, social;            /* 0..1: (int)(v * 9 + 0.5) */
+    int        stage;                   /* 0 hatch, 1 juv, 2 adult, 3 elder (L1_STAGE_NAMES) */
+    int        shed;                    /* 0 no, 1 soon, 2 yes (L1_SHED_NAMES) */
+    int        last;                    /* LZ_* (species.h LZ_GOAL_NAMES) */
+    int        phase;                   /* PHASE_* (species.h PHASE_NAMES) */
+    l1_point_t prey, other, warm, shelter;
+    bool       in_shelter;              /* true: `shelter near 12`, whatever the shelter point */
+    l1_point_t wall;                    /* the nearest glass's contact point: `wall <b> <clock>` only near or mid, else `clear` */
+} l1_snap_t;
+extern const char *const L1_STAGE_NAMES[4];     /* hatch juv adult elder */
+extern const char *const L1_SHED_NAMES[3];      /* no soon yes */
+/* the L1 state line of s (no trailing " ->"), byte for byte model/gen_traces.py encode_l1_snap */
+void advisor_core_encode_l1(const l1_snap_t *s, char *out, size_t n);
+/* fish idx of the tank as an L1 snapshot: zone as the fish encoder's grid, prey = the nearest pellet (until
+ * P2c's crickets), other = the nearest other fish, warm = the basking spot, shelter = the nearest hide (in_shelter
+ * inside one), wall = the fish encoder's contact point, last = its goal through advisor_core_l1_goal_of, phase =
+ * tank_activity_phase */
+void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s);
+/* THE TEMPORARY GOAL BRIDGE (P2a, until P2b's seven-goal enum replaces the fish's goals): the lizard goal a fish
+ * goal plays (seek_food hunt, visit_bubbles bask, inspect_reef hide, follow_friend investigate, explore explore,
+ * rest rest, dart_play dig, flee_shadow hide) and back (hide inspect_reef) - `last` on the L1 line, and an L1
+ * model's answer as the goal the reflex still performs */
+int       advisor_core_l1_goal_of(goal_id_t g);  /* LZ_* */
+goal_id_t advisor_core_fish_goal_of(int lz);     /* GOAL_COUNT for no such goal */
 
 /* run the model on a state line. Returns the goal (id == GOAL_COUNT if the
  * output was unparseable: keep the previous goal), with confidence and
