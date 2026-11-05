@@ -189,6 +189,13 @@ flowchart LR
 - [x] `check-all`: terrarium 50/50 and aquarium 59/59 on all four boards; both firmware worlds build
 - Keeper-free terrarium: heat 4–7 for 99% of lit time, 3/3 growth sheds clean, asleep in a hide or still 96%
 
+**P2b+ — terraces and rocks (done, 0c49a86; user's choice over a deep 3/4 floor)**
+- [x] `habitat_t` rocks/ramps/basking surface/air rise; `common/terrain.c` (per-glass layout, rules, Dijkstra routing)
+- [x] Desert: low ledge, mid shelf, high rock with the basking spot in the upper half on every board
+- [x] Keeper-free: heat 4–7 96–99% of lit time, 3/3 sheds clean, 53–58% of lit time above the floor
+- Open: `draw_lizard` needs pitch on ramps (33–42% of lit time); `LZ_HALF_LEN` 42 vs the 30 px rock margin;
+  pellets sink through rocks; climbing from floor to basking spot takes ~60 s (P2d tuning)
+
 **P2c — food and hands**
 - [ ] Crickets: spawn on feed tap, hop/flee AI, hide in decor; strike hit/miss; mealworm dish
 - [ ] Touch: hold = hand in the terrarium (trust), rap = startle, tap = crickets
@@ -249,7 +256,11 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
       Fails A11: content lizards `explore` whatever `bold`; `investigate` never chosen (0/209)
 - [x] Prompt gate (5e2f7d8): every teacher-checkable row passes; pilot 97.3%; the Python sim mirrors the C desert
 - [ ] Traces, overnight (started 2026-11-04, 4 workers × 11,250 on `chat-teacher`, seeds 41–44, hard stop 7 h;
-      plus ~140 extra pairs from seeds 51–54 written by an accidental second launch, kept: distinct seeds)
+      plus ~140 extra pairs from seeds 51–54 written by an accidental second launch, kept: distinct seeds).
+      **Known mismatch:** these traces come from the floor-level desert (P2a); the terraces landed mid-run. The
+      line only carries normalised heat, sight buckets and zones, so the rules still apply, but the zone/`warm`
+      distribution differs (the basking spot is now top row). Decision: train on them, then let A13–A16 decide; if the
+      census fails, re-mirror the terrain in `gen_traces.py` and run a top-up night.
 - [ ] `fold_traces.py` → `train_tokenizer.py` → `train.py` (dim 384, 8 layers, seq 64) → `export_q4.py`
 - [ ] Training hardware: **CPU PyTorch** is enough. 6 × 14.3M params × 64×64 tokens × 5,000 iters ≈ 1.8 PFLOP,
       roughly 1–3 h on marvin's 16 Zen 5 cores or zaphod's 3900X [INFERENCE: time 100 iters first].
