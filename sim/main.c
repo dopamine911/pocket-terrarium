@@ -3638,7 +3638,7 @@ static bool llm_available = false;
 static bool llm_active = false;
 static int  selected_fish = -1;      /* click a fish for its stat card */
 /* the live tank's own gestures from the finger, as the boards' touch port has them: a stroke wipes / cuts, a still 0.7 s
-   hold on a piece opens its page (not with a tool in hand, 2026-09-24), a 0.3 s hold calls the fish. None while a page or a
+   hold on an unlocked piece of this world opens its page, a 0.3 s hold calls the animals. None while a page or a
    prompt has the glass (`page`), nor under a card over the tank - the GIVE modal, a gift offered to us (the 11-02 evening
    sweep: a hold on the modal's buttons opened a piece's page with SELL, called the fish, a swipe wiped) */
 static void sim_tank_gestures(bool down, int x, int y, int px, int py, uint32_t held_ms, bool page, bool *held_page) {
@@ -3649,11 +3649,93 @@ static void sim_tank_gestures(bool down, int x, int y, int px, int py, uint32_t 
 #endif
     if (down && !modal) tank_touch_drag(&tank, (float)x, (float)y);   /* stroke -> wipe/slash */
     if (down && !modal && !*held_page && tank.tool == TOOL_HAND && held_ms > 700 && abs(x - px) < 24 && abs(y - py) < 24) {
-        int it = tank_decor_hit(&tank, (float)px, (float)py);
+        int it = tank_decor_hit(&tank, (float)px, (float)py);   /* world-scoped: old aquarium bits cannot steal a terrarium's hand */
         if (it >= 0) { setup_begin_place(&tank, it); *held_page = true; selected_fish = -1; printf("held on the %s: placement page up (MOVE / DEPTH / SELL)\n", progression_item(it)->name); }
     }
     if (!down) *held_page = false;
     if (down && !modal && !*held_page && held_ms > 300 && abs(y - py) < 30) tank_touch_hold(&tank, (float)x, (float)y);
+}
+
+/* The live mouse route, not just tank_touch_hold: an old reef bit used to open MOVE / DEPTH / SELL after 700 ms,
+ * cutting off the hand before a lizard could approach. Run in --selftest-gestures and the shared --selftest-under-card. */
+static int selftest_hold_routing(void) {
+    #define HR_FAIL(...) do { printf("FAIL: hold-routing: " __VA_ARGS__); printf("\n"); return 1; } while (0)
+    static const int ITEM[] = { 4, 0, 2, 3, 8, 9 };
+    static const uint32_t BIT[] = { SD_ITEM_CLUSTER, SD_ITEM_PLANT, SD_ITEM_CASTLE, SD_ITEM_CORAL, SD_ITEM_PUMPKIN, SD_ITEM_VOLCANO };
+    for (int saved = 0; saved < 2; saved++) for (int k = 0; k < 6; k++) {
+        tank_init(&tank, 611);
+        tank.n_fish = 0; tank.sd_unlocks = BIT[k]; tank.sd_shelved = tank.sd_locked = 0;
+        if (saved) tank_decor_set(&tank, ITEM[k], tank_floor_x(0.65f), DECOR_Z_FRONT);
+        const int x = (int)tank_decor_x(&tank, ITEM[k]), y = TANK_BOT - 24;
+        bool held_page = false;
+        sim_tank_gestures(true, x, y, x, y, 800, false, &held_page);
+        if (PT_TERRARIUM) {
+            if (setup_active() || held_page || !tank.hold_active)
+                HR_FAIL("aquarium item %d (%s position) intercepted the terrarium hand", ITEM[k], saved ? "saved" : "default");
+        } else {
+            if (!setup_is_place() || setup_item() != ITEM[k] || !held_page || tank.hold_active)
+                HR_FAIL("aquarium item %d (%s position) did not open its placement page", ITEM[k], saved ? "saved" : "default");
+            setup_cancel(&tank);
+        }
+        sim_tank_gestures(false, x, y, x, y, 800, false, &held_page);
+    }
+#if PT_TERRARIUM
+    /* A deliberate hold still edits an unlocked desert piece; its lock, the sand below it and a lizard in front
+     * leave the same route to the hand. Keep a stale reef at that spot too, so a rejected desert hit cannot fall through. */
+    tank_init(&tank, 611); tank.n_fish = 0;
+    const int skull = TERR_DECO_ITEM0 + 1;
+    tank.sd_unlocks = SD_ITEM_SKULL | SD_ITEM_CLUSTER; tank.sd_shelved = tank.sd_locked = 0;
+    const int dx = (int)tank_decor_x(&tank, skull), dy = (int)(TERR_DECO_FY - 10);
+    tank_decor_set(&tank, 4, dx, DECOR_Z_FRONT);
+    for (int sc = 0; sc < 4; sc++) {
+        tank.n_fish = 0; tank.sd_locked = sc == 1 ? SD_ITEM_SKULL : 0;
+        const int y = sc == 2 ? (int)TERR_DECO_FY + 2 : dy;
+        if (sc == 3) {
+            tank_make_fish(&tank, 0, 0, 0.5f, 0.5f, STAGE_ADULT); tank.n_fish = 1;
+            tank.fish[0].x = dx; tank.fish[0].y = dy;
+        }
+        tank.hold_active = false;
+        bool held_page = false;
+        sim_tank_gestures(true, dx, y, dx, y, 800, false, &held_page);
+        if (sc == 0) {
+            if (!setup_is_place() || setup_item() != skull || !held_page) HR_FAIL("the unlocked skull's deliberate hold did not open MOVE");
+            setup_cancel(&tank);
+        } else if (setup_active() || held_page || !tank.hold_active) HR_FAIL("desert hand case %d was intercepted", sc);
+        sim_tank_gestures(false, dx, y, dx, y, 800, false, &held_page);
+    }
+    /* An eligible lizard actually walks to the sustained hand at the invisible reef's default footprint. */
+    tank_init(&tank, 611); tank_new_population(&tank); tank.n_fish = 1;
+    tank.sd_unlocks = SD_ITEM_CLUSTER; tank.sd_shelved = tank.sd_locked = 0;
+    tank.trickle_off = true; tank_clear_food(&tank);
+    tank.light_override = tank.light_on = true; tank.night = false;
+    fish_t *f = &tank.fish[0];
+    const terrain_path_t *floor = &tank_terrain(&tank)->path[0];
+    f->x = tank_floor_x(0.10f); f->y = terrain_y(floor, f->x); f->surf = 0; f->lane = 0;
+    f->hide = -1; f->pose = LZ_POSE_STAND; f->facing = 1;
+    f->turn_s = f->pause_s = f->walk_s = f->strike_s = 0;
+    f->trust = 7; f->hunger = 2; f->energy = 10; f->stress = 0;
+    f->goal.id = GOAL_LZ_REST; f->goal.urgency = 5;
+    const int hx = (int)tank_decor_x(&tank, 4), hy = TANK_BOT - 24;
+    const float start = f->x;
+    if (fabsf(start - hx) < 80) HR_FAIL("the lizard starts too close to prove an approach");
+    bool held_page = false;
+    int step = 0;
+    for (; step < 120 * 30; step++) {
+        sim_tank_gestures(true, hx, hy, hx, hy, (uint32_t)(step * 1000 / 30), setup_active(), &held_page);
+        if (setup_active() || held_page) HR_FAIL("a sustained bare-hand hold opened reef placement at %d ms", step * 1000 / 30);
+        tank_tick(&tank, 1.0f / 30, advisor_rules);
+        f->hunger = 2; f->energy = 10;
+        if ((f->ms_bits & MS_FIRST_HOLD_APPROACH) && tank_at_finger(&tank, 0)) break;
+    }
+    if (step == 120 * 30 || tank.hold_approaches != 1 || fabsf(f->x - start) < 40)
+        HR_FAIL("the trusting lizard never approached the routed hand (x %.0f -> %.0f, holds %d)", start, f->x, tank.hold_approaches);
+    sim_tank_gestures(false, hx, hy, hx, hy, (uint32_t)(step * 1000 / 30), false, &held_page);
+    printf("selftest-hold-routing: old aquarium bits at default/saved spots cannot open placement; unlocked desert holds edit, locks/sand/lizards keep the hand; a trusting lizard approached the hand in %.1f s\n", step / 30.0f);
+#else
+    printf("selftest-hold-routing: all six aquarium pieces at default/saved spots still open their own placement page\n");
+#endif
+    #undef HR_FAIL
+    return 0;
 }
 static bool ui_visible = true;       /* U toggles all overlays */
 static bool milestones_view = false; /* M toggles the milestones screen */
@@ -4275,6 +4357,7 @@ static int fresh_shot(const char *prefix) {
  *   f. the KIN book: fresh uids by the hundred write it once, then once a minute; a save writes what waits */
 extern int g_sim_blob_saves;
 static int selftest_under_card(void) {
+    if (selftest_hold_routing()) return 1;
     int fails = 0;
     #define UC_FAIL(...) do { printf("FAIL: under-card: " __VA_ARGS__); printf("\n"); fails++; } while (0)
     setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-under-card/tank.sav"), 1);   /* (never the real save) */
@@ -4322,15 +4405,18 @@ static int selftest_under_card(void) {
         }
     }
 #if PT_NET
-    /* c. the GIVE modal and a gift card over the live tank: the plant under the finger, a hold 1 s, a swipe */
+    /* c. the GIVE modal and a gift card over the live tank: a piece of this world under the finger, a hold 1 s, a swipe */
     static gift_book_t ugb;
     tank_init(&tank, 77); tank_new_population(&tank);
     while (tank.n_fish < 4) { tank_make_fish(&tank, tank.n_fish, tank.n_fish % 3, 0.5f, 0.5f, STAGE_ADULT); tank.n_fish++; }
     tank_ensure_ids(&tank);
     while (progression_newborn() >= 0) progression_newborn_done(&tank);
-    tank.sd_unlocks |= SD_ITEM_PLANT; tank_plant_place(&tank);
-    const int PX = TANK_W * 56 / 100, PY = TANK_BOT - 12;
-    tank_decor_set(&tank, 0, (float)PX, DECOR_Z_BACK);
+    const int piece = PT_TERRARIUM ? TERR_DECO_ITEM0 + 1 : 0;
+    tank.sd_unlocks |= PT_TERRARIUM ? SD_ITEM_SKULL : SD_ITEM_PLANT;
+    tank_decor_set(&tank, piece, TANK_W * 0.56f, DECOR_Z_BACK);
+    const int PX = (int)tank_decor_x(&tank, piece), PY = PT_TERRARIUM ? (int)(TERR_DECO_FY - 10) : TANK_BOT - 12;
+    if (PT_TERRARIUM) for (int i = 0; i < tank.n_fish; i++) { tank.fish[i].x = tank_floor_x(0.1f); tank.fish[i].y = terrain_y(&tank_terrain(&tank)->path[0], tank.fish[i].x); }
+    if (tank_decor_hit(&tank, PX, PY) != piece) UC_FAIL("c. no visible piece under the finger - the gesture fixture proves nothing");
     memset(&ugb, 0, sizeof ugb); gift_attach(&tank, &ugb);
     tank.door_open[LINK_LEFT] = true; ugb.door_peer[LINK_LEFT] = 0x49439648u;
     for (int sc = 0; sc < 3; sc++) {                          /* 0: the GIVE modal; 1: a gift card; 2: nothing over the tank (the gestures still work) */
@@ -4339,7 +4425,7 @@ static int selftest_under_card(void) {
                        if (!render_gift_up(&tank)) UC_FAIL("c. the gift card not up"); }
         if (sc == 2) { ugb.ask.on = false; if (render_card_over_tank(&tank)) UC_FAIL("c. a card over the tank with none up"); }
         bool held_page = false, hold = false, drag = false;
-        for (int ms = 0; ms <= 1000; ms += 16) {              /* held still on the plant */
+        for (int ms = 0; ms <= 1000; ms += 16) {              /* held still on the piece */
             tank.hold_active = tank.drag_active = false;
             sim_tank_gestures(true, PX, PY, PX, PY, (uint32_t)ms, false, &held_page);
             hold |= tank.hold_active; drag |= tank.drag_active;
@@ -4354,7 +4440,7 @@ static int selftest_under_card(void) {
         }
         sim_tank_gestures(false, TANK_W - 40, TANK_H / 2, 40, TANK_H / 2, 1000, false, &held_page);
         static const char *const WHAT[3] = { "the GIVE modal", "a gift card", "nothing" };
-        if (sc < 2 && (page || hold || drag)) UC_FAIL("c. under %s: %s%s%s", WHAT[sc], page ? "a hold opened the plant's page " : "", hold ? "a hold called the fish " : "", drag ? "a swipe reached the glass" : "");
+        if (sc < 2 && (page || hold || drag)) UC_FAIL("c. under %s: %s%s%s", WHAT[sc], page ? "a hold opened the piece's page " : "", hold ? "a hold called the animals " : "", drag ? "a swipe reached the glass" : "");
         if (sc == 2 && !(page && drag)) UC_FAIL("c. with nothing up the gestures did not work (page %d, drag %d) - the test no longer tests them", page, drag);
     }
     /* d. "start over" with CANNOT BE GIVEN RIGHT NOW up */
@@ -13330,7 +13416,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-walk") == 0) return selftest_walk();
         if (strcmp(argv[a], "--selftest-goals") == 0) return selftest_goals();
         if (strcmp(argv[a], "--selftest-crickets") == 0) return selftest_crickets();
-        if (strcmp(argv[a], "--selftest-gestures") == 0) return selftest_gestures();
+        if (strcmp(argv[a], "--selftest-gestures") == 0) return selftest_hold_routing() || selftest_gestures();
         if (strcmp(argv[a], "--selftest-terr-pay") == 0) return selftest_terr_pay();
         if (strcmp(argv[a], "--selftest-terr-progress") == 0) return selftest_terr_progress();
         if (strcmp(argv[a], "--selftest-terrarium") == 0) return selftest_terrarium();

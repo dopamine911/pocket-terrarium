@@ -2947,6 +2947,7 @@ int tank_decor_hit(const tank_t *t, float x, float y) {
             return item;
         }
     }
+    if (PT_TERRARIUM) return -1;                                /* no desert hit: the hand, never an invisible aquarium piece from old bits/default spots */
     static const int order[6] = { 3, 0, 8, 2, 4, 9 };         /* the coral, the plant, the pumpkin, the castle, the cluster, the volcano */
     for (int k = 0; k < 6; k++) {
         int item = order[k];
