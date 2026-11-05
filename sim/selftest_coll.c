@@ -6,7 +6,7 @@
  *   ./fishsim --coll-shot <prefix>      the paged look: page 1 of a full collection, page 2 of 10, the last page with
  *                                       room, a visitor's passport with every page full (PPM, 1:1)
  *
- * Both run on a scratch board in $PT_SHELF_DIR (default /tmp/pt-shelf, the shelf selftests' own), never the sim's tank. */
+ * Both run on a scratch board in $PT_SHELF_DIR (default: pt-shelf in the run's own directory, sim_tmp.h - the shelf selftests' own), never the sim's tank. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +20,7 @@
 
 int shelf_port_sim_cut(int writes);                /* persist_port_sim.c: the power cut after n writes (-1 = never) */
 void persist_port_sim_block(bool on);              /* ... the tank's own keys refusing writes (NVS full, a load gone wrong) */
-const char *sim_shelf_dir(void);                   /* main.c: $PT_SHELF_DIR or /tmp/pt-shelf */
+const char *sim_shelf_dir(void);                   /* main.c: $PT_SHELF_DIR or the run's own pt-shelf (sim_tmp.h) */
 
 static tank_t s_tk;
 #define CFAIL(...) do { printf("FAIL: coll-pages: "); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)

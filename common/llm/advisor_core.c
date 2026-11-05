@@ -88,8 +88,8 @@ static void encode_fish(const tank_t *t, int idx, float bx, float by, float rx, 
     int zone = zone_of(f);
 
     char food_s[24], shadow_s[24], friend_s[40], bubble_s[24], reef_s[24], wall_s[24], frs[24];
-    float fd; int fi = tank_nearest_food(t, f, &fd);
-    sighting(f, fi >= 0 ? t->food[fi].x : 0, fi >= 0 ? t->food[fi].y : 0, fi >= 0, food_s, sizeof food_s);
+    float fx = 0, fy = 0; const bool food = tank_food_sight(t, idx, &fx, &fy, NULL);   /* (the nearest pellet; over the BRIDGE a lizard's prey) */
+    sighting(f, fx, fy, food, food_s, sizeof food_s);
     /* the shadow was removed from the game (2026-09-13); the field stays in
      * the frozen schema and always reads `none` (the model was trained on
      * plenty of shadow-none states) */
@@ -190,8 +190,8 @@ void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s) {
     s->shed = f->shed == SHED_SOON ? 1 : (f->shed == SHED_SHEDDING || f->shed == SHED_STUCK) ? 2 : 0;
     s->last = goal_lz(f->goal.id) >= 0 ? goal_lz(f->goal.id) : LZ_EXPLORE;   /* (the lizard's own goal; a fish goal is no lizard's) */
     s->phase = tank_activity_phase(t);
-    int fi = tank_nearest_food(t, f, NULL);
-    if (fi >= 0) { s->prey.on = true; s->prey.x = t->food[fi].x; s->prey.y = t->food[fi].y; }
+    float px, py;                                       /* prey: the nearest cricket about on ground it can reach, or the dish (tank.h THE CRICKETS) */
+    if (tank_food_sight(t, idx, &px, &py, NULL)) { s->prey.on = true; s->prey.x = px; s->prey.y = py; }
     int fr = tank_nearest_friend(t, idx, NULL);
     if (fr >= 0) { s->other.on = true; s->other.x = t->fish[fr].x; s->other.y = t->fish[fr].y; }
     s->warm.on = true; tank_bask_point(t, &s->warm.x, &s->warm.y);

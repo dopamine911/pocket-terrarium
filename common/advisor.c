@@ -56,7 +56,7 @@ static goal_t lizard_rules(const tank_t *t, int i, bool request) {
     g.confidence = 1.0f; g.runner_up = GOAL_COUNT;
     const float r = frand(t, i);
     const int phase = tank_activity_phase(t);
-    float prey_d; const bool prey = tank_nearest_food(t, f, &prey_d) >= 0;
+    float prey_d; const bool prey = tank_food_sight(t, i, NULL, NULL, &prey_d);   /* (its prey: a cricket about, the dish - tank.h THE CRICKETS) */
     float other_d; const bool other = tank_nearest_friend(t, i, &other_d) >= 0;
     const bool shed = f->shed == SHED_SOON || f->shed == SHED_SHEDDING || f->shed == SHED_STUCK;
     const bool starving = f->hunger >= 8.5f && prey;

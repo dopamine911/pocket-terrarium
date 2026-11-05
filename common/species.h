@@ -21,6 +21,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 #include "world.h"
 
 typedef enum { WORLD_AQUARIUM, WORLD_TERRARIUM } world_t;
@@ -48,7 +49,7 @@ extern const char *const LZ_GOAL_NAMES[LZ_GOALS];         /* the schema's goal w
 enum { PHASE_ACTIVE, PHASE_SETTLE, PHASE_SLEEP, PHASE_N };
 extern const char *const PHASE_NAMES[PHASE_N];            /* active settle sleep */
 
-/* the body, for P3's draw_lizard: plain data, nothing reads it yet */
+/* the body, for draw_lizard (render_lizard.h) - and its size for the walk (tank.c walk_margin: the body drawn stays inside the glass) */
 typedef struct {
     float length_px;        /* nose to tail tip, adult, at the 1.8's scale */
     float head_w, limb_len; /* px */
@@ -56,6 +57,15 @@ typedef struct {
     float eye_r;            /* px */
     bool  eyelids;          /* blinks (a leopard gecko has lids, most geckos do not) */
 } lizard_geom_t;
+/* a PLAN_LIZARD body's size by its stage, the adult's 1 (geom.length_px is the adult's), and half its length drawn - nose to
+   the middle, the middle to the tail tip, facing sideways - at a scale (the stage's x its own build: tank.h tank_lizard_scale) */
+float lizard_stage_scale(int stage);
+static inline float lizard_half_len(const lizard_geom_t *g, float scale) { return 0.5f * g->length_px * scale; }
+/* the walk: a foot on the ground LIZARD_DUTY of a cycle, swept back LIZARD_STRIDE x the limb meanwhile (render_lizard.c's
+   legs) - so a cycle covers lizard_stride_px of ground with every planted foot still (tank.c THE LOOK steps the phase by it) */
+#define LIZARD_DUTY   0.62f
+#define LIZARD_STRIDE 0.45f
+static inline float lizard_stride_px(const lizard_geom_t *g, float scale) { return LIZARD_STRIDE * g->limb_len * powf(scale, 0.9f) / LIZARD_DUTY; }
 typedef struct { const char *name; uint32_t body, accent; } morph_t;   /* 0xRRGGBB */
 typedef struct { const char *name; } pattern_t;                         /* banded, spotted ... (P3 draws them) */
 
@@ -126,7 +136,7 @@ typedef struct {
 extern const species_t SPECIES_PACK_GECKO, SPECIES_PACK_TEST_WARM, SPECIES_PACK_FISH;
 
 const species_t *species_get(uint8_t id);   /* NULL: no such pack */
-int  species_count(void);                   /* every compiled-in pack - both worlds', the test pack too */
+int  species_count(void);                   /* release: this world; PT_ALL_PACKS test/tool builds: both worlds */
 const species_t *species_at(int i);
 
 /* the model's heat as a float 0..10 (before drive9), relative to the pack's

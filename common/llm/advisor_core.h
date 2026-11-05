@@ -56,10 +56,11 @@ extern const char *const L1_STAGE_NAMES[4];     /* hatch juv adult elder */
 extern const char *const L1_SHED_NAMES[3];      /* no soon yes */
 /* the L1 state line of s (no trailing " ->"), byte for byte model/gen_traces.py encode_l1_snap */
 void advisor_core_encode_l1(const l1_snap_t *s, char *out, size_t n);
-/* fish idx of the tank as an L1 snapshot: zone as the fish encoder's grid, prey = the nearest pellet (until
- * P2c's crickets), other = the nearest other lizard, warm = the basking spot, shelter = the hide it is in or the
- * nearest (in_shelter: it is in one - fish_t.hide, THE WALK), wall = the fish encoder's contact point, last = its
- * goal (a lizard goal's LZ_* index), phase = tank_activity_phase */
+/* fish idx of the tank as an L1 snapshot: zone as the fish encoder's grid, prey = tank_food_sight (the nearest cricket
+ * about on ground its own joins, or the mealworm dish while it holds worms: tank.h THE CRICKETS), other = the nearest
+ * other lizard, warm = the basking spot, shelter = the hide it is in or the nearest (in_shelter: it is in one -
+ * fish_t.hide, THE WALK), wall = the fish encoder's contact point, last = its goal (a lizard goal's LZ_* index), phase =
+ * tank_activity_phase */
 void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s);
 /* THE TEMPORARY FISH-MODEL BRIDGE (P2b; advisor_core.c has all of it - DELETE IN P6 with the lizard model): the
  * terrarium's bin thinks with the v4 fish model until then. Its answers are the lizard goals they play (seek_food

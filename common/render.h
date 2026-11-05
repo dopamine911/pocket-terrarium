@@ -36,9 +36,10 @@
 void render_tank(const tank_t *t, uint16_t *fb, int stride);
 
 /* Optional frame profiling: set a microsecond clock and render_tank fills
- * render_prof_us per stage (0 scene-copy, 1 shafts, 2 veg (back), 3 food+
- * bubbles, 4 fish + front veg, 5 vignette sweep, 6 algae film). Accumulates
- * until the caller zeroes it. NULL = off. */
+ * render_prof_us per stage (0 scene restore/bake, 1 shafts, 2 back veg,
+ * 3 food/prey, 4 remaining animal/front work, 5 vignette, 6 glass).
+ * Slots 7..13 split the animal/front work; 7 is fish or lizards.
+ * Accumulates until the caller zeroes it. NULL = off. */
 extern int64_t (*render_clock_us)(void);
 /* THE FRAMEBUFFER'S BYTE ORDER (2026-10-23, the frame rate on the big glasses): with PT_FB_SWAP the frame (and the
  * scene it is primed from) holds every pixel as the panel's wire wants it - RGB565 high byte first, i.e. byte-swapped
@@ -63,6 +64,15 @@ extern int64_t render_prof_us[14];   /* 0..6 the stages; 7..13 the fish stage sp
  * frame instead of recomputed - keeps core 0's frame budget flat as the scene
  * gets lusher. NULL disables. */
 void render_set_scene_cache(uint16_t *buf);
+/* THE TERRARIUM's second scene (render.c THE TERRARIUM, P3b): the light not shown, baked in the background, so a light's
+ * switch is a swap of the two (TANK_W*TANK_H uint16, PSRAM on the board). NULL (and the sim with none given): calloc'd
+ * at the first bake in the sim; on the board none means every switch bakes the scene whole in one frame. The aquarium
+ * never reads it */
+void render_set_scene_spare(uint16_t *buf);
+/* (the bench, the tests) the terrarium's bake: rows/slices baked and the longest slice in us (render_clock_us).
+ * Reset after an intentionally whole first scene when measuring only the background slices. */
+void render_terrarium_bake_stats(int *rows, int *slices, int64_t *us_max);
+void render_terrarium_bake_stats_reset(void);
 
 /* Optional vignette alpha cache (TANK_W*TANK_H bytes): with a scene cache the
  * porthole vignette is baked into the scene and re-applied per frame only on
@@ -159,8 +169,10 @@ void render_stats_card(const tank_t *t, int fish_idx, uint16_t *fb, int stride);
 #define RENDER_CARD_HIT(x, y) ((x) >= RENDER_CARD_X - RENDER_CARD_HIT_SIDE && (x) < RENDER_CARD_X + RENDER_CARD_W + RENDER_CARD_HIT_SIDE && \
                                (y) >= RENDER_CARD_Y && (y) < RENDER_CARD_Y + RENDER_CARD_H + RENDER_CARD_HIT_BELOW)
 void render_set_card_cache(uint16_t *buf);
+#if PT_NET   /* (the networking UI below is the networked bin's alone: version.h PT_NET) */
 void render_set_modal_cache(uint16_t *give, uint16_t *gift);
 void render_modal_cache_on(bool on);   /* false: drawn whole (the bakes kept) - measuring */   /* the GIVE modal's and the gift card's bakes (GIFT_CARD_W x GIFT_CARD_H each; NULL: drawn whole) */
+#endif
 void render_crab_cache(bool on);        /* the crab's pose grids kept (on, the default) or built every pose change: the selftest's A/B (0.3.9.1) */
 int  render_crab_builds(void);          /* the crab's grid builds so far */
 /* The TOOLBOX (2026-10-01): under a fish's card, a little apart from it so
@@ -203,8 +215,10 @@ bool render_lock_hit(float x, float y);
 #define RENDER_GIVE_W 96
 #define RENDER_GIVE_H RENDER_LOCK_H
 #endif
+#if PT_NET
 bool render_give_hit(const tank_t *t, int fish_idx, float x, float y);
 void render_give_tap(const tank_t *t, int fish_idx);   /* a tap on it (or the keeper card's GIVE): the GIVE modal */
+#endif
 /* THE GIVE MODAL (0.4, Strato 2026-11-02): both GIVE buttons open one card over the live tank or the keeper page -
  * CONFIRM (the tank it goes to, GIVE | BACK), PICK (both doors open: a row a tank, BACK; picking is the yes), ASKING
  * (the other keeper's time, CALL OFF), SAID (a NO, or it cannot go now: until OK), WHY (a dim GIVE: why, OK). Every
@@ -213,12 +227,14 @@ void render_give_tap(const tank_t *t, int fish_idx);   /* a tap on it (or the ke
 enum { RENDER_GM_OFF, RENDER_GM_CONFIRM, RENDER_GM_PICK, RENDER_GM_ASKING, RENDER_GM_SAID, RENDER_GM_WHY };
 enum { RENDER_GM_TAP_NONE, RENDER_GM_TAP_CARD, RENDER_GM_TAP_HELD, RENDER_GM_TAP_GIVE, RENDER_GM_TAP_LEFT, RENDER_GM_TAP_RIGHT,
        RENDER_GM_TAP_BACK, RENDER_GM_TAP_CALLOFF, RENDER_GM_TAP_OK };
+#if PT_NET
 int  render_give_modal_step(const tank_t *t);            /* RENDER_GM_OFF: not up */
 void render_give_modal_close(void);                     /* as BACK (the director) */
 const char *render_give_modal_line(const tank_t *t);     /* its words as drawn ("IT WOULD LIVE THERE", "THEIR TANK IS FULL", ...) */
 void render_give_modal(const tank_t *t, uint16_t *fb, int stride);
 int  render_give_modal_tap(const tank_t *t, float x, float y);   /* RENDER_GM_TAP_*: what the tap did */
 bool render_give_modal_button(const tank_t *t, int which, int *x, int *y);   /* a button's middle (tests, the director); false: not shown */
+#endif
 /* the NEXT FISH arrow (0.3.9, Bananna on Discord: "sometimes fish hide
  * behind the stat screen"): a small box just outside the card's top right,
  * in the lock's dress, one arrow; a tap steps the card on to the next fish
@@ -337,7 +353,9 @@ void render_milestones_show_fish(const tank_t *t, int fish);   /* put a fish's c
  * tests and the director, so neither copies a board's layout: a fish's card
  * (false = none up) with the centres of RENAME and SELL; a point on a row's name */
 bool render_milestones_card(const tank_t *t, int *fish, int *rename_x, int *sell_x, int *btn_y);
+#if PT_NET
 bool render_milestones_give(const tank_t *t, int *x, int *y);   /* the card's GIVE (linked only: false when it is not shown) */
+#endif
 const char *render_milestones_line(void);   /* the line under the card's caption as last drawn ("" = none) */
 bool render_milestones_arrow(const tank_t *t, bool right, int *x, int *y);   /* the modal's left / right arrow (false = no modal up) */
 void render_milestones_row(int row, int *name_x, int *y);
@@ -600,7 +618,9 @@ void render_fish_sample(uint16_t *fb, int stride, float x, float y, float size, 
 #define PASSPORT_BTN_H  30
 #define PASSPORT_BTN_W  150
 enum { PASSPORT_HIT_NONE = 0, PASSPORT_HIT_DEPORT, PASSPORT_HIT_COLLECT, PASSPORT_HIT_CARD };
+#if PT_NET
 int render_passport_hit(float x, float y);   /* a tap while a visitor's passport is up */
+#endif
 /* a GIFT offered to us (tank link phase 6, gift.h): its card over the live tank until the keeper
    answers - A GIFT FOR YOUR TANK, the fish's photo and fields in the passport's dress, ACCEPT /
    NO THANKS, the time left as a bar. Real size on every glass (Strato 2026-10-20). Nothing drawn
@@ -611,16 +631,19 @@ int render_passport_hit(float x, float y);   /* a tap while a visitor's passport
 #define GIFT_BTN_H  34
 #define GIFT_BTN_W  140
 enum { GIFT_HIT_NONE = 0, GIFT_HIT_ACCEPT, GIFT_HIT_NO, GIFT_HIT_CARD };
+#if PT_NET
 void render_gift(const tank_t *t, uint16_t *fb, int stride);
 void render_gift_allow(bool ok);             /* main, each frame: false under the tank's own setup, the reset prompt, ADVANCED (it waits) */
 bool render_gift_up(const tank_t *t);        /* a card to show now: it has the glass first, over any page */
 bool render_card_over_tank(const tank_t *t); /* the GIVE modal or a gift card up: the live tank's own holds and swipes stop (the evening sweep) */
 int  render_gift_take_cue(void);             /* SND_* the frame it is first seen, else -1 */
 int  render_gift_hit(float x, float y);
+#endif
 /* the VISITOR COLLECTION page (2026-10-06): a grid of the collected, a tap
  * on one its passport with its history here; CLOSE goes back to the
  * milestones page. render_collection_tap: COLL_TAP_* */
 enum { COLL_TAP_NONE = 0, COLL_TAP_KEPT, COLL_TAP_CLOSE };
+#if PT_NET
 void render_collection(const tank_t *t, uint16_t *fb, int stride);
 int  render_collection_tap(const tank_t *t, float x, float y);
 void render_collection_leave(void);
@@ -629,6 +652,7 @@ void render_collection_leave(void);
 int  render_collection_page(void);
 void render_collection_set_page(int page);
 bool render_collection_arrow(bool right, int *x, int *y);
+#endif
 /* THE ICON FOOT (0.4, Strato 2026-11-01): UPGRADES (the sand dollar over the balance), SETTINGS (a cog; the bowl's in
  * the cap), MY TANKS (two tanks on a shelf), VISITORS (a plane), CLOSE (an X) - squares MSP_FOOT_SQ on a side */
 enum { MSF_UPG, MSF_SET, MSF_TANKS, MSF_VIS, MSF_CLOSE, MSF_N };
@@ -874,6 +898,7 @@ bool render_crab_collect_hit(const tank_t *t, float x, float y);   /* the crab c
 #define LINK_CLOSE_HOLD_S 1.2f
 enum { LINK_UI_NONE = 0, LINK_UI_DONE, LINK_UI_ARM_LEFT, LINK_UI_ARM_RIGHT, LINK_UI_CLOSE_LEFT, LINK_UI_CLOSE_RIGHT,
        LINK_UI_DISCONNECT };   /* every door of this tank shuts (the chip top right while a door is open; the DRIFTED notice's button) */
+#if PT_NET
 void render_link_mode(const link_view_t *v, uint16_t *fb, int stride, double clock);
 int  render_link_touch(const link_view_t *v, float x, float y, bool down, float dt);
 void render_link_leave(void);                   /* forget a hold in progress (link mode closed) */
@@ -885,6 +910,7 @@ void render_link_where(int what, float *x, float *y);   /* the tests and the dir
                                                          * 2 = DONE, 3 = link mode's DISCONNECT, 4 = the DRIFTED notice's DISCONNECT */
 bool render_link_drift_hit(const link_view_t *v, float x, float y);   /* a tap on the DRIFTED notice's DISCONNECT */
 bool render_drift_live(const tank_t *t, bool page_up);   /* the DRIFTED notice is SEEN (its DISCONNECT may answer): no page, notice, GIVE modal or gift card over it */
+#endif
 /* ---- MY TANKS + THE LIBRARY: the tank switcher (docs/tank-switcher.md).
  * ART FOR APPROVAL, 2026-10-29: the pages only, drawn from what the sim
  * stages (--shelf-shot); nothing behind them yet. ---- */

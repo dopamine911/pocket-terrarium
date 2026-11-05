@@ -21,14 +21,21 @@
  * family, read the same way, on its own reset pin and a 480 px panel; its own
  * build is the panel too. Which way its report runs is `touch mirror`. */
 #include "touch_port.h"
+#include "version.h"          /* PT_NET, before its first test below */
+#if PT_NET
 #include "link_dev.h"
+#endif
 #include "display_port.h"
+#if PT_NET
 #include "update.h"
+#endif
 #include "board_pins.h"
 #include "tank.h"
+#if PT_NET
 #include "collection.h"
 #include "gift.h"
 #include "tank_link.h"
+#endif
 #include "render.h"
 #include "setup.h"
 #include "notice.h"
@@ -548,9 +555,13 @@ void touch_port_poll(tank_t *t) {
      * flipped screen: mirror both, so downstream gestures live in displayed space */
     float tx = s_lx, ty = s_ly;
     if (touched) map_touch(x[0], y[0], &tx, &ty);           /* calibrated (above); the release keeps the last position */
+#if PT_NET
     s_fdown = finger_gate(&s_fgate, touched, s_cf || (!setup_active() && render_gift_up(t)));   /* (the finger as it is: a page that tracks it, MY TANKS's
                                                                   RENAME wheel and holds - none of a press that met the gift card or the prompt over
                                                                   the page: holding NO THANKS sold a shelved tank, the evening sweep) */
+#else
+    s_fdown = finger_gate(&s_fgate, touched, s_cf);         /* (the finger as it is: a page that tracks it, MY TANKS's RENAME wheel and holds) */
+#endif
     s_fingx = tx; s_fingy = ty;
     if (touched && !s_down) {
         audio_port_prewarm();                   /* the release's cue plays warm */
@@ -582,8 +593,12 @@ void touch_port_poll(tank_t *t) {
     /* a gift offered to us (0.4, the 11-02 sweep): its card is up OVER any page and has the glass first - no page under it
        sees the finger (not the LINK page's arrows or its quiet timer either); under the tank's own setup, the reset prompt
        and ADVANCED it waits (render_gift_up says) */
+#if PT_NET
     gift_book_t *gcard = gift_of(t);
     const bool card = !su && !s_cf && render_gift_up(t);
+#else
+    const bool card = false;                                 /* (no gift card without the network: version.h PT_NET) */
+#endif
     if (s_set && !s_cf && !su && !card) {                             /* the settings page owns the glass: segments, LIGHTS OUT's arrows, CLOSE */
         int v = 0, r = render_settings_touch(t, tx, ty, touched, &v);
         if (r && r != SET_TAP_BRIGHT_LIVE && r != SET_TAP_VOLUME_LIVE) ESP_LOGI(TAG, "settings: %s %d", r == SET_TAP_CLOSE ? "CLOSE" : r == SET_TAP_BRIGHT ? "brightness" : r == SET_TAP_VOLUME ? "volume"
@@ -591,8 +606,10 @@ void touch_port_poll(tank_t *t) {
                                                   : r == SET_TAP_FEED ? "auto feed (1 = on)" : r == SET_TAP_ROTATE ? "rotation (1 = locked)"
                                                   : r == SET_TAP_UPDATES ? "UPDATES" : r == SET_TAP_LINK ? "LINK" : "idle seconds", v);
         if (r == SET_TAP_CLOSE) { s_set = false; s_ms = true; s_back = true; }   /* back to the milestones page (2026-09-16); the release is spent */
+#if PT_NET
         else if (r == SET_TAP_UPDATES) { s_set = false; s_upd = true; s_back = true; ESP_LOGI(TAG, "updates page up"); }
         else if (r == SET_TAP_LINK) { s_set = false; s_back = true; link_dev_page_open(t); }   /* link mode over the live tank (0.4) */
+#endif
         else if (r == SET_TAP_BRIGHT || r == SET_TAP_BRIGHT_LIVE || r == SET_TAP_VOLUME || r == SET_TAP_VOLUME_LIVE || r == SET_TAP_LIGHT || r == SET_TAP_IDLE || r == SET_TAP_FEED || r == SET_TAP_ROTATE) { s_set_what = r; s_set_val = v; }
     }
     if (adv_up() && !s_cf && !su) {                          /* the ADVANCED page (0.3.9.2): its taps, the crosses, the check (a gift card waits under it) */
@@ -601,6 +618,7 @@ void touch_port_poll(tank_t *t) {
         else if (r == ADV_ACT_TICK) tank_emit(TEV_WHEEL_TICK, -1);
         else if (r) s_adv_act = r;                           /* main saves it (and tells the charger) */
     }
+#if PT_NET   /* the UPDATES page, the DRIFTED notice, link mode (version.h PT_NET) */
     if (s_upd && !s_cf && !su && !card) {                    /* the UPDATES page: CHECK (main restarts), FORGET, CLOSE */
         int r = updates_page_touch(tx, ty, touched);
         if (r == UPD_TAP_CLOSE) { s_upd = false; s_set = true; s_back = true; ESP_LOGI(TAG, "updates page: CLOSE -> settings"); }
@@ -617,6 +635,7 @@ void touch_port_poll(tank_t *t) {
         s_link_us = now;
         if (link_dev_touch(tx, ty, touched, dt) == LINK_UI_DONE) s_back = true;   /* the release is spent */
     }
+#endif
     if (su && !s_cf) {
         bool birth = setup_is_birth(), rename = setup_is_rename(); int who = setup_fish(), place = setup_item();
         setup_touch(t, tx, ty, touched);                     /* taps and the letter wheel, classified in setup.c */
@@ -630,10 +649,12 @@ void touch_port_poll(tank_t *t) {
     }
     { int rf = setup_take_renamed();                         /* a rename closed (2026-10-01): back to the milestones page, the fish's card up */
       if (rf >= 0) { s_ms = true; s_set = false; s_shop = false; s_coll = false; s_sel = -1; render_milestones_show_fish(t, rf); } }
-    bool modal = s_ms || s_set || s_shop || s_coll || s_cf || su || s_bat || s_upd || s_shelf || adv_up() || link_dev_page_up() || card
-                 || render_card_over_tank(t);   /* a page, a prompt, the gift card or the GIVE modal owns the glass (its holds and
+    bool modal = s_ms || s_set || s_shop || s_coll || s_cf || su || s_bat || s_upd || s_shelf || adv_up();
+#if PT_NET
+    modal = modal || link_dev_page_up() || card || render_card_over_tank(t);   /* a page, a prompt, the gift card or the GIVE modal owns the glass (its holds and
                                                    swipes opened a piece's page, called the fish, wiped: the evening sweep; the VISITORS
                                                    pages were missing - a hold opened the castle's page under them, 0.4 rc round two) */
+#endif
     if (touched) {                                           /* stroke = wipe/slash, reaching the glass (stroke_point above) */
         float dx, dy; stroke_point(!s_down, tx, ty, &dx, &dy);
         if (!s_down) { s_dx0 = s_dx1 = dx; s_frames = 0; s_raw_px = x[0]; s_raw_py = y[0]; }
@@ -677,6 +698,7 @@ void touch_port_poll(tank_t *t) {
                      setup_hit_name(setup_active() ? setup_hit(s_px, s_py) : 0));
             s_sel = -1; goto released;
         }
+#if PT_NET
         if (card) {                     /* the gift card has the glass (over any page): ACCEPT / NO THANKS after its hold, counted
                                            from when it was first seen; a miss is nothing (11-02 sweep) */
             if (held_us < 350000 && dx * dx + dy * dy < 24 * 24) {
@@ -689,6 +711,7 @@ void touch_port_poll(tank_t *t) {
             }
             s_back = false; goto released;
         }
+#endif
         if (s_bat) { s_bat = false; ESP_LOGI(TAG, "battery page closed"); goto released; }   /* any release closes it */
         if (s_shelf) {                                              /* MY TANKS: main.c knows what is up (the shelf, a card, the library) and acts */
             if (held_us < 350000 && dx * dx + dy * dy < 24 * 24) { s_shelf_tap = true; s_shelf_tx = s_px; s_shelf_ty = s_py; }
@@ -697,7 +720,12 @@ void touch_port_poll(tank_t *t) {
         if (held_us < 350000 && dx * dx + dy * dy < 24 * 24) {
             if (notice_current()) {                                 /* (the lights-out notice lets its tap through: notice.h) */
                 bool took = notice_dismiss(); ESP_LOGI(TAG, "tap %s the announcement", notice_current() ? "held by" : "closed"); if (took) goto released; }
+#if PT_NET
             if (s_set || s_upd || s_back || adv_up() || link_dev_page_up()) { s_back = false; goto released; }   /* the settings / updates page had the glass (their touch calls above) */
+#else
+            if (s_set || s_back || adv_up()) { s_back = false; goto released; }   /* the settings page had the glass (its touch call above) */
+#endif
+#if PT_NET
             if (s_coll) {                                           /* the visitor collection: a fish's passport, CLOSE */
                 int pg = render_collection_page(), r = render_collection_tap(t, s_px, s_py);
                 ESP_LOGI(TAG, "collection tap at %.0f,%.0f -> %s (page %d of %d)", s_px, s_py, r == COLL_TAP_CLOSE ? "CLOSE" :
@@ -705,6 +733,7 @@ void touch_port_poll(tank_t *t) {
                 if (r == COLL_TAP_CLOSE) { s_coll = false; render_collection_leave(); s_ms = true; }   /* back to the milestones page */
                 goto released;
             }
+#endif
             if (s_shop) {                                           /* the shop: a row's modal, UNLOCK, HOW TO EARN, CLOSE */
                 int r = render_shop_tap(t, s_px, s_py);
                 ESP_LOGI(TAG, "shop tap at %.0f,%.0f -> %s", s_px, s_py, r == SHOP_TAP_CLOSE ? "CLOSE" : r >= SHOP_TAP_PLACE ? "PUT BACK" : r >= SHOP_TAP_SHELVE ? "SHELVE" : r >= SHOP_TAP_FRY ? "BUY A FRY" : r >= SHOP_TAP_SELL ? "SELL" : r >= SHOP_TAP_MOVE ? "MOVE" : r >= SHOP_TAP_BUY ? "UNLOCK" : r == SHOP_TAP_KEPT ? "modal" : "nothing");
@@ -712,6 +741,7 @@ void touch_port_poll(tank_t *t) {
                 else if (r >= SHOP_TAP_BUY) s_shop_act = r;   /* main.c buys (and plays the cue) or opens the placement page */
                 goto released;
             }
+#if PT_NET
             {   gift_book_t *gb = gift_of(t);                /* the GIVE modal (0.4): every tap while it is up, over the keeper page or the
                                                                        live tank (there a gift offered to us is on top: its card answers first) */
                 int gs = render_give_modal_step(t);
@@ -723,6 +753,7 @@ void touch_port_poll(tank_t *t) {
                     goto released;
                 }
             }
+#endif
             if (s_ms) {                                             /* the page: badges open a modal, the CLOSE
                                                                        button ends it, the brightness row cycles */
                 int r = render_milestones_tap(t, s_px, s_py);     /* CLOSE / SETTINGS / the sand dollar, detail modal, nothing */
@@ -746,7 +777,9 @@ void touch_port_poll(tank_t *t) {
                 }
                 if (r != MS_TAP_CLOSE && r != MS_TAP_SETTINGS && r != MS_TAP_SHOP && r != MS_TAP_VISITORS) goto released;   /* only a button leaves the page */
                 s_ms = false; s_sel = -1; s_set = r == MS_TAP_SETTINGS; s_shop = r == MS_TAP_SHOP;
+#if PT_NET
                 s_coll = r == MS_TAP_VISITORS; if (s_coll) render_collection_leave();
+#endif
                 progression_ack_milestones(t); render_milestones_leave();   /* everything shown is now "seen" */
                 goto released;
             }
@@ -761,12 +794,14 @@ void touch_port_poll(tank_t *t) {
                 ESP_LOGI(TAG, "battery pill tapped at %.0f,%.0f: battery page up", s_px, s_py);
                 goto released;
             }
+#if PT_NET
             if (s_sel >= 0 && s_sel < t->n_fish && render_give_hit(t, s_sel, s_px, s_py)) {   /* GIVE on the stat card while linked (0.4): before the
                                                                                  toolbox and the lock, whose columns run down past it */
                 render_give_tap(t, s_sel); s_sel_us = now;
                 ESP_LOGI(TAG, "give box tap at %.0f,%.0f (%s) -> the GIVE modal %s", s_px, s_py, t->fish[s_sel].name, render_give_modal_step(t) != RENDER_GM_OFF ? "up" : "not up");
                 goto released;
             }
+#endif
             if (s_sel >= 0 && s_sel < t->n_fish && render_tools_hit(s_px, s_py) >= 0) {   /* the toolbox under the card (2026-10-01):
                                                                                      pick a tool up, or put the one in hand back */
                 int tl = render_tools_hit(s_px, s_py);
@@ -786,6 +821,7 @@ void touch_port_poll(tank_t *t) {
                 ESP_LOGI(TAG, "tool chip tapped at %.0f,%.0f: back to bare hands", s_px, s_py);
                 goto released;
             }
+#if PT_NET
             if (tank_is_visitor(s_sel) && t->vis_used[s_sel - N_FISH_MAX]) {   /* a visitor's passport is up (2026-10-06): its buttons */
                 int ph = render_passport_hit(s_px, s_py);
                 if (ph == PASSPORT_HIT_DEPORT && now - s_card_us < (int64_t)(GIFT_HOLD_S * 1e6f)) {   /* (the 11-02 sweep: one tap of a kid's
@@ -805,6 +841,7 @@ void touch_port_poll(tank_t *t) {
                 }
                 if (ph == PASSPORT_HIT_CARD) { s_sel_us = now; goto released; }   /* (a tap on the card itself keeps it) */
             }
+#endif
             if (s_sel >= 0 && s_sel < t->n_fish && render_next_hit(s_px, s_py)) {   /* the NEXT FISH arrow beside the card (0.3.9): the card
                                                                                   steps on (wrapping round), its 10 s start again */
                 int was = s_sel; s_sel = render_next_fish(t, s_sel); s_sel_us = now;
@@ -834,23 +871,25 @@ void touch_port_poll(tank_t *t) {
                 ESP_LOGI(TAG, "crab tapped: the keeper took its sand dollar (%u so far), first in line", (unsigned)t->cr_found);
                 goto released;
             }
-            /* fish first; only an empty tap reaches the water. 38 px radius
-               (a fingertip on this 322 ppi panel covers ~60 px) against BOTH
+            /* fish first; only an empty tap reaches the water. TANK_TAP_R (38 px:
+               a fingertip on this 322 ppi panel covers ~60 px) against BOTH
                the press-time snapshot and the current position - whichever is
-               closer - so a fish that moved mid-tap still registers. */
-            int best = -1; float bd = 38 * 38;
+               closer - so a fish that moved mid-tap still registers; a lizard
+               along its body, nose to tail tip (tank_tap_d2, the sim's too). */
+            int best = -1; float bd = TANK_TAP_R * TANK_TAP_R;
             for (int i = 0; i < t->n_fish; i++) {
-                float ax = s_fx[i] - s_px, ay = s_fy[i] - s_py;
-                float bx = t->fish[i].x - s_px, by = t->fish[i].y - s_py;
-                float d2a = ax * ax + ay * ay, d2b = bx * bx + by * by;
+                float d2a = tank_tap_d2(t, i, s_fx[i], s_fy[i], s_px, s_py);
+                float d2b = tank_tap_d2(t, i, t->fish[i].x, t->fish[i].y, s_px, s_py);
                 float d2 = d2a < d2b ? d2a : d2b;
                 if (d2 < bd) { bd = d2; best = i; }
             }
+#if PT_NET
             for (int k = 0; k < N_VISIT_MAX; k++) {      /* visitors (the tank link): their passport */
                 if (!t->vis_used[k]) continue;
                 float bx = t->fish[N_FISH_MAX + k].x - s_px, by = t->fish[N_FISH_MAX + k].y - s_py;
                 if (bx * bx + by * by < bd) { bd = bx * bx + by * by; best = N_FISH_MAX + k; }
             }
+#endif
             if (best >= 0) { s_sel = (best == s_sel) ? -1 : best; s_sel_us = now;
                              if (best >= N_FISH_MAX) ESP_LOGI(TAG, "visitor tapped: %s's passport %s", t->fish[best].name, s_sel >= 0 ? "up" : "down"); }
             else if (tank_snail_hit(t, s_px, s_py)) {   /* the snail: its card (2026-09-16), the fish first */
@@ -900,7 +939,13 @@ int touch_port_selected(void) { return s_sel; }
 bool touch_port_milestones(void) { return s_ms; }
 void touch_port_show_milestones(bool on) { if (s_ms && !on) render_milestones_leave(); s_ms = on; }
 void touch_port_set_quiet(bool on) { s_quiet = on; }
-void touch_port_dismiss(void) { adv_close(); s_sel = -1; if (s_ms) render_milestones_leave(); if (s_shop) render_shop_leave(); if (s_coll) render_collection_leave(); s_ms = false; s_set = false; s_shop = false; s_coll = false; s_bat = false; s_upd = false; s_shelf = false; }
+void touch_port_dismiss(void) {
+    adv_close(); s_sel = -1; if (s_ms) render_milestones_leave(); if (s_shop) render_shop_leave();
+#if PT_NET
+    if (s_coll) render_collection_leave();
+#endif
+    s_ms = false; s_set = false; s_shop = false; s_coll = false; s_bat = false; s_upd = false; s_shelf = false;
+}
 bool touch_port_updates(void) { return s_upd; }
 void touch_port_show_updates(bool on) { s_upd = on; if (on) { s_ms = false; s_set = false; s_shop = false; s_coll = false; s_sel = -1; s_bat = false; } }
 bool touch_port_shelf(void) { return s_shelf; }
@@ -912,7 +957,9 @@ int  touch_port_take_update(void) { int r = s_upd_act; s_upd_act = 0; return r; 
 void touch_port_confirm_open(void) {
     s_cf = true; s_cf_us = esp_timer_get_time(); s_cf_ans = 0;
     if (s_ms) render_milestones_leave();       /* (as touch_port_dismiss: a card's SELL armed under the prompt was still armed */
+#if PT_NET
     if (s_coll) render_collection_leave();     /*  when the keeper page came back - one tap sold the fish) */
+#endif
     s_sel = -1; s_ms = false; s_set = false; s_shop = false; s_coll = false; s_bat = false; s_upd = false; render_shop_leave();   /* it replaces the card / the pages */
     ESP_LOGI(TAG, "reset prompt up (YES / NO on the glass; NO by itself in %d s)", (int)(CONFIRM_TIMEOUT_US / 1000000));
 }
@@ -936,7 +983,9 @@ void touch_port_show_settings(bool on) { s_set = on; if (on) { s_ms = false; s_s
 int  touch_port_take_setting(int *value) { int w = s_set_what; *value = s_set_val; s_set_what = 0; return w; }
 bool touch_port_shop(void) { return s_shop; }
 bool touch_port_collection(void) { return s_coll; }
+#if PT_NET
 void touch_port_show_collection(bool on) { if (s_coll && !on) render_collection_leave(); s_coll = on; if (on) { s_ms = false; s_set = false; s_shop = false; s_sel = -1; s_bat = false; s_upd = false; } }
+#endif
 void touch_port_show_shop(bool on) { if (s_shop && !on) render_shop_leave(); s_shop = on; if (on) { s_ms = false; s_set = false; s_sel = -1; s_bat = false; } }
 int  touch_port_take_shop(void) { int r = s_shop_act; s_shop_act = 0; return r; }
 void touch_port_set_pill(bool up) { s_pill = up; }

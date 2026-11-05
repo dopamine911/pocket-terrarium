@@ -259,6 +259,8 @@ const char *const *progression_fry_tip(int kind);
 #define SD_STAGE_JUV   5
 #define SD_STAGE_ADULT 10
 #define SD_STAGE_ELDER 25
+#define SD_SHED_CLEAN  5           /* a lizard's shed off clean, never stuck (pocket-terrarium P2c): pays as a stage reached does
+                                    * (SD_STAGE_JUV's), once a shed, as it happens; a growth shed's stage pays its own on top */
 #define SD_BIRTH       20
 #define SD_TRUST       15
 #define SD_SNACK       10          /* the seahorse's snack, one paid per SH_SNACK_COOL_S (0.3.6) */

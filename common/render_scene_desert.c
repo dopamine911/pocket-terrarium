@@ -162,7 +162,8 @@ void scene_desert_peek_at(const scene_desert_t *d, int k, float half_len, float 
     const scene_hide_t *hd = &d->hide[k < 0 ? 0 : k >= d->n_hides ? d->n_hides - 1 : k];
     const float f = (float)hd->opens, cut = hd->door_x - f * hd->door_hw * 0.35f;   /* where it leaves the dark: just inside the door */
     *x = cut - f * half_len * (1 - 2 * peek);
-    *floor_y = hd->door_y;
+    *floor_y = hd->kind == HIDE_HUMID ? hd->base_y - hd->door_h * 0.52f + hd->door_hw * 0.45f   /* the box's round door: on its mossy sill */
+                                      : hd->door_y;                                                /* a cave's arch: on the sand */
     *yaw = f;
 }
 int scene_desert_moist_step(float m) { return (int)(sd_clamp(m, 0, 1) * 8 + 0.5f); }
@@ -263,7 +264,7 @@ static inline sd_rgb_t sd_mul(sd_rgb_t a, float k) { sd_rgb_t o = { a.r * k, a.g
 #define SD_BLOT    24                   /* the wall's blotches: a smooth noise on a 24 px grid */
 typedef struct { float x, y, irx, iry; int tone, y0, y1; } sd_pebble_t;
 typedef struct {
-    const glass_t *b;
+    glass_t g; const glass_t *b;        /* (b = &g: the glass kept with the bake, which may span frames) */
     scene_desert_t d;
     float moist[HABITAT_HIDES_MAX];
     float lamp_x, lamp_r, lamp_top, spot_y;
@@ -271,7 +272,13 @@ typedef struct {
     float plant_x[SD_PLANTS], plant_y[SD_PLANTS]; int n_plants;
     float sint[64];                     /* a sine, 64 steps a turn: the strata's edges */
     float rock_y0[SCENE_ROCKS_MAX], rock_y1[SCENE_ROCKS_MAX];   /* the rows each piece reaches */
+    /* the bake's inputs, and what varies along a column (worked out once by scene_desert_begin, read by every row) */
+    bool lit; float dim; const uint8_t *vig; int W, shadow_y0, shadow_y1;
+    int16_t sway[SD_W_MAX], edge[SD_W_MAX]; int8_t rip[SD_W_MAX];
 } sd_ctx_t;
+static sd_ctx_t g_sd;                   /* THE BAKE's one context (kept off the stack: the layout holds the ground; one bake at a time) */
+static unsigned g_sd_begun;             /* scene_desert_begin's count (scene_desert_begun: a caller's slices know the context is still theirs) */
+unsigned scene_desert_begun(void) { return g_sd_begun; }
 
 /* the wall: strata SD_LAYER deep on average, each edge its own gentle wave (two of the sine's harmonics, its own
    phase), a lit ledge along each edge and the shadow under the next; blotches, mottle and grit over it */
@@ -367,26 +374,54 @@ static bool sd_plant(float px, float py, float cx, float cy, sd_rgb_t *out) {
     }
     return false;
 }
+/* a hide's SHAPE at a pixel - the painters' one test, and scene_desert_hide_part's: none, its front (wall, lid, moss, sill)
+   or the dark of its door's opening, with what the painter goes on to read */
+enum { SD_H_NONE, SD_H_FRONT, SD_H_DOOR, SD_H_MOSS, SD_H_SILL };
+typedef struct { float dx, dy, e, rr, ddx, ddy, dd; } sd_hshape_t;
+static int sd_cave_shape(const scene_hide_t *hd, float px, float py, sd_hshape_t *s) {
+    s->dx = (px - hd->cx) / hd->half_w; s->dy = (hd->base_y - py) / hd->height;
+    if (s->dy < -0.02f || s->dy > 1.12f || s->dx < -1.12f || s->dx > 1.12f) return SD_H_NONE;
+    const int salt = hd->kind * 19 + 3;
+    s->rr = 1.0f + 0.10f * (sd_noise(s->dx * 4.0f + 9, salt) - 0.5f) + 0.06f * (sd_noise(s->dx * 11.0f, salt + 1) - 0.5f);
+    s->e = s->dx * s->dx + s->dy * s->dy * (0.86f + 0.14f * s->dy);              /* a dome, a little flat on top */
+    if (s->e > s->rr * s->rr) return SD_H_NONE;
+    s->ddx = (px - hd->door_x) / hd->door_hw; s->ddy = (hd->base_y - py) / hd->door_h;   /* the door: an arch from the sand */
+    return s->ddy >= -0.02f && s->ddy < 1.0f && s->ddx * s->ddx + s->ddy * s->ddy * s->ddy * s->ddy < 1.0f ? SD_H_DOOR : SD_H_FRONT;
+}
+static int sd_box_shape(const scene_hide_t *hd, float px, float py, sd_hshape_t *s) {
+    const float top = hd->base_y - hd->height, ax = fabsf(px - hd->cx);
+    if (ax < hd->half_w - 3 && py < top + 1.5f) {                                /* moss tufts along the lid (e: the tuft's height) */
+        s->e = 1.0f + 3.2f * sd_noise((px - hd->cx) * 0.33f + 5, 77) * sd_noise((px - hd->cx) * 0.11f + 2, 78);
+        if (py >= top - s->e) return SD_H_MOSS;
+    }
+    if (ax > hd->half_w || py < top || py > hd->base_y + 0.5f) return SD_H_NONE;
+    const float rc = 7.0f;                                                      /* the lid's round corners */
+    if (py < top + rc && ax > hd->half_w - rc) {
+        float qx = ax - (hd->half_w - rc), qy = top + rc - py;
+        if (qx * qx + qy * qy > rc * rc) return SD_H_NONE;
+    }
+    const float hy = hd->base_y - hd->door_h * 0.52f, R = hd->door_hw;          /* the door: a round hole, moss over its sill */
+    s->ddx = px - hd->door_x; s->ddy = py - hy; s->dd = s->ddx * s->ddx + s->ddy * s->ddy;
+    if (s->dd < R * R) return s->ddy > R * 0.35f - 2.2f * sd_noise(px * 0.5f, 79) ? SD_H_SILL : SD_H_DOOR;
+    return SD_H_FRONT;
+}
 /* a stone cave: a lumpy dome, lit from above and the lamp's side, strata and speckle, an arched door with its dark */
 static bool sd_cave(const sd_ctx_t *c, const scene_hide_t *hd, int x, int y, sd_rgb_t *out) {
     const float px = x + 0.5f, py = y + 0.5f;
-    const float dx = (px - hd->cx) / hd->half_w, dy = (hd->base_y - py) / hd->height;
-    if (dy < -0.02f || dy > 1.12f || dx < -1.12f || dx > 1.12f) return false;
+    sd_hshape_t s; const int part = sd_cave_shape(hd, px, py, &s);
+    if (part == SD_H_NONE) return false;
     const int salt = hd->kind * 19 + 3;
-    const float rr = 1.0f + 0.10f * (sd_noise(dx * 4.0f + 9, salt) - 0.5f) + 0.06f * (sd_noise(dx * 11.0f, salt + 1) - 0.5f);
-    const float e = dx * dx + dy * dy * (0.86f + 0.14f * dy);                   /* a dome, a little flat on top */
-    if (e > rr * rr) return false;
     const bool cool = hd->kind == HIDE_COOL;
     static const uint32_t WARM[5] = { 0x3e1e14, 0x6e3622, 0x9a5132, 0xc07246, 0xdc9868 };
     static const uint32_t COOL[5] = { 0x262a32, 0x40485a, 0x5f6a7c, 0x84909e, 0xadb6c0 };
     const uint32_t *T = cool ? COOL : WARM;
-    const float ddx = (px - hd->door_x) / hd->door_hw, ddy = (hd->base_y - py) / hd->door_h;   /* the door: an arch from the sand */
-    if (ddy >= -0.02f && ddy < 1.0f && ddx * ddx + ddy * ddy * ddy * ddy < 1.0f) {
-        float k = ddx * ddx + ddy * ddy;                                       /* darker the deeper in */
+    if (part == SD_H_DOOR) {
+        float k = s.ddx * s.ddx + s.ddy * s.ddy;                               /* darker the deeper in */
         sd_rgb_t in = sd_mix(sd_hex(0x0e0806), sd_hex(cool ? 0x2a2e36 : 0x3a2016), sd_clamp(k * 0.9f, 0, 1));
-        if (ddy < 0.12f) in = sd_mix(in, sd_hex(0x6a5038), 0.35f * (1 - fabsf(ddx)));   /* the sand inside, faintly */
+        if (s.ddy < 0.12f) in = sd_mix(in, sd_hex(0x6a5038), 0.35f * (1 - fabsf(s.ddx)));   /* the sand inside, faintly */
         *out = in; return true;
     }
+    const float dx = s.dx, dy = s.dy, e = s.e, rr = s.rr;
     float nz2 = 1 - dx * dx - dy * dy; float nz = nz2 > 0 ? sqrtf(nz2) : 0;
     const float side = c->lamp_x > hd->cx ? 1.0f : -1.0f;
     float lum = 0.62f * dy + 0.30f * side * dx + 0.45f * nz;
@@ -407,24 +442,13 @@ static bool sd_cave(const sd_ctx_t *c, const scene_hide_t *hd, int x, int y, sd_
 static bool sd_box(const sd_ctx_t *c, const scene_hide_t *hd, float m, int x, int y, sd_rgb_t *out) {
     const float px = x + 0.5f, py = y + 0.5f, top = hd->base_y - hd->height;
     const float ax = fabsf(px - hd->cx);
+    sd_hshape_t s; const int part = sd_box_shape(hd, px, py, &s);
+    if (part == SD_H_NONE) return false;
     const sd_rgb_t moss_lo = m > 0.25f ? sd_hex(0x3f7a2e) : sd_hex(0x7a7240), moss_hi = m > 0.25f ? sd_hex(0x78b84c) : sd_hex(0xa89c5c);
-    if (ax < hd->half_w - 3 && py < top + 1.5f) {                                /* moss tufts along the lid */
-        float tuft = 1.0f + 3.2f * sd_noise((px - hd->cx) * 0.33f + 5, 77) * sd_noise((px - hd->cx) * 0.11f + 2, 78);
-        if (py >= top - tuft) { *out = (sd_hash(x, y) & 3) == 0 ? moss_hi : sd_mix(moss_lo, moss_hi, (top - py) / (tuft + 0.01f)); return true; }
-    }
-    if (ax > hd->half_w || py < top || py > hd->base_y + 0.5f) return false;
-    const float rc = 7.0f;                                                      /* the lid's round corners */
-    if (py < top + rc && ax > hd->half_w - rc) {
-        float qx = ax - (hd->half_w - rc), qy = top + rc - py;
-        if (qx * qx + qy * qy > rc * rc) return false;
-    }
-    const float hy = hd->base_y - hd->door_h * 0.52f, hx = hd->door_x;          /* the door: a round hole */
-    const float ddx = px - hx, ddy = py - hy, dd = ddx * ddx + ddy * ddy, R = hd->door_hw;
-    if (dd < R * R) {
-        if (ddy > R * 0.35f - 2.2f * sd_noise(px * 0.5f, 79)) { *out = (sd_hash(x, y + 9) & 3) ? moss_lo : moss_hi; return true; }
-        *out = sd_mix(sd_hex(0x0e0a08), sd_hex(0x2c1a12), sd_clamp(dd / (R * R), 0, 1));
-        return true;
-    }
+    if (part == SD_H_MOSS) { *out = (sd_hash(x, y) & 3) == 0 ? moss_hi : sd_mix(moss_lo, moss_hi, (top - py) / (s.e + 0.01f)); return true; }
+    if (part == SD_H_SILL) { *out = (sd_hash(x, y + 9) & 3) ? moss_lo : moss_hi; return true; }
+    const float R = hd->door_hw, ddy = s.ddy, dd = s.dd;
+    if (part == SD_H_DOOR) { *out = sd_mix(sd_hex(0x0e0a08), sd_hex(0x2c1a12), sd_clamp(dd / (R * R), 0, 1)); return true; }
     static const uint32_t CLAY[5] = { 0x4a2416, 0x7a3c24, 0xa25a38, 0xc07650, 0xd89a72 };
     float lum = 0.55f;
     if (py < top + 2.5f) lum = 0.92f;                                           /* the lid's lit rim */
@@ -439,11 +463,38 @@ static bool sd_box(const sd_ctx_t *c, const scene_hide_t *hd, float m, int x, in
     const uint32_t h = sd_hash(x * 7, y);
     lum += ((float)(h & 255) / 255.0f - 0.5f) * 0.08f;
     int t = lum < 0.18f ? 0 : lum < 0.40f ? 1 : lum < 0.62f ? 2 : lum < 0.84f ? 3 : 4;
-    sd_rgb_t s = sd_hex(CLAY[t]);
-    if (m >= 0.35f && (h >> 9 & 63) < (uint32_t)(m * 5)) s = sd_hex(0xdcf2ff);  /* droplets */
-    else if (m >= 0.35f) s = sd_mul(s, 0.90f);                                   /* the clay darker, damp */
-    *out = s;
+    sd_rgb_t sc = sd_hex(CLAY[t]);
+    if (m >= 0.35f && (h >> 9 & 63) < (uint32_t)(m * 5)) sc = sd_hex(0xdcf2ff); /* droplets */
+    else if (m >= 0.35f) sc = sd_mul(sc, 0.90f);                                 /* the clay darker, damp */
+    *out = sc;
     return true;
+}
+int scene_desert_hide_part(const scene_desert_t *d, int k, float x, float y) {
+    if (k < 0 || k >= d->n_hides) return SCENE_HIDE_NONE;
+    sd_hshape_t s;
+    const int part = d->hide[k].kind == HIDE_HUMID ? sd_box_shape(&d->hide[k], x, y, &s) : sd_cave_shape(&d->hide[k], x, y, &s);
+    return part == SD_H_NONE ? SCENE_HIDE_NONE : part == SD_H_DOOR ? SCENE_HIDE_DOOR : SCENE_HIDE_FRONT;
+}
+/* the door's half width at row py, its outline's (the cave's arch: ddx^2 + ddy^4 < 1 from the sand; the box's round hole,
+   its sill in it); its widest, door_hw, on a row the outline does not reach */
+static float sd_door_hw_at(const scene_hide_t *hd, float py) {
+    if (hd->kind == HIDE_HUMID) {
+        const float dy = py - (hd->base_y - hd->door_h * 0.52f), R = hd->door_hw;
+        return fabsf(dy) < R ? sqrtf(R * R - dy * dy) : R;
+    }
+    const float ddy = (hd->base_y - py) / hd->door_h;
+    return ddy >= -0.02f && ddy < 1.0f ? hd->door_hw * sqrtf(1 - ddy * ddy * ddy * ddy) : hd->door_hw;
+}
+bool scene_desert_hide_covers(const scene_desert_t *d, int k, float x, float y) {
+    if (k < 0 || k >= d->n_hides) return false;
+    const scene_hide_t *hd = &d->hide[k];
+    return (x - hd->door_x) * (float)hd->opens < sd_door_hw_at(hd, y) && scene_desert_hide_part(d, k, x, y) == SCENE_HIDE_FRONT;
+}
+void scene_desert_hide_box(const scene_desert_t *d, int k, int *x0, int *y0, int *x1, int *y1) {
+    const scene_hide_t *hd = &d->hide[k < 0 ? 0 : k >= d->n_hides ? d->n_hides - 1 : k];
+    const float hw = hd->half_w * 1.12f + 1, up = hd->height * (hd->kind == HIDE_HUMID ? 1.0f : 1.12f) + (hd->kind == HIDE_HUMID ? 6 : 1);
+    *x0 = (int)floorf(hd->cx - hw); *x1 = (int)ceilf(hd->cx + hw);
+    *y0 = (int)floorf(hd->base_y - up); *y1 = (int)ceilf(hd->base_y + 1);
 }
 /* the sand at (x, y): its colour across and in depth, ripples, grains, the row's pebbles; the contact shadows and
    the humid door's moisture only on the rows they reach */
@@ -508,41 +559,41 @@ static sd_rgb_t sd_sand(const sd_ctx_t *c, int x, int y, float depth, int rip, i
 }
 
 
-void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat_t *h, bool lit, const float *moisture,
-                       float dim, const uint8_t *vig) {
-    static const uint8_t BAYER[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
-    static sd_ctx_t c;                  /* (the layout holds the ground: kept off the stack; one bake at a time) */
+void scene_desert_begin(const glass_t *b, const habitat_t *h, bool lit, const float *moisture, float dim, const uint8_t *vig) {
+    sd_ctx_t *c = &g_sd;
+    g_sd_begun++;
     sd_tables_make();
-    memset(&c, 0, sizeof c);
-    c.b = b;
-    scene_desert_layout(b, h, &c.d);
-    for (int k = 0; k < c.d.n_hides; k++) c.moist[k] = (float)scene_desert_moist_step(moisture ? moisture[k] : h->moist_start) / 8.0f;
-    c.lamp_x = c.d.bask_x; c.lamp_r = h->bask_r_px > 0 ? h->bask_r_px : 70; c.lamp_top = glass_top(b, c.lamp_x);
-    c.spot_y = c.d.bask_y + TERRAIN_FEET_DY;
-    for (int k = 0; k < 64; k++) c.sint[k] = sinf((float)k * 6.2831853f / 64);
-    const float wall_y = c.d.wall_y;
-    for (int k = 0; k < c.d.n_rocks; k++) {                                    /* the rows each piece of the ground reaches */
-        const scene_rock_t *r = &c.d.rock[k];
-        const float ya = sd_top(&c.d, r, r->x0), yb = sd_top(&c.d, r, r->x1);
-        c.rock_y0[k] = fminf(ya, yb) - SD_TOP_HW - 3;
-        c.rock_y1[k] = r->slab ? fmaxf(ya, yb) + SD_SLAB_HW + SD_SLAB_FACE + 3 : r->foot + 1;
+    memset(c, 0, sizeof *c);
+    c->g = *b; c->b = b = &c->g;
+    c->lit = lit; c->dim = dim; c->vig = vig;
+    scene_desert_layout(b, h, &c->d);
+    for (int k = 0; k < c->d.n_hides; k++) c->moist[k] = (float)scene_desert_moist_step(moisture ? moisture[k] : h->moist_start) / 8.0f;
+    c->lamp_x = c->d.bask_x; c->lamp_r = h->bask_r_px > 0 ? h->bask_r_px : 70; c->lamp_top = glass_top(b, c->lamp_x);
+    c->spot_y = c->d.bask_y + TERRAIN_FEET_DY;
+    for (int k = 0; k < 64; k++) c->sint[k] = sinf((float)k * 6.2831853f / 64);
+    const float wall_y = c->d.wall_y;
+    for (int k = 0; k < c->d.n_rocks; k++) {                                   /* the rows each piece of the ground reaches */
+        const scene_rock_t *r = &c->d.rock[k];
+        const float ya = sd_top(&c->d, r, r->x0), yb = sd_top(&c->d, r, r->x1);
+        c->rock_y0[k] = fminf(ya, yb) - SD_TOP_HW - 3;
+        c->rock_y1[k] = r->slab ? fmaxf(ya, yb) + SD_SLAB_HW + SD_SLAB_FACE + 3 : r->foot + 1;
     }
     /* the pebbles, off the hides; the succulents: one on the basking rock's free end, one at the back of the open sand */
     for (int k = 0; k < SD_PEBBLES; k++) {
         const uint32_t ph = sd_hash(k, 4242);
-        sd_pebble_t *p = &c.peb[c.n_peb];
+        sd_pebble_t *p = &c->peb[c->n_peb];
         p->x = 8 + (float)(ph & 1023) / 1023.0f * (b->w - 16);
         p->y = wall_y + 8 + (float)((ph >> 10) & 255) / 255.0f * (b->bot - wall_y - 12);
         const float rx = 1.6f + (float)((ph >> 18) & 3) * 0.7f;
         p->irx = 1 / rx; p->iry = 1 / (rx * 0.62f); p->tone = (int)((ph >> 21) % 3);
         bool off = false;
-        for (int j = 0; j < c.d.n_hides && !off; j++) off = fabsf(p->x - c.d.hide[j].cx) < c.d.hide[j].half_w + 8 && p->y > c.d.hide[j].base_y - c.d.hide[j].height - 4 && p->y < c.d.hide[j].base_y + 9;
+        for (int j = 0; j < c->d.n_hides && !off; j++) off = fabsf(p->x - c->d.hide[j].cx) < c->d.hide[j].half_w + 8 && p->y > c->d.hide[j].base_y - c->d.hide[j].height - 4 && p->y < c->d.hide[j].base_y + 9;
         if (off) continue;
         p->y0 = (int)floorf(p->y - rx * 0.62f); p->y1 = (int)ceilf(p->y + rx * 0.62f);
-        c.n_peb++;
+        c->n_peb++;
     }
     {
-        const terrain_t *tr = &c.d.tr;
+        const terrain_t *tr = &c->d.tr;
         if (tr->bask_path > 0) {
             const terrain_path_t *q = &tr->path[tr->bask_path];
             bool lfree = true, rfree = true;
@@ -553,33 +604,45 @@ void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat
             }
             if (lfree || rfree) {
                 const float x = lfree ? q->x[0] - SD_LIP + 7 : q->x[q->n - 1] + SD_LIP - 7;
-                c.plant_x[c.n_plants] = x; c.plant_y[c.n_plants] = terrain_y(q, x) + TERRAIN_FEET_DY - SD_TOP_HW + 3; c.n_plants++;
+                c->plant_x[c->n_plants] = x; c->plant_y[c->n_plants] = terrain_y(q, x) + TERRAIN_FEET_DY - SD_TOP_HW + 3; c->n_plants++;
             }
         }
         static const float PLANT_U[4] = { 0.80f, 0.70f, 0.62f, 0.90f };
-        for (int k = 0; k < 4 && c.n_plants < SD_PLANTS; k++) {
+        for (int k = 0; k < 4 && c->n_plants < SD_PLANTS; k++) {
             const float x = glass_floor_x(b, PLANT_U[k]), y = wall_y + 16;
-            bool clear = scene_desert_ground_at(&c.d, x - 12, y) == 0 && scene_desert_ground_at(&c.d, x + 12, y) == 0 && scene_desert_ground_at(&c.d, x, y - 12) == 0;
-            for (int j = 0; j < c.d.n_hides; j++) clear &= fabsf(x - c.d.hide[j].cx) > c.d.hide[j].half_w + 14;
-            if (clear) { c.plant_x[c.n_plants] = x; c.plant_y[c.n_plants] = y; c.n_plants++; }
+            bool clear = scene_desert_ground_at(&c->d, x - 12, y) == 0 && scene_desert_ground_at(&c->d, x + 12, y) == 0 && scene_desert_ground_at(&c->d, x, y - 12) == 0;
+            for (int j = 0; j < c->d.n_hides; j++) clear &= fabsf(x - c->d.hide[j].cx) > c->d.hide[j].half_w + 14;
+            if (clear) { c->plant_x[c->n_plants] = x; c->plant_y[c->n_plants] = y; c->n_plants++; }
         }
     }
     /* along each column: the strata's sway, the sand's back edge, the ripples' phase */
-    int16_t sway[SD_W_MAX], edge[SD_W_MAX]; int8_t rip[SD_W_MAX];
-    const int W = b->w < SD_W_MAX ? b->w : SD_W_MAX;
-    for (int x = 0; x < W; x++) {
+    c->W = b->w < SD_W_MAX ? b->w : SD_W_MAX;
+    for (int x = 0; x < c->W; x++) {
         const float fx = (float)x;
-        sway[x] = (int16_t)(8 * (10.0f * (sd_noise(fx * 0.008f, 1) - 0.5f) + 2.0f * sinf(fx * 0.031f + 1.3f)));
-        edge[x] = (int16_t)(8 * (wall_y - 5.0f * sd_noise(fx * 0.018f, 5) - 1.2f * sd_noise(fx * 0.25f, 33)));
-        rip[x] = (int8_t)(int)(4.0f * sinf(fx * 0.07f) + 3.0f * sinf(fx * 0.023f + 2));
+        c->sway[x] = (int16_t)(8 * (10.0f * (sd_noise(fx * 0.008f, 1) - 0.5f) + 2.0f * sinf(fx * 0.031f + 1.3f)));
+        c->edge[x] = (int16_t)(8 * (wall_y - 5.0f * sd_noise(fx * 0.018f, 5) - 1.2f * sd_noise(fx * 0.25f, 33)));
+        c->rip[x] = (int8_t)(int)(4.0f * sinf(fx * 0.07f) + 3.0f * sinf(fx * 0.023f + 2));
     }
+    c->shadow_y0 = b->bot - 18; c->shadow_y1 = b->bot - 5;                       /* the rows a contact shadow reaches */
+    for (int k = 0; k < c->d.n_hides; k++) if (c->d.hide[k].base_y - 6 < c->shadow_y0) c->shadow_y0 = (int)(c->d.hide[k].base_y - 6);
+    for (int k = 0; k < c->d.n_rocks; k++) if (!c->d.rock[k].slab && !c->d.rock[k].shelf && c->d.rock[k].foot - 2 < c->shadow_y0) c->shadow_y0 = (int)(c->d.rock[k].foot - 2);
+}
+
+void scene_desert_rows(uint16_t *fb, int stride, int y0, int y1, int x0, int x1) {
+    static const uint8_t BAYER[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+    const sd_ctx_t *c = &g_sd;
+    const glass_t *b = c->b;
+    if (!b) return;                                                             /* (no scene_desert_begin yet) */
+    const int W = c->W, nb = W / SD_BLOT + 2;
+    const bool lit = c->lit; const float dim = c->dim; const uint8_t *vig = c->vig;
+    const float wall_y = c->d.wall_y;
+    if (y0 < 0) y0 = 0;
+    if (y1 > b->h - 1) y1 = b->h - 1;
+    if (x0 < 0) x0 = 0;
+    if (x1 > b->w - 1) x1 = b->w - 1;
     float blot[SD_W_MAX / SD_BLOT + 3];                                          /* the wall's blotches along this row, at the grid's columns */
-    const int nb = W / SD_BLOT + 2;
-    int shadow_y0 = b->bot - 18, shadow_y1 = b->bot - 5;                          /* the rows a contact shadow reaches */
-    for (int k = 0; k < c.d.n_hides; k++) if (c.d.hide[k].base_y - 6 < shadow_y0) shadow_y0 = (int)(c.d.hide[k].base_y - 6);
-    for (int k = 0; k < c.d.n_rocks; k++) if (!c.d.rock[k].slab && !c.d.rock[k].shelf && c.d.rock[k].foot - 2 < shadow_y0) shadow_y0 = (int)(c.d.rock[k].foot - 2);
-    const sd_rgb_t LAMP = sd_hex(0xffd59a), NIGHT = sd_hex(0x182238), GLARE = sd_hex(0xfff2d4);
-    for (int y = 0; y < b->h; y++) {
+    const sd_rgb_t LAMP = sd_hex(0xffd59a), NIGHT = sd_hex(SCENE_NIGHT_RGB), GLARE = sd_hex(0xfff2d4);
+    for (int y = y0; y <= y1; y++) {
         uint16_t *row = fb + (size_t)y * stride;
         const float fy = y + 0.5f;
         int gx0, gx1;                                                           /* the glass along this row */
@@ -590,8 +653,10 @@ void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat
         } else { float in = glass_x0(b, fy); gx0 = (int)ceilf(in - 0.5f); gx1 = (int)floorf(b->w - in - 0.5f); }
         if (gx0 < 0) gx0 = 0;
         if (gx1 > W - 1) gx1 = W - 1;
-        for (int x = 0; x < gx0 && x < b->w; x++) row[x] = 0;
-        for (int x = gx1 + 1 > 0 ? gx1 + 1 : 0; x < b->w; x++) row[x] = 0;
+        for (int x = x0; x < gx0 && x <= x1; x++) row[x] = 0;
+        for (int x = gx1 + 1 > x0 ? gx1 + 1 : x0; x <= x1; x++) row[x] = 0;
+        const int ga = gx0 > x0 ? gx0 : x0, gb = gx1 < x1 ? gx1 : x1;
+        if (ga > gb) continue;
         /* the row's own: the lid's shade, the floor's depth, the wall's blotches, the lamp's reach, what stands in it */
         const float lid = sd_clamp(fy / (wall_y * 0.8f), 0, 1), lid_k = 0.52f + 0.48f * lid * (2 - lid);
         const float depth = sd_clamp((fy - wall_y) / (b->bot - wall_y), 0, 1);
@@ -602,61 +667,61 @@ void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat
                 blot[k] = 0.86f + 0.28f * (a + (bb - a) * f);
             }
         }
-        const float wdy = (fy - (c.spot_y - 70)) * (1.0f / 160.0f), wdy2 = wdy * wdy;   /* the lamp's spot on the wall */
-        const float pdy = (fy - (c.spot_y - 2)) * (1.0f / 26.0f), pdy2 = pdy * pdy;      /* ... its pool on the rock */
-        const float beam_t = (fy - c.lamp_top) / (c.spot_y - c.lamp_top);
-        const float beam_hw = 12 + (fy - c.lamp_top) * 0.28f, beam_k = beam_t > 0 && beam_t < 1 ? 0.075f * (1 - 0.5f * beam_t) : 0;
-        const float gdy = (fy - c.lamp_top - 2) * (1.0f / 8.0f), gdy2 = gdy * gdy;   /* ... its glare at the top of the glass */
-        const float ilr = 1.0f / (c.lamp_r * 1.2f);
+        const float wdy = (fy - (c->spot_y - 70)) * (1.0f / 160.0f), wdy2 = wdy * wdy;   /* the lamp's spot on the wall */
+        const float pdy = (fy - (c->spot_y - 2)) * (1.0f / 26.0f), pdy2 = pdy * pdy;      /* ... its pool on the rock */
+        const float beam_t = (fy - c->lamp_top) / (c->spot_y - c->lamp_top);
+        const float beam_hw = 12 + (fy - c->lamp_top) * 0.28f, beam_k = beam_t > 0 && beam_t < 1 ? 0.075f * (1 - 0.5f * beam_t) : 0;
+        const float gdy = (fy - c->lamp_top - 2) * (1.0f / 8.0f), gdy2 = gdy * gdy;   /* ... its glare at the top of the glass */
+        const float ilr = 1.0f / (c->lamp_r * 1.2f);
         int npeb = 0, peb[SD_PEBBLES];
-        for (int k = 0; k < c.n_peb; k++) if (y >= c.peb[k].y0 && y <= c.peb[k].y1) peb[npeb++] = k;
+        for (int k = 0; k < c->n_peb; k++) if (y >= c->peb[k].y0 && y <= c->peb[k].y1) peb[npeb++] = k;
         bool hide_row = false, moist_row = false;
-        for (int k = 0; k < c.d.n_hides; k++) {
-            if (fy > c.d.hide[k].base_y - c.d.hide[k].height - 6 && fy < c.d.hide[k].base_y + 1) hide_row = true;
-            if (c.d.hide[k].kind == HIDE_HUMID && fy > c.d.hide[k].base_y - 3 && fy < c.d.hide[k].base_y + 11) moist_row = true;
+        for (int k = 0; k < c->d.n_hides; k++) {
+            if (fy > c->d.hide[k].base_y - c->d.hide[k].height - 6 && fy < c->d.hide[k].base_y + 1) hide_row = true;
+            if (c->d.hide[k].kind == HIDE_HUMID && fy > c->d.hide[k].base_y - 3 && fy < c->d.hide[k].base_y + 11) moist_row = true;
         }
         /* the pieces in this row, each with the stretch it may cover; the stretches two and four rows up, for their shadow
            on what is behind them (away from the lamp), and the shelves' shadow down the wall under them */
         int nrk = 0, rk[SCENE_ROCKS_MAX]; float rx0[SCENE_ROCKS_MAX], rx1[SCENE_ROCKS_MAX];
         int ns2 = 0, ns4 = 0; float s2a[SCENE_ROCKS_MAX], s2b[SCENE_ROCKS_MAX], s4a[SCENE_ROCKS_MAX], s4b[SCENE_ROCKS_MAX];
         int nsh = 0; float sha[SCENE_ROCKS_MAX], shb[SCENE_ROCKS_MAX], shk[SCENE_ROCKS_MAX];
-        for (int k = 0; k < c.d.n_rocks; k++) {
-            const scene_rock_t *r = &c.d.rock[k];
+        for (int k = 0; k < c->d.n_rocks; k++) {
+            const scene_rock_t *r = &c->d.rock[k];
             float a, bb;
-            if (fy >= c.rock_y0[k] && fy <= c.rock_y1[k]) {
+            if (fy >= c->rock_y0[k] && fy <= c->rock_y1[k]) {
                 rk[nrk] = k;
                 if (r->slab) { rx0[nrk] = r->l; rx1[nrk] = r->r; nrk++; }
-                else if (sd_span(&c.d, r, fy, &a, &bb)) { rx0[nrk] = fminf(a, r->l) - 4; rx1[nrk] = fmaxf(bb, r->r) + 4; nrk++; }
+                else if (sd_span(&c->d, r, fy, &a, &bb)) { rx0[nrk] = fminf(a, r->l) - 4; rx1[nrk] = fmaxf(bb, r->r) + 4; nrk++; }
                 else { rx0[nrk] = r->l - SD_EXT_MAX; rx1[nrk] = r->r + SD_EXT_MAX; nrk++; }   /* (its top's sway past the row's bounds) */
             }
-            if (sd_span(&c.d, r, fy - 2, &a, &bb)) { s2a[ns2] = a; s2b[ns2] = bb; ns2++; }
-            if (sd_span(&c.d, r, fy - 4, &a, &bb)) { s4a[ns4] = a; s4b[ns4] = bb; ns4++; }
+            if (sd_span(&c->d, r, fy - 2, &a, &bb)) { s2a[ns2] = a; s2b[ns2] = bb; ns2++; }
+            if (sd_span(&c->d, r, fy - 4, &a, &bb)) { s4a[ns4] = a; s4b[ns4] = bb; ns4++; }
             if (r->shelf && fy > r->foot && fy < r->foot + 22) { sha[nsh] = r->l + 6; shb[nsh] = r->r - 6; shk[nsh] = 0.62f + 0.38f * (fy - r->foot) / 22; nsh++; }
         }
-        const bool shade_row = y >= shadow_y0 && y <= shadow_y1;
+        const bool shade_row = y >= c->shadow_y0 && y <= c->shadow_y1;
         bool plant_row = false;
-        for (int k = 0; k < c.n_plants; k++) if (fy > c.plant_y[k] - 13 && fy < c.plant_y[k] + 2) plant_row = true;
-        for (int x = gx0; x <= gx1; x++) {
+        for (int k = 0; k < c->n_plants; k++) if (fy > c->plant_y[k] - 13 && fy < c->plant_y[k] + 2) plant_row = true;
+        for (int x = ga; x <= gb; x++) {
             const float fx = x + 0.5f;
-            const bool sand = fy * 8 >= edge[x];
+            const bool sand = fy * 8 >= c->edge[x];
             int ri = -1; sd_hit_t hit;
             for (int q = 0; q < nrk; q++) {                                     /* the frontmost piece here: the lowest top */
                 if (fx < rx0[q] || fx > rx1[q]) continue;
                 sd_hit_t hq;
-                if (sd_piece(&c.d, &c.d.rock[rk[q]], fx, fy, &hq) == SD_NONE) continue;
+                if (sd_piece(&c->d, &c->d.rock[rk[q]], fx, fy, &hq) == SD_NONE) continue;
                 if (ri < 0 || hq.top > hit.top) { hit = hq; ri = rk[q]; }
             }
             sd_rgb_t s;
-            if (ri >= 0) s = sd_ground(&c, &c.d.rock[ri], &hit, x, y);
+            if (ri >= 0) s = sd_ground(c, &c->d.rock[ri], &hit, x, y);
             else {
                 if (sand) {
-                    s = sd_sand(&c, x, y, depth, rip[x], npeb, peb, shade_row, moist_row);
-                    if (fy * 8 < edge[x] + 20) s = sd_mul(s, 0.80f);              /* the wall's foot */
+                    s = sd_sand(c, x, y, depth, c->rip[x], npeb, peb, shade_row, moist_row);
+                    if (fy * 8 < c->edge[x] + 20) s = sd_mul(s, 0.80f);           /* the wall's foot */
                 } else {
                     const int kb = x / SD_BLOT; float f = (float)(x % SD_BLOT) / SD_BLOT; f = f * f * (3 - 2 * f);
-                    s = sd_mul(sd_wall(&c, x, y, fy + sway[x] * 0.125f, blot[kb] + (blot[kb + 1] - blot[kb]) * f), lid_k);
+                    s = sd_mul(sd_wall(c, x, y, fy + c->sway[x] * 0.125f, blot[kb] + (blot[kb + 1] - blot[kb]) * f), lid_k);
                 }
-                float k = 1; const float sx = fx > c.lamp_x ? 7.0f : -7.0f;    /* the ground's shadow behind it, away from the lamp */
+                float k = 1; const float sx = fx > c->lamp_x ? 7.0f : -7.0f;   /* the ground's shadow behind it, away from the lamp */
                 for (int q = 0; q < ns4; q++) if (fx - sx >= s4a[q] && fx - sx <= s4b[q]) { k *= 0.80f; break; }
                 for (int q = 0; q < ns2; q++) if (fx - sx * 0.5f >= s2a[q] && fx - sx * 0.5f <= s2b[q]) { k *= 0.90f; break; }
                 for (int q = 0; q < nsh; q++) if (fx >= sha[q] && fx <= shb[q]) k *= shk[q];   /* under a shelf */
@@ -664,27 +729,27 @@ void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat
             }
             sd_rgb_t o; bool prop = false;
             if (hide_row)
-                for (int k = 0; k < c.d.n_hides && !prop; k++) {
-                    const scene_hide_t *hd = &c.d.hide[k];
+                for (int k = 0; k < c->d.n_hides && !prop; k++) {
+                    const scene_hide_t *hd = &c->d.hide[k];
                     if (fx < hd->cx - hd->half_w - 3 || fx > hd->cx + hd->half_w + 3) continue;
-                    prop = hd->kind == HIDE_HUMID ? sd_box(&c, hd, c.moist[k], x, y, &o) : sd_cave(&c, hd, x, y, &o);
+                    prop = hd->kind == HIDE_HUMID ? sd_box(c, hd, c->moist[k], x, y, &o) : sd_cave(c, hd, x, y, &o);
                 }
             if (!prop && plant_row)
-                for (int k = 0; k < c.n_plants && !prop; k++) prop = sd_plant(fx, fy, c.plant_x[k], c.plant_y[k], &o);
+                for (int k = 0; k < c->n_plants && !prop; k++) prop = sd_plant(fx, fy, c->plant_x[k], c->plant_y[k], &o);
             if (prop) s = o;
             const bool solid = sand || prop || ri >= 0;
             if (lit) {
-                const float ldx = fx - c.lamp_x;
+                const float ldx = fx - c->lamp_x;
                 float gain = 0;
                 if (!solid) { float gx = ldx * (1.0f / 110.0f), d = gx * gx + wdy2; if (d < 1) gain += 0.62f * (1 - d) * (1 - d); }
                 else { float gx = ldx * ilr, d = gx * gx + pdy2; if (d < 1) gain += 0.72f * (1 - d) * (1 - d); }
-                if (gain > 0) { s.r *= 1 + gain; s.g *= 1 + 0.80f * gain; s.b *= 1 + 0.42f * gain; }
+                if (gain > 0) { s.r *= 1 + gain; s.g *= 1 + SCENE_GLOW_G * gain; s.b *= 1 + SCENE_GLOW_B * gain; scene_glow_fit(&s.r, &s.g, &s.b); }
                 const float ax = fabsf(ldx);
                 if (beam_k > 0 && ax < beam_hw) { float k = 1 - ax / beam_hw; s = sd_mix(s, LAMP, k * k * beam_k); }
                 if (gdy2 < 1) { float gx = ldx * (1.0f / 20.0f), d = gx * gx + gdy2; if (d < 1) s = sd_mix(s, GLARE, 0.75f * (1 - d) * (1 - d)); }
                 const float t = 1 - 2 * fx / b->w;                              /* the warm end warmer, the cool end bluer */
                 s.r *= 1 + 0.07f * t; s.g *= 1 + 0.01f * t; s.b *= 1 - 0.09f * t;
-            } else s = sd_mix(sd_mul(s, 0.80f), NIGHT, 0.30f);                 /* the lamp out: moonlit */
+            } else s = sd_mix(sd_mul(s, SCENE_NIGHT_K), NIGHT, SCENE_NIGHT_MIX); /* the lamp out: moonlit */
             int r = (int)(s.r * dim), g = (int)(s.g * dim), bl = (int)(s.b * dim);
             if (vig) { int inv = 256 - vig[(size_t)y * b->w + x]; r = r * inv >> 8; g = g * inv >> 8; bl = bl * inv >> 8; }
             const int dd = BAYER[y & 3][x & 3];
@@ -693,4 +758,26 @@ void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat
             row[x] = FB_SWAP16((uint16_t)((r5 << 11) | (g6 << 5) | b5));
         }
     }
+}
+
+void scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat_t *h, bool lit, const float *moisture,
+                       float dim, const uint8_t *vig) {
+    scene_desert_begin(b, h, lit, moisture, dim, vig);
+    scene_desert_rows(fb, stride, 0, b->h - 1, 0, b->w - 1);
+}
+
+bool scene_desert_moist_box(const scene_desert_t *d, int k, int *x0, int *y0, int *x1, int *y1) {
+    if (k < 0 || k >= d->n_hides || d->hide[k].kind != HIDE_HUMID) return false;
+    const scene_hide_t *hd = &d->hide[k];
+    scene_desert_hide_box(d, k, x0, y0, x1, y1);                                 /* the box (its moss, its droplets) ... */
+    const int sx0 = (int)floorf(hd->door_x - 23), sx1 = (int)ceilf(hd->door_x + 23), sy1 = (int)ceilf(hd->base_y + 12);
+    if (sx0 < *x0) *x0 = sx0;                                                    /* ... and the sand at its door */
+    if (sx1 > *x1) *x1 = sx1;
+    if (sy1 > *y1) *y1 = sy1;
+    return true;
+}
+float scene_desert_lamp_at(const scene_desert_t *d, const habitat_t *h, float x, float y) {
+    const float lamp_r = h->bask_r_px > 0 ? h->bask_r_px : 70, spot_y = d->bask_y + TERRAIN_FEET_DY;
+    const float gx = (x - d->bask_x) / (lamp_r * 1.2f), gy = (y - (spot_y - 2)) * (1.0f / 26.0f), q = gx * gx + gy * gy;
+    return q < 1 ? 0.72f * (1 - q) * (1 - q) : 0;
 }

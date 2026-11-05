@@ -13,8 +13,11 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "version.h"          /* PT_NET, before its first test below */
+#if PT_NET
 #include "link_dev.h"
 #include "gift.h"
+#endif
 #include "esp_heap_caps.h"
 #include "esp_partition.h"
 #include "esp_system.h"
@@ -22,6 +25,9 @@
 #include "tank.h"
 #include "advisor.h"
 #include "render.h"
+#if PT_TERRARIUM
+#include "render_lizard.h"   /* the terrarium's lizards' scratch (lizard_set_scratch) */
+#endif
 #include "psram_plan.h"
 #include "display_port.h"
 #include "advisor_llm_esp.h"
@@ -31,13 +37,19 @@
 #include "battery.h"
 #include "imu_port.h"
 #include "director.h"
+#if PT_NET
 #include "update.h"
+#endif
 #include "advanced.h"
 #include "shelf.h"
+#if PT_NET
 #include "collection.h"
+#endif
 #include "boot_show.h"
+#if PT_NET
 #include "update_mode.h"
 #include "net_time.h"
+#endif
 #include <sys/time.h>
 #include "model_trailer.h"
 #include "esp_ota_ops.h"
@@ -54,7 +66,6 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_app_desc.h"
-#include "version.h"
 #include "rtc_port.h"
 #include "driver/i2c_master.h"
 #include "esp_async_memcpy.h"
@@ -362,15 +373,23 @@ static void nvs_u8_put(const char *key, int v) {
     nvs_handle_t h;
     if (nvs_open(SAVE_NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, key, (uint8_t)v); nvs_commit(h); nvs_close(h); }
 }
-/* (PT_NET 0: never a network, whatever an earlier pocket-tank install left in NVS "wifi") */
+#if PT_NET
 static bool net_saved(void) { char s[NET_SSID_MAX + 1], p[NET_PASS_MAX + 1]; return PT_NET && net_port_creds_get(s, p); }
+#endif
 static bool night_powers_off(void) {        /* the night: a power-off (the clock survives it, or the internet gives it back) */
     if (!s_pmic) return false;
+#if PT_NET
     return s_rtc || (net_saved() && nvs_u8("netclk", 0) && nvs_u8("netok", 0));
+#else
+    return s_rtc;                            /* (no internet to give the time back: version.h PT_NET) */
+#endif
 }
+#if PT_NET
 static int64_t s_rebase_unix, s_rebase_us;  /* a first sync, applied once the save has loaded on the old clock */
+#endif
 static float s_boot_lived_h;
 static char s_boot_sync[96] = "no sync at this boot";   /* what this boot's sync did, for `clock` (the USB log of a boot off the cable is gone) */
+#if PT_NET   /* the clock from the internet (version.h PT_NET) */
 /* The sync runs in a worker; the glass is drawn by the boot task alone. The
  * panel driver is one task's at a time (esp_lcd's SPI io keeps a plain
  * in-flight count and takes the bus per call): 0.3.2 drew this page from its
@@ -452,12 +471,18 @@ static void net_clock_rebase(void) {        /* after progression_boot / _wake: a
                                                 before the heartbeat would live that jump */
     ESP_LOGI(TAG, "clock: on real time from now on - nights can be a power-off");
 }
+#endif
 void device_clock_log(void) {               /* director `clock` */
     char why[80] = "none"; size_t n = sizeof why;
     nvs_handle_t h;
     if (nvs_open(SAVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) { if (nvs_get_str(h, "netwhy", why, &n) != ESP_OK) snprintf(why, sizeof why, "none"); nvs_close(h); }
+#if PT_NET
+    const char *net = net_saved() ? "saved" : "none";
+#else
+    const char *net = "none (version.h PT_NET)";
+#endif
     ESP_LOGI(TAG, "clock: this boot %s | lived at boot %.2f h | now %lld | RTC chip %s | network %s | real time %s | last sync %s | last failure: %s | tonight: %s",
-             s_boot_sync, s_boot_lived_h, (long long)clock_port_now_unix(), !s_rtc ? "no" : rtc_port_stopped() ? "yes, STOPPED at this boot (lost power)" : rtc_port_unread() ? "yes, NO ANSWER at this boot" : "yes", net_saved() ? "saved" : "none",
+             s_boot_sync, s_boot_lived_h, (long long)clock_port_now_unix(), !s_rtc ? "no" : rtc_port_stopped() ? "yes, STOPPED at this boot (lost power)" : rtc_port_unread() ? "yes, NO ANSWER at this boot" : "yes", net,
              nvs_u8("netclk", 0) ? "yes" : "not yet", nvs_u8("netok", 0) ? "ok" : "failed or never", why,
              night_powers_off() ? "power-off" : "deep sleep, the clock running");
 }
@@ -484,8 +509,10 @@ static void enter_sleep_for(int wake_after_s) {
              wake_after_s > 0 ? "deep sleep with the timer" : night_powers_off() ? (s_rtc ? "PMIC power-off (the PWR key boots it)" : "PMIC power-off (the PWR key boots it; the internet gives the time back)")
              : pwr_sensed() ? "deep sleep (the PWR key wakes; the clock runs on)" : "deep sleep (BOOT wakes)", pct0, mv0);
     touch_port_confirm_answer(-1);              /* an open reset prompt is a NO */
+#if PT_NET
     link_dev_sleep();                           /* the tank link closes first: visitors home, ours recalled, the radio OFF -
                                                    a radio left up through the light-sleep grace came back deaf (2026-10-05, the watch) */
+#endif
     adv_close();                                /* ... the ADVANCED page goes (a sitting cut short keeps the saved map) */
     if (!progression_save(&tank))               /* never cancels: a tank that can't save (NVS down, a save that
                                                    wouldn't load) must still sleep, or the key goes dead */
@@ -616,7 +643,9 @@ static void enter_poweroff(void) {
     ota_valid_now("a power-off");
     ESP_LOGI(TAG, "power-off now: saving tank, PMIC soft cut (the PWR key boots)");
     touch_port_confirm_answer(-1);
+#if PT_NET
     link_dev_sleep();                           /* the tank link says goodbye (a sudden death is `link die`) */
+#endif
     adv_close();
     if (!progression_save(&tank))               /* never cancels (see enter_sleep_for) */
         ESP_LOGE(TAG, "power-off: the tank save failed - cutting anyway, the last good save stands");
@@ -1163,8 +1192,10 @@ static void battery_frame(int64_t now) {
 
 static void reset_tank(void) {
     ESP_LOGW(TAG, "RESET: wiping the tank (%d fish) for a fresh one", tank.n_fish);
+#if PT_NET
     link_dev_sleep();                           /* the link's goodbye first (0.4, 2026-11-02): visitors here swim home, never to hang on
                                                    unseen in the engine with the old tank's slots; a fresh tank links as itself */
+#endif
     progression_reset(&tank, (uint32_t)esp_timer_get_time() ^ 0xC0FFEEu);
     notice_sync(&tank);                         /* a fresh tank has nothing to announce */
     brightness_save();                          /* the erase took the setting with it */
@@ -1172,7 +1203,9 @@ static void reset_tank(void) {
     setup_begin(&tank);                         /* welcome, names, colours - as on a fresh install */
 }
 
+#if PT_NET
 static void request_update(void);        /* below: CHECK FOR UPDATES */
+#endif
 static void tank_task(void *arg);
 /* THE SECOND CORE (0.3.9.4, Strato on the square: a decoration's DONE "really churns for 15 seconds" - the grass loop's rebake on
  * the render core, however sliced): the loop's slices run on a task of their own on core 1, between the frames, under ONE lock
@@ -1249,11 +1282,21 @@ static void start_tank_task(void *arg) {
     render_set_grass_loop_task(false);
     if (xTaskCreatePinnedToCore(tank_task, "tank", TANK_STACK, NULL, 4, &s_tank_h, 0) != pdPASS)
         ESP_LOGE(TAG, "THE TANK TASK COULD NOT START: no internal RAM for its stack");
+#if PT_TERRARIUM
+    const bool bake = false;
+#else
     const size_t big = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    const bool bake = s_render_lock && big >= BAKE_STACK + BAKE_SPARE && xTaskCreatePinnedToCore(bake_task, "bake", BAKE_STACK, NULL, 6, &s_bake_h, 1) == pdPASS;
+    const bool bake = s_render_lock && big >= BAKE_STACK + BAKE_SPARE
+                   && xTaskCreatePinnedToCore(bake_task, "bake", BAKE_STACK, NULL, 6, &s_bake_h, 1) == pdPASS;
+#endif
     render_set_grass_loop_task(bake);
+#if PT_TERRARIUM
+    ESP_LOGI(TAG, "tank task up; terrarium scene rebakes are frame-budgeted | internal heap %u KB free (largest block %u KB)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
+#else
     ESP_LOGI(TAG, "tank task up%s | internal heap %u KB free (largest block %u KB)", bake ? ", the bake beside it" : " - NO BAKE TASK: the grass loop bakes on the render core",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
+#endif
 }
 void device_bake_cap(int ms) {                  /* director `bakecap [MS]` */
     if (ms >= 0) s_bake_cap_us = (int64_t)ms * 1000;
@@ -1301,6 +1344,7 @@ static void tank_task(void *arg) {
 #endif
         display_port_set_quarter(q);      /* per-frame, so a turn lands between flushes */
         touch_port_set_quarter(q);
+#if PT_NET
         { static int kept_uq = -1;        /* ... and for update mode's pages after the restart: the way up, fixed if the IMU did not choose it */
 #ifdef TANK_WATCH
           int uq = q | UPD_WAY_FIXED;
@@ -1309,9 +1353,12 @@ static void tank_task(void *arg) {
 #endif
           if (kept_uq < 0) kept_uq = nvs_u8("uq", 0);
           if (uq != kept_uq) { nvs_u8_put("uq", uq); kept_uq = uq; } }
+#endif
         touch_port_poll(&tank);
         director_poll(&tank);
+#if PT_NET
         link_dev_poll(&tank);              /* the tank link with ghost fish, while `link on` (docs/tank-link-0.4.md) */
+#endif
         int ans = touch_port_confirm_take();
         if (ans > 0) reset_tank();
         else if (ans < 0) ESP_LOGI(TAG, "reset prompt: tank kept");
@@ -1332,7 +1379,9 @@ static void tank_task(void *arg) {
               const touch_fit_t *f = adv_touch_fit();
               ESP_LOGI(TAG, "advanced: touch %s (x %.3f %+.1f, y %.3f %+.1f)", touch_fit_is_none(f) ? "back to the board's own map" : "map kept", f->ax, f->bx, f->ay, f->by); } }
         adv_tick(dt);
+#if PT_NET
         if (touch_port_take_update() == UPD_TAP_CHECK) request_update();   /* the updates page's CHECK: save, restart into update mode */
+#endif
         if (s_swap_i >= 0 && !touch_port_shelf()) { s_swap_i = -1; s_swap_go = false; }   /* (MY TANKS closed under it: no swap) */
         if (s_swap_go) {                                 /* the dark frame went out last frame: save, move, restart */
             int i = s_swap_i; s_swap_go = false; s_swap_i = -1;
@@ -1384,8 +1433,11 @@ static void tank_task(void *arg) {
         battery_frame(now);
         if (llm_ok && advisor_core_damaged()) notice_model_damaged();   /* a decision's odds were not numbers (once per start) */
         notice_tick(&tank, dt, tank.ui_cover || setup_birth_due() || s_loading_last   /* a fry's welcome first (2026-09-29); the boot show first (0.4); */
-                               || render_give_modal_step(&tank) != RENDER_GM_OFF || render_gift_up(&tank));   /* the GIVE modal and the gift card first:
+#if PT_NET
+                               || render_give_modal_step(&tank) != RENDER_GM_OFF || render_gift_up(&tank)   /* the GIVE modal and the gift card first:
                                                                    a notice under them stepped aside, never chiming unseen or taking their taps (11-02 sweep) */
+#endif
+                               );
         { int cue = notice_take_cue(); if (cue >= 0) audio_port_play(cue, AUDIO_PITCH_ONE); }
         { static bool loop_on;                     /* the bubble loop rides the setup's placement page */
           bool loop = setup_active() && !setup_is_birth() && setup_page() == SETUP_PG_BUBBLES;
@@ -1403,7 +1455,9 @@ static void tank_task(void *arg) {
         int64_t pf_tail = pf_wait;
         if (fb[cur]) {
             render_frame_begin();                            /* (THE PAGE KEPT: a buffer keeps the keeper page while nothing else draws) */
+#if PT_NET
             render_gift_allow(!setup_active() && !touch_port_confirm_up() && !adv_up());   /* the gift card waits under these (11-02 sweep) */
+#endif
             if (USE_RESTORE) {
                 if (s_restore_pending[cur]) {               /* this buffer's last frame: the scene is back under it once it left the wire (flush_done) */
                     xSemaphoreTake(s_restored[cur], portMAX_DELAY);
@@ -1484,7 +1538,8 @@ static void tank_task(void *arg) {
                         s_show_t0 = esp_timer_get_time();
                         ESP_LOGI(TAG, "loading: the boot show (%s), built in %lld ms, psram %u -> %u KB free", s_load_swap ? "the water rises" : "the light comes up",
                                  (s_show_t0 - now) / 1000, (unsigned)(before / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
-                    } else ESP_LOGW(TAG, "loading: no memory for the boot show (psram %u KB free) - the bubbles instead", (unsigned)(before / 1024));
+                    } else if (PT_TERRARIUM) ESP_LOGI(TAG, "loading: the terrarium comes up as it is (the boot show is the aquarium's)");
+                    else ESP_LOGW(TAG, "loading: no memory for the boot show (psram %u KB free) - the bubbles instead", (unsigned)(before / 1024));
                 }
             }
             else if (!page) render_tank(&tank, fb[cur], TANK_W);
@@ -1513,15 +1568,19 @@ static void tank_task(void *arg) {
             } else if (touch_port_settings()) {  /* settings page: brightness + volume */
                 render_settings(&tank, fb[cur], TANK_W, brightness_level(), audio_port_volume());
                 sel = -1;
+#if PT_NET
             } else if (touch_port_updates()) {   /* the updates page (2026-09-30): version, network, CHECK FOR UPDATES */
                 render_updates_page(fb[cur], TANK_W);
                 sel = -1;
+#endif
             } else if (touch_port_shop()) {      /* the shop: sand dollars and what they buy */
                 render_shop(&tank, fb[cur], TANK_W);
                 sel = -1;
+#if PT_NET
             } else if (touch_port_collection()) {   /* the visitor collection (2026-10-06) */
                 render_collection(&tank, fb[cur], TANK_W);
                 sel = -1;
+#endif
             } else render_sd_toast(&tank, fb[cur], TANK_W);   /* the live tank: "+N" as dollars are earned */
             if (page && USE_RESTORE) render_touch_all();   /* a whole page: the whole scene comes back under it */
             if (sel >= 0) render_stats_card(&tank, sel, fb[cur], TANK_W);   /* tapped fish: stats card (+ the pill) */
@@ -1536,13 +1595,16 @@ static void tank_task(void *arg) {
                     render_battery_info(fb[cur], TANK_W, &bi, tank.clock);
                 } else if (pill) render_battery(fb[cur], TANK_W, s_bat_frac, s_bat_state, tank.clock);
                 if (!pages && !bpage) render_tool_chip(&tank, sel, fb[cur], TANK_W);   /* a tool in hand: the chip (2026-10-01) */
+#if PT_NET
                 if (!pages && !bpage) link_dev_draw(fb[cur], TANK_W, tank.clock);      /* link mode's page, the DRIFTED notice (0.4) */
+#endif
                 touch_port_set_pill(pill);
             }
             if (!touch_port_milestones() && !touch_port_settings() && !touch_port_updates() && !touch_port_shop() && !touch_port_collection() && !touch_port_shelf() && !adv_up()) {   /* an announcement over the live tank */
                 const notice_t *nt = notice_current();
                 if (nt) render_notice(&tank, fb[cur], TANK_W, nt->kind, nt->fish, nt->bit, 1.0f - nt->age / NOTICE_UP_S);
             }
+#if PT_NET
             if (!touch_port_milestones() && !touch_port_settings() && !touch_port_updates() && !touch_port_shop() && !touch_port_collection()
                 && !touch_port_battery() && !touch_port_shelf() && !adv_up() && !setup_active())   /* over the live tank (0.4): the GIVE modal (the keeper
                                                                                                  page draws its own) */
@@ -1550,6 +1612,7 @@ static void tank_task(void *arg) {
             render_gift(&tank, fb[cur], TANK_W);     /* a gift offered to us: over ANY page (the keeper page drew it as part of itself), waiting
                                                         under the tank's own setup (render_gift_allow, the frame's top; 11-02 sweep) */
             { int gc = render_gift_take_cue(); if (gc >= 0) audio_port_play(gc, AUDIO_PITCH_ONE); }   /* its cue as it is first seen */
+#endif
             if (touch_port_lock_hint() && !touch_port_shelf())   /* a touch on the locked glass: the way back */
                 render_touch_lock_hint(fb[cur], TANK_W);
             if (setup_active())                  /* first-run setup: over the tank, under the prompt */
@@ -1726,6 +1789,7 @@ static void nvs_start(void) {
     nvs_flash_init();
 }
 
+#if PT_NET
 /* CHECK FOR UPDATES (the updates page, or the director's `ota check`): the
  * tank is saved as it is before sleep, then the board restarts into update
  * mode (update_mode.c) - the radio never runs beside the tank */
@@ -1750,6 +1814,7 @@ void device_provision_request(void) {
     ota_valid_now("Wi-Fi setup");            /* (as request_update: a new build's restart into provisioning is no failed boot to roll back) */
     provision_mode_request();                /* restarts */
 }
+#endif
 
 void app_main(void) {
     ESP_LOGI(TAG, "pocket-terrarium (on pocket-tank v%s %s, build %s) for %s boot%s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), PT_BOARD,
@@ -1759,7 +1824,9 @@ void app_main(void) {
     gpio_config(&btn);
     gpio_deep_sleep_hold_dis();              /* a deep-sleep wake is a boot: the night's pad holds end here */
     nvs_start();
+#if PT_NET
     director_early();                        /* the installer page's handshake, answered from here on (director.c) */
+#endif
     { int carried = batlog_init();       /* the battery log survives every reset but a power-on */
       if (carried) ESP_LOGI(TAG, "batlog: %d samples carried through the reset (director `batlog` reads them)", carried); }
     brightness_init();
@@ -1810,11 +1877,14 @@ void app_main(void) {
         imu_port_sides(display_port_quarters());   /* the square's and the pendant's own builds stand on a side too (0.3.9.3) */
         imu_port_seed_quarter((nvs_u8("inv", 0) ? 2 : 0) | (nvs_u8("side", 0) ? 1 : 0));   /* the way up it had before this boot (written at each turn) */
     }                                 /* (before update mode: its pages turn with the tank too, 0.3.9.3) */
-    /* (PT_NET 0, version.h: no update mode, no provisioning, no clock from the internet - the RTC chip or the save's clock) */
-    if (PT_NET && update_mode_pending()) { brightness_apply(false); update_mode_run(fb[0], nvs_u8("uq", 0)); }
-    else if (PT_NET && provision_mode_wanted()) provision_mode_run(fb[0]);   /* just installed, no network yet: the page's Wi-Fi step, the glass dark */
+#if PT_NET   /* (0, version.h: no update mode, no provisioning, no clock from the internet - the RTC chip or the save's clock) */
+    if (update_mode_pending()) { brightness_apply(false); update_mode_run(fb[0], nvs_u8("uq", 0)); }
+    else if (provision_mode_wanted()) provision_mode_run(fb[0]);   /* just installed, no network yet: the page's Wi-Fi step, the glass dark */
+#endif
     s_rtc = rtc_port_init(board_i2c_bus());   /* wall clock for the ravenous rule (before the clockless night's sync) */
-    if (PT_NET) net_clock_boot(fb[0]);   /* no RTC chip, a stopped one, or a chip not yet on real time, with a saved network: the time from the internet, before the advisor takes the heap */
+#if PT_NET
+    net_clock_boot(fb[0]);            /* no RTC chip, a stopped one, or a chip not yet on real time, with a saved network: the time from the internet, before the advisor takes the heap */
+#endif
     battery_port_key_clear();         /* a PWR press on the TIME CHECK page (up to 30 s, nothing polls the key) is not a sleep press once the tank is up (0.4 rc) */
     /* the advisor's hot buffers (~70 KB of internal SRAM, advisor_llm_esp.c)
        come before the discretionary caches below: the LLM is not optional */
@@ -1834,11 +1904,29 @@ void app_main(void) {
     /* static-scene cache: gradient/pebbles/reef drawn once per lighting state */
     uint16_t *scene = heap_caps_aligned_alloc(64, PLAN_FB_ALLOC, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (scene) render_set_scene_cache(scene); else ESP_LOGW(TAG, "no scene cache RAM: full redraw per frame");
-    if (scene) { render_set_grass_loop(gl_alloc, gl_free, GRASS_LOOP_BUDGET); render_grass_loop_lock(GRASS_LOOP_MOMENTS); render_grass_loop_on(GRASS_LOOP_ON); }   /* (its memory comes as the grass is first baked) */
-    if (GRASS_CACHE_ON) { uint16_t *sg = scene ? heap_caps_aligned_alloc(64, PLAN_FB_ALLOC, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;   /* the grass cache (2026-10-24): the scene + the back grass - only when it is the one on (the loop needs the PSRAM) */
+#if PT_TERRARIUM
+    if (scene) {                              /* THE TERRARIUM (render.c, P3b): the other light's scene, baked in the background so a light's switch is a
+                                                swap; the lizards' cached bodies (render_lizard.h) - both PSRAM, instead of the aquarium's grass-loop share */
+        uint16_t *spare = heap_caps_aligned_alloc(64, PLAN_FB_ALLOC, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        render_set_scene_spare(spare);
+        void *lz = heap_caps_malloc(lizard_scratch_bytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        lizard_set_scratch(lz);
+        ESP_LOGI(TAG, "terrarium: the second scene %s, the lizards' bodies %u KB %s", spare ? "in PSRAM" : "NOT allocated - a light's switch bakes whole",
+                 (unsigned)(lizard_scratch_bytes() / 1024), lz ? "in PSRAM" : "NOT allocated (calloc'd at the first draw)");
+    }
+#else
+    if (scene) {
+        render_set_grass_loop(gl_alloc, gl_free, GRASS_LOOP_BUDGET);
+        render_grass_loop_lock(GRASS_LOOP_MOMENTS);
+        render_grass_loop_on(GRASS_LOOP_ON);
+    }
+    if (GRASS_CACHE_ON) {
+      uint16_t *sg = scene ? heap_caps_aligned_alloc(64, PLAN_FB_ALLOC, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;   /* the grass cache (2026-10-24): the scene + the back grass - only when it is the one on (the loop needs the PSRAM) */
       uint32_t *bgm = sg ? heap_caps_malloc(RENDER_DIRTY_WORDS * 4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
       if (sg && bgm) { render_set_grass_cache(sg, bgm); render_set_grass_cache_on(GRASS_CACHE_ON, GRASS_CACHE_MS); }
-      else ESP_LOGW(TAG, "grass cache: no PSRAM - the grass is drawn whole every frame"); }
+      else ESP_LOGW(TAG, "grass cache: no PSRAM - the grass is drawn whole every frame");
+    }
+#endif
     uint8_t *vig = heap_caps_malloc(TANK_W * TANK_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (vig) render_set_vignette_cache(vig);
     /* dirty mask (20 KB): internal SRAM if it fits - it is cleared and read
@@ -1868,14 +1956,16 @@ void app_main(void) {
         card = heap_caps_malloc(RENDER_CARD_W * RENDER_CARD_H * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!card) card = heap_caps_malloc(RENDER_CARD_W * RENDER_CARD_H * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (card) render_set_card_cache(card);
+#if PT_NET
     {   /* the GIVE modal's and the gift card's bakes (0.4, THE CARDS BAKED in render.c): PSRAM, 2 x 166 KB - never internal */
         uint16_t *give = heap_caps_malloc(GIFT_CARD_W * GIFT_CARD_H * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         uint16_t *gift = heap_caps_malloc(GIFT_CARD_W * GIFT_CARD_H * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!give || !gift) { ESP_LOGW(TAG, "no PSRAM for the cards' bakes: the GIVE modal and the gift card drawn whole"); free(give); free(gift); give = gift = NULL; }
         render_set_modal_cache(give, gift);
     }
+#endif
     ESP_LOGI(TAG, "card cache %s", !card ? "none" : esp_ptr_external_ram(card) ? "PSRAM" : "internal SRAM");
-    { void *dep = heap_caps_malloc(render_depth_buf_bytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);   /* SWIM DEPTH (0.3.9.4): a fish behind or through the grass */
+    if (!PT_TERRARIUM) { void *dep = heap_caps_malloc(render_depth_buf_bytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);   /* SWIM DEPTH (0.3.9.4): a fish behind or through the grass (the aquarium's) */
       render_set_depth_buf(dep);
       ESP_LOGI(TAG, "swim depth: %u KB %s", (unsigned)(render_depth_buf_bytes() / 1024), dep ? "in PSRAM" : "NOT allocated - every fish in front of the grass"); }
     codec_port_init(board_i2c_bus());  /* the ES8311 fully down until a cue needs it (its digital side shares VCC3V3) */
@@ -1896,6 +1986,7 @@ void app_main(void) {
     tank_init(&tank, (uint32_t)esp_timer_get_time() ^ 0xC0FFEEu);
     tank_entropy = esp_random;                /* fish and tank IDs (the tank link, 0.4): the hardware RNG */
     progression_cap_hook = cap_breach;        /* THE CAP's guard: a tank past POP_CAP says so once in the log */
+#if PT_NET
     {   /* GIVE's notes (tank link phase 6, gift.h): ~1.6 KB, PSRAM - never the internal margin; the boot's
            progression_wake loads them and settles what they can */
         gift_book_t *gb = heap_caps_calloc(1, sizeof(gift_book_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1907,6 +1998,7 @@ void app_main(void) {
         collection_set_more(more);
         ESP_LOGI(TAG, "visitor pages 2..%d %s (%u B)", COLL_PAGES, more ? "PSRAM" : "none: the collection stops at its first page", (unsigned)collection_more_size());
     }
+#endif
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
     bool from_sleep = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_EXT1 || cause == ESP_SLEEP_WAKEUP_TIMER;
     shelf_boot(clock_port_now_unix());       /* MY TANKS: the slots read back, a swap cut short finished - before the save it may have moved is loaded */
@@ -1919,7 +2011,9 @@ void app_main(void) {
                  cause == ESP_SLEEP_WAKEUP_TIMER ? "timer" : cause == ESP_SLEEP_WAKEUP_EXT1 ? "the PWR key" : "BOOT", h < 0 ? "no clock, " : "", h < 0 ? 0.0f : h,
                  tank.n_fish ? tank.fish[0].hunger : 0.0f, battery_pct(), battery_port_vbat_mv());
         batlog_add(battery_pct(), battery_port_vbat_mv(), 0, true, "wake");
+#if PT_NET
         net_clock_rebase();
+#endif
         int put_back = restore_fish();       /* where they fell asleep, on the goal they had */
         ESP_LOGI(TAG, "wake: %d of %d fish put back where they were", put_back, tank.n_fish);
     } else {                                 /* a cold boot - power-on, a flash, a PMIC power-off, a cell that died: the absence is lived through just the same (2026-09-16) */
@@ -1928,7 +2022,9 @@ void app_main(void) {
         ESP_LOGI(TAG, "cold boot: %s%.1f h lived through since the save | hunger[0] %.1f | battery %d%% %d mV",
                  h < 0 ? "no save or no clock, " : "", h < 0 ? 0.0f : h,
                  tank.n_fish ? tank.fish[0].hunger : 0.0f, battery_pct(), battery_port_vbat_mv());
+#if PT_NET
         net_clock_rebase();
+#endif
         if (clock_port_now_unix() == 0) {    /* a clockless board, or a chip that stopped, after a power cut with no time from the internet: time resumes at the save */
             rtc_port_seed(progression_loaded_unix());
             if (!rtc_port_unread()) rtc_port_store();   /* the chip runs on from there; the stretch is owed until a sync pays it (the next

@@ -1,11 +1,18 @@
 /* habitat.c - the habitat registry and its rules (habitat.h) */
 #include "habitat.h"
 #include "terrain.h"
+#include <math.h>
 #include <stdio.h>
 
 const char *const HIDE_KIND_NAMES[HIDE_KINDS] = { "warm", "humid", "cool" };
 
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_FRESHWATER };   /* both worlds' (a tank holds its build's: tank_set_packs) */
+#if PT_ALL_PACKS
+static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_FRESHWATER };
+#elif PT_TERRARIUM
+static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT };
+#else
+static const habitat_t *const HABITATS[] = { &HABITAT_PACK_FRESHWATER };
+#endif
 #define N_HABITATS ((int)(sizeof HABITATS / sizeof HABITATS[0]))
 
 int habitat_count(void) { return N_HABITATS; }
@@ -79,6 +86,7 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
         if (!(h->moist_dry_per_s > 0)) REFUSE("a humid hide never dries (%g a second)", h->moist_dry_per_s);
     }
     if (!(h->humidity >= 0 && h->humidity <= 1)) REFUSE("humidity %.2f is outside 0..1", h->humidity);
+    if (h->dish && !(h->dish_u >= 0 && h->dish_u <= 1)) REFUSE("the mealworm dish at %.2f is off the floor", h->dish_u);
     /* on every board: the ground walkable (terrain.h THE RULES), and the lamp warming its spot over the air there */
     for (int b = 0; b < GLASS_BOARDS; b++) {
         const glass_t g = glass_of(b);
@@ -87,6 +95,20 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
             terrain_t tr; terrain_lay(h, &g, &tr);
             const float under = terrain_air_open_c(&tr, h, tr.bask_x, tr.bask_y);
             if (!(h->bask_c > under)) REFUSE("on the %s: the lamp does not warm its spot (%.1f C over %.1f C air)", g.name, h->bask_c, under);
+        }
+        if (h->dish) {                                       /* the dish: on the sand, clear of every hide, room over it for a lizard's head */
+            terrain_t tr; terrain_lay(h, &g, &tr);
+            const float dx = glass_floor_x(&g, h->dish_u), py = glass_place_y(&g);
+            for (int k = 0; k < h->n_hides; k++) {
+                const float gap = fabsf(glass_floor_x(&g, h->hides[k].u) - dx);
+                if (gap < TERRAIN_HIDE_HW + HABITAT_DISH_HW) REFUSE("on the %s: the mealworm dish is %.0f px from hide %d (under %.0f)", g.name, gap, k, TERRAIN_HIDE_HW + HABITAT_DISH_HW);
+            }
+            for (int s = 1; s < tr.n_paths; s++) {
+                const terrain_path_t *p = &tr.path[s];
+                for (float x = dx - HABITAT_DISH_HW; x <= dx + HABITAT_DISH_HW; x += 2)
+                    if (x >= p->x[0] && x <= p->x[p->n - 1] && py - terrain_y(p, x) < TERRAIN_HEADROOM_PX)
+                        REFUSE("on the %s: path %d runs %.0f px over the mealworm dish (under %.0f)", g.name, s, py - terrain_y(p, x), TERRAIN_HEADROOM_PX);
+            }
         }
     }
     return true;

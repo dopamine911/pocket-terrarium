@@ -76,6 +76,7 @@ static bool box_clear_beds(const tank_t *t, float x0, float x1, float y1);   /* 
 static float depth_hash(const tank_t *t, float x, float y, uint32_t salt);
 static void walk_ground(const tank_t *t, fish_t *f);                          /* THE WALK: onto its path of the ground (below) */
 static void walk_floor(const tank_t *t, fish_t *f);                           /* ... onto the floor, where it is across */
+static void lizard_spook(tank_t *t, int i);                                   /* ... THE RAP: lizard i dashes for cover (below) */
 static uint8_t critter_depth_roll(const tank_t *t, float x, uint32_t salt) {   /* a floor critter's want against the grass: a fifth behind, a third through */
     float r = depth_hash(t, x, 0, salt);
     return r < 0.22f ? FISH_DEPTH_BEHIND : r < 0.55f ? FISH_DEPTH_THROUGH : FISH_DEPTH_FRONT;
@@ -436,16 +437,20 @@ void tank_lizard_fresh(const tank_t *t, fish_t *f) {
     f->hide = -1; f->pose = LZ_POSE_STAND; f->pose_s = 0; f->lane = 0; f->to_x = -1;
     f->surf = 0; f->to_surf = -1; f->explore_surf = 0; f->slope = 0;   /* (on the floor: walk_floor seats it there) */
     f->walk_s = f->pause_s = f->turn_s = f->strike_s = f->peek_s = 0;
+    f->prey = -1; f->seen_surf = -1; f->seen_x = 0; f->spook_hide = -1; f->to_hide = -1; f->spook_s = 0; f->shed_helped = false;   /* (THE CRICKETS, THE RAP) */
 }
 
 /* ---- THE WALK's footing (P2b, P2c; tank.h; the rest is with update_lizard): its middle on its path's walking line -
- * the floor's in the floor's band - its body inside the glass at its height (LZ_GLASS_M, LZ_HALF_LEN x its size), facing
- * one way or the other ---- */
-static float walk_margin(const fish_t *f) { return fmaxf(LZ_GLASS_M, LZ_HALF_LEN * f->size); }
+ * the floor's in the floor's band - its body inside the glass at its height (LZ_GLASS_M, and the body as drawn: its
+ * tank_lizard_half_len), facing one way or the other ---- */
+float tank_lizard_scale(const fish_t *f) { return lizard_stage_scale(f->stage) * (1 + 0.5f * (clampf(f->base_size, 0.8f, 1.1f) - 1)); }   /* (at most 1.08 x 1.05:
+                                                                               a half length of 47.6 px, under TERRAIN_LINK_IN_PX) */
+float tank_lizard_half_len(const tank_t *t, const fish_t *f) { return lizard_half_len(&tank_species(t)->geom, tank_lizard_scale(f)); }
+static float walk_margin(const tank_t *t, const fish_t *f) { return fmaxf(LZ_GLASS_M, tank_lizard_half_len(t, f)); }
 /* the x its middle may take on path p (on the floor, `lane` px off its line): the path's own ends, and the glass at the
    ends' height (a ramp's end, where it lands, is TERRAIN_LINK_IN_PX in: never cut) */
-static void walk_span(const fish_t *f, const terrain_path_t *p, float lane, float *x0, float *x1) {
-    const float m = walk_margin(f), y0 = p->y[0] + (p->kind == PATH_FLOOR ? lane : 0), y1 = p->y[p->n - 1] + (p->kind == PATH_FLOOR ? lane : 0);
+static void walk_span(const tank_t *t, const fish_t *f, const terrain_path_t *p, float lane, float *x0, float *x1) {
+    const float m = walk_margin(t, f), y0 = p->y[0] + (p->kind == PATH_FLOOR ? lane : 0), y1 = p->y[p->n - 1] + (p->kind == PATH_FLOOR ? lane : 0);
     *x0 = fmaxf(p->x[0], tank_glass_x0(y0) + m); *x1 = fminf(p->x[p->n - 1], tank_glass_x1(y1) - m);
     if (*x0 > *x1) *x0 = *x1 = (*x0 + *x1) * 0.5f;          /* (no ground that narrow on any board) */
 }
@@ -465,7 +470,7 @@ static void walk_ground(const tank_t *t, fish_t *f) {         /* onto its path w
     f->lane = clampf(f->lane == f->lane ? f->lane : 0, LZ_LANE_BACK, LZ_LANE_FRONT);
     const terrain_path_t *p = &tr->path[f->surf];
     if (f->surf == 0 && !(f->y >= PLACE_Y + LZ_LANE_BACK && f->y <= PLACE_Y + LZ_LANE_FRONT)) f->y = PLACE_Y + f->lane;
-    float x0, x1; walk_span(f, p, f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
+    float x0, x1; walk_span(t, f, p, f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
     f->x = clampf(f->x, x0, x1);
     if (f->surf != 0) f->y = terrain_y(p, f->x);
     walk_face(f, f->facing ? f->facing : cosf(f->heading) < 0 ? -1 : 1);
@@ -718,6 +723,8 @@ void tank_init(tank_t *t, uint32_t seed) {
     {   const habitat_t *h = tank_habitat(t);         /* the humid hides at the habitat's start (the rest hold none) */
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) t->moist[k] = k < h->n_hides && h->hides[k].kind == HIDE_HUMID ? h->moist_start : 0; }
     t->mist_stroke = 0; t->mist_hold = t->mist_done = false; t->mist_x = t->mist_y = t->mist_s = 0; t->mist_fish = -1;
+    for (int i = 0; i < MAX_CRICKETS; i++) t->cricket[i].state = CK_NONE;   /* THE CRICKETS: none yet (the two below are the terrarium's), the dish empty */
+    t->dish_worms = 0; t->ck_dropped = t->ck_caught = t->ck_missed = t->ck_lost = t->dish_eaten = 0;
     tank_scatter_food(t, 2);
 }
 
@@ -752,10 +759,33 @@ void tank_init(tank_t *t, uint32_t seed) {
                                    * Strato: "a bit slower" so the seahorse's double is worth having) */
 #define SEAHORSE_TRUST_X   2.0f   /* ... times this while the seahorse hangs on the finger */
 
+/* THE HAND's place (tank.h tank_hand_point): in the terrarium the keeper's hand rests on the ground - the point of the
+   ground's walking lines nearest the finger (a rock beside it, the sand under it), its path returned; -1 in the aquarium */
+static int hand_ground(const tank_t *t, float *x, float *y) {
+    *x = t->hold_x; *y = t->hold_y;
+    if (!PT_TERRARIUM) return -1;
+    const terrain_t *tr = tank_terrain(t);
+    int gs = 0; float bd = 1e30f;
+    for (int s = 0; s < tr->n_paths; s++) {
+        const terrain_path_t *p = &tr->path[s];
+        const float gx = clampf(t->hold_x, p->x[0], p->x[p->n - 1]), gy = terrain_y(p, gx), d = tank_dist(gx, gy, t->hold_x, t->hold_y);
+        if (d < bd) { bd = d; gs = s; *x = gx; *y = gy; }
+    }
+    return gs;
+}
+void tank_hand_point(const tank_t *t, float *x, float *y) { hand_ground(t, x, y); }
 bool tank_at_finger(const tank_t *t, int i) {   /* (hold_time, not hold_active: the tick consumes the
                                                    flag, and the time drops to 0 the frame the finger lifts) */
+    float hx, hy; tank_hand_point(t, &hx, &hy);
     return t->hold_time >= HOLD_ATTRACT_S
-        && tank_dist(t->fish[i].x, t->fish[i].y, t->hold_x, t->hold_y) < HOLD_GATHERED_PX;
+        && tank_dist(t->fish[i].x, t->fish[i].y, hx, hy) < HOLD_GATHERED_PX;
+}
+float tank_tap_d2(const tank_t *t, int i, float x, float y, float px, float py) {
+    if (!PT_TERRARIUM) return (px - x) * (px - x) + (py - y) * (py - y);   /* a fish: its middle, as ever */
+    const fish_t *f = &t->fish[i];                                      /* a lizard: the nearest point of its body's line */
+    const float half = tank_lizard_half_len(t, f), ux = cosf(f->slope), uy = -(f->facing < 0 ? -1.0f : 1.0f) * sinf(f->slope);
+    const float u = clampf((px - x) * ux + (py - y) * uy, -half, half), qx = x + ux * u - px, qy = y + uy * u - py;
+    return qx * qx + qy * qy;
 }
 
 /* ---- hunger economy (2026-09-01) ----
@@ -2940,6 +2970,252 @@ void tank_decor_set(tank_t *t, int item, float x, int z) {
     (void)z; t->plant_x = x; t->plant_z = DECOR_Z_BACK;   /* one depth (0.4): an old AMONG or IN FRONT loads BEHIND */
 }
 
+/* ================================================================ THE CRICKETS (pocket-terrarium P2c; tank.h has the rules):
+ * the terrarium's live prey - from the keeper's hand (tank_feed) or the tank's own trickle (tank_scatter_food) - falling to
+ * the first top under them, sitting, hopping along their own path, flying from a lizard that comes near, crawling into
+ * cover and out again, gone after CK_LIFE_S; and the mealworm dish. THE WALK's hunt eats them. A drop draws from the tank's
+ * random stream what a pellet's did (its x, its height under the glass), so a seeded tank starts as it always has. */
+const char *const CK_STATE_NAMES[CK_STATES] = { "none", "fall", "sit", "hop", "crawl", "hide" };
+#define CK_HIDE_EDGE (TERRAIN_HIDE_HW - 6.0f)   /* cover by a hide: tucked against its side */
+#define CK_POP_VY    (-110.0f)                  /* a drop off a rock or a ramp: up a little first (px/s) */
+static float ck_ground(const terrain_path_t *p, float x) { return terrain_y(p, x) + TERRAIN_FEET_DY; }
+/* the x its feet may take on path p: the path's own ends, and the glass CK_GLASS_M in at the ends' height (its feet's) */
+static void ck_span(const terrain_path_t *p, float *x0, float *x1) {
+    *x0 = fmaxf(p->x[0], tank_glass_x0(p->y[0] + TERRAIN_FEET_DY) + CK_GLASS_M);
+    *x1 = fminf(p->x[p->n - 1], tank_glass_x1(p->y[p->n - 1] + TERRAIN_FEET_DY) - CK_GLASS_M);
+    if (*x0 > *x1) *x0 = *x1 = 0.5f * (*x0 + *x1);
+}
+bool tank_cricket_about(const cricket_t *c) { return c->state == CK_SIT || c->state == CK_HOP || c->state == CK_CRAWL; }
+int tank_crickets_about(const tank_t *t) { int n = 0; for (int i = 0; i < MAX_CRICKETS; i++) n += tank_cricket_about(&t->cricket[i]); return n; }
+bool tank_dish_here(const tank_t *t) { return tank_habitat(t)->dish; }
+void tank_dish_point(const tank_t *t, float *x, float *y) { *x = tank_floor_x(tank_habitat(t)->dish_u); *y = PLACE_Y + TERRAIN_FEET_DY; }
+void tank_clear_food(tank_t *t) {
+    for (int i = 0; i < MAX_FOOD; i++) t->food[i].alive = false;
+    for (int i = 0; i < MAX_CRICKETS; i++) t->cricket[i].state = CK_NONE;
+    for (int i = 0; i < N_FISH_SLOTS; i++) { t->fish[i].prey = -1; t->fish[i].seen_surf = -1; }   /* (no prey, nor a memory of one) */
+}
+/* paths a and b of the ground are joined: a walker gets from one to the other through the links (terrain_check: every path
+   of a habitat is reachable from the floor - so on a habitat that passed its rules, every pair) */
+static bool ground_joined(const terrain_t *tr, int a, int b) {
+    if (a == b) return true;
+    if (a < 0 || b < 0 || a >= tr->n_paths || b >= tr->n_paths) return false;
+    int lab[TERRAIN_PATHS_MAX];
+    for (int k = 0; k < tr->n_paths; k++) lab[k] = k;
+    for (int pass = 0; pass < tr->n_paths; pass++)                /* (the labels flow along the links: a dozen of them) */
+        for (int l = 0; l < tr->n_links; l++) {
+            const int pa = tr->link[l].a, pb = tr->link[l].b, m = lab[pa] < lab[pb] ? lab[pa] : lab[pb];
+            lab[pa] = lab[pb] = m;
+        }
+    return lab[a] == lab[b];
+}
+/* a lizard's PREY to hunt or see (tank.h THE CRICKETS): slot i's cricket about, or (PREY_DISH) the dish while it holds
+   worms - its path and x; false: no such prey now */
+static bool prey_spot(const tank_t *t, int i, int *surf, float *x, float *y) {
+    if (i >= 0 && i < MAX_CRICKETS) {
+        const cricket_t *c = &t->cricket[i];
+        if (!tank_cricket_about(c) || c->surf < 0) return false;
+        *surf = c->surf; *x = c->x; *y = c->y;
+        return true;
+    }
+    if (i == PREY_DISH && t->dish_worms > 0 && tank_dish_here(t)) { *surf = 0; tank_dish_point(t, x, y); return true; }
+    return false;
+}
+bool tank_food_sight(const tank_t *t, int idx, float *x, float *y, float *dist) {
+    const fish_t *f = &t->fish[idx];
+    if (!PT_TERRARIUM) {                                            /* the aquarium: the nearest pellet, as ever */
+        float d; const int i = tank_nearest_food(t, f, &d);
+        if (i < 0) return false;
+        if (x) *x = t->food[i].x;
+        if (y) *y = t->food[i].y;
+        if (dist) *dist = d;
+        return true;
+    }
+    const terrain_t *tr = tank_terrain(t);
+    const int from = f->surf >= 0 && f->surf < tr->n_paths ? f->surf : 0;
+    float bd = 1e9f, bx = 0, by = 0; bool got = false;
+    for (int i = 0; i <= PREY_DISH; i++) {                         /* the crickets about on ground its own joins, and the dish */
+        int s; float px, py;
+        if (!prey_spot(t, i, &s, &px, &py) || !ground_joined(tr, from, s)) continue;
+        const float d = tank_dist(f->x, f->y, px, py);
+        if (d < bd) { bd = d; bx = px; by = py; got = true; }
+    }
+    if (!got) return false;
+    if (x) *x = bx;
+    if (y) *y = by;
+    if (dist) *dist = bd;
+    return true;
+}
+int tank_food_count(const tank_t *t) {
+    int n = 0;
+    if (!PT_TERRARIUM) { for (int i = 0; i < MAX_FOOD; i++) n += t->food[i].alive; return n; }
+    for (int i = 0; i < MAX_CRICKETS; i++) n += t->cricket[i].state != CK_NONE;
+    return n + (t->dish_worms > 0 && tank_dish_here(t));
+}
+/* the first top under (x, y) but path `skip`'s: the ground at x nearest at or below y (a walking line + TERRAIN_FEET_DY); -1 none */
+static int ck_top_under(const terrain_t *tr, float x, float y, int skip, float *gy) {
+    int best = -1; float by = 1e9f;
+    for (int s = 0; s < tr->n_paths; s++) {
+        const terrain_path_t *p = &tr->path[s];
+        if (s == skip || x < p->x[0] || x > p->x[p->n - 1]) continue;
+        const float g = ck_ground(p, x);
+        if (g >= y - 0.01f && g < by) { by = g; best = s; }
+    }
+    if (best >= 0) *gy = by;
+    return best;
+}
+static int ck_free(const tank_t *t) { for (int i = 0; i < MAX_CRICKETS; i++) if (t->cricket[i].state == CK_NONE) return i; return -1; }
+static float ck_drop_x(const tank_t *t, float x) { float x0, x1; ck_span(&tank_terrain(t)->path[0], &x0, &x1); return clampf(x, x0, x1); }   /* (over the floor's span) */
+static void ck_drop_at(tank_t *t, int i, float x, float y, bool from_player) {
+    t->cricket[i] = (cricket_t){ .x = x, .y = y, .surf = -1, .state = CK_FALL, .facing = (int8_t)(i & 1 ? 1 : -1), .from_player = from_player };
+    t->ck_dropped++;
+}
+int tank_cricket_drop(tank_t *t, float x, bool from_player) {
+    const int i = ck_free(t);
+    if (i < 0) return -1;
+    x = ck_drop_x(t, x);
+    ck_drop_at(t, i, x, tank_glass_top(x) + tank_randf(t, 6, 18), from_player);
+    return i;
+}
+static void ck_sit(tank_t *t, cricket_t *c) {
+    c->state = CK_SIT; c->vy = 0;
+    c->timer = tank_randf(t, CK_SIT_LO_S, CK_SIT_HI_S) * (c->alert > 0 ? 0.5f : 1.0f);   /* (frightened: its next move sooner) */
+    c->y = ck_ground(&tank_terrain(t)->path[c->surf], c->x);
+}
+/* a hop along its path to `to` (its span's bounds) */
+static void ck_hop(tank_t *t, cricket_t *c, float to) {
+    float x0, x1; ck_span(&tank_terrain(t)->path[c->surf], &x0, &x1);
+    to = clampf(to, x0, x1);
+    const float len = fabsf(to - c->x);
+    c->state = CK_HOP; c->timer = 0; c->x0 = c->x; c->x1 = to;
+    c->hop_s = CK_HOP_T0_S + len / CK_HOP_PX_S; c->hop_h = CK_HOP_H0 + CK_HOP_HK * len;
+    if (len > 0.5f) c->facing = (int8_t)(to > c->x ? 1 : -1);
+}
+/* cover on path s within CK_COVER_REACH_PX of x: the floor's - a hide's sides, the floor under a rock's end; a rock's - its
+   ends; a ramp has none */
+static bool ck_cover(const tank_t *t, int s, float x, float *cx) {
+    const terrain_t *tr = tank_terrain(t);
+    const terrain_path_t *p = &tr->path[s];
+    float x0, x1; ck_span(p, &x0, &x1);
+    float best = CK_COVER_REACH_PX; bool got = false;
+#define CK_CAND(v) do { const float v_ = clampf((v), x0, x1), d_ = fabsf(v_ - x); if (d_ < best) { best = d_; *cx = v_; got = true; } } while (0)
+    if (p->kind == PATH_FLOOR) {
+        const habitat_t *h = tank_habitat(t);
+        for (int k = 0; k < h->n_hides; k++) { float hx, hy; tank_hide_point(t, k, &hx, &hy); CK_CAND(hx - CK_HIDE_EDGE); CK_CAND(hx + CK_HIDE_EDGE); }
+        for (int r = 1; r <= tr->n_rocks; r++) { CK_CAND(tr->path[r].x[0] + CK_EDGE_PX); CK_CAND(tr->path[r].x[tr->path[r].n - 1] - CK_EDGE_PX); }
+    } else if (p->kind == PATH_ROCK) { CK_CAND(p->x[0] + CK_EDGE_PX); CK_CAND(p->x[p->n - 1] - CK_EDGE_PX); }
+#undef CK_CAND
+    return got;
+}
+/* a fright, away from from_x: a longer hop along its path - or, up on a rock or a ramp, cornered or CK_DROP_ODDS of the
+   time, off the front down to the ground below (it falls past the path it left; never where no ground is under it - a
+   rock high in the round bowl reaches past the floor's ends); on the floor, cornered, the other way (over the lizard) */
+static void ck_flee(tank_t *t, cricket_t *c, float from_x) {
+    c->alert = CK_ALERT_S;
+    if (c->state == CK_FALL || c->surf < 0) return;
+    const terrain_t *tr = tank_terrain(t);
+    const terrain_path_t *p = &tr->path[c->surf];
+    float x0, x1; ck_span(p, &x0, &x1);
+    int dir = c->x >= from_x ? 1 : -1;
+    float room = dir > 0 ? x1 - c->x : c->x - x0, gy;
+    if (p->kind != PATH_FLOOR && ck_top_under(tr, c->x, c->y, c->surf, &gy) >= 0 && (room < CK_FLEE_LO_PX || tank_randf(t, 0, 1) < CK_DROP_ODDS)) {
+        c->state = CK_FALL; c->vy = CK_POP_VY; c->facing = (int8_t)dir;   /* (surf kept: the path it falls past) */
+        return;
+    }
+    if (room < CK_FLEE_LO_PX) { dir = -dir; room = dir > 0 ? x1 - c->x : c->x - x0; }
+    ck_hop(t, c, c->x + dir * fminf(tank_randf(t, CK_FLEE_LO_PX, CK_FLEE_HI_PX), room));
+}
+/* a lizard snout near enough to frighten the cricket - walking (faster than CK_CALM_PX_S) within CK_ALERT_PX, creeping or
+   turning within CK_CREEP_PX, still within CK_STILL_PX; hidden in cover, any within CK_FLUSH_PX - out of a hide, not
+   mid-lunge (a strike is its own roll): the nearest's snout x and its odds' share; -1 none */
+static int ck_threat(const tank_t *t, const cricket_t *c, float *from_x, float *share) {
+    int best = -1; float bd = 1e9f;
+    for (int i = 0; i < N_FISH_SLOTS; i++) {
+        if (!tank_swims(t, i)) continue;
+        const fish_t *f = &t->fish[i];
+        if (f->hide >= 0 || f->pose == LZ_POSE_LUNGE) continue;
+        const float half = tank_lizard_half_len(t, f);
+        const float sx = f->x + f->facing * half * cosf(f->slope), sy = f->y + TERRAIN_FEET_DY - f->facing * half * sinf(f->slope);
+        const float d = tank_dist(c->x, c->y, sx, sy);
+        const bool walking = f->speed > CK_CALM_PX_S, moving = f->speed > 0 || f->turn_s > 0;
+        const float range = c->state == CK_HIDE ? CK_FLUSH_PX : walking ? CK_ALERT_PX : moving ? CK_CREEP_PX : CK_STILL_PX;
+        if (d < range && d < bd) { bd = d; best = i; *from_x = sx; *share = c->state == CK_HIDE ? 1e6f : walking ? 1.0f : moving ? 0.5f : 0.33f; }
+    }
+    return best;
+}
+/* the rap: the crickets about within r of (x, y) fly from it; one in cover stays put, wide awake */
+static void ck_scare(tank_t *t, float x, float y, float r) {
+    for (int i = 0; i < MAX_CRICKETS; i++) {
+        cricket_t *c = &t->cricket[i];
+        if (c->state == CK_NONE || c->state == CK_FALL || tank_dist(c->x, c->y, x, y) > r) continue;
+        if (c->state == CK_SIT || c->state == CK_CRAWL) ck_flee(t, c, x); else c->alert = CK_ALERT_S;
+    }
+}
+/* a frame of the crickets; returns the live ones (any state) */
+static int ck_tick(tank_t *t, float dt) {
+    const terrain_t *tr = tank_terrain(t);
+    int live = 0;
+    for (int i = 0; i < MAX_CRICKETS; i++) {
+        cricket_t *c = &t->cricket[i];
+        if (c->state == CK_NONE) continue;
+        if ((c->age += dt) > CK_LIFE_S) { c->state = CK_NONE; t->ck_lost++; continue; }   /* uneaten: gone */
+        live++;
+        c->alert = fmaxf(0, c->alert - dt);
+        if (c->state == CK_FALL) {                              /* down to the first top under it - never through rock */
+            const float vy = fminf(c->vy + CK_GRAVITY * dt, CK_FALL_MAX), ny = c->y + vy * dt;
+            float gy = 0; const int s = vy > 0 ? ck_top_under(tr, c->x, c->y, c->surf, &gy) : -1;
+            if (s >= 0 && ny >= gy) {
+                float x0, x1; ck_span(&tr->path[s], &x0, &x1);
+                c->surf = (int8_t)s; c->x = clampf(c->x, x0, x1);
+                ck_sit(t, c); c->timer *= 0.5f;                 /* (landed: a first move soon) */
+            } else { c->y = ny; c->vy = vy; }
+            continue;
+        }
+        const terrain_path_t *p = &tr->path[c->surf];
+        float fx = 0, share = 0;
+        if (c->state != CK_HOP && ck_threat(t, c, &fx, &share) >= 0 && tank_randf(t, 0, 1) < CK_NOTICE_PER_S * share * dt) { ck_flee(t, c, fx); continue; }
+        switch (c->state) {
+        case CK_SIT:
+            c->y = ck_ground(p, c->x);
+            if ((c->timer -= dt) <= 0) {                        /* its next move: into cover now and then, else a hop */
+                float cx = c->x;                                 /* (ck_cover sets it when it finds cover) */
+                if (tank_randf(t, 0, 1) < (c->alert > 0 ? CK_COVER_SCARED : CK_COVER_ODDS) && ck_cover(t, c->surf, c->x, &cx)) {
+                    c->state = CK_CRAWL; c->x1 = cx;
+                    if (fabsf(cx - c->x) > 0.5f) c->facing = (int8_t)(cx > c->x ? 1 : -1);
+                } else {
+                    float x0, x1; ck_span(p, &x0, &x1);
+                    int dir = tank_randf(t, 0, 1) < 0.7f ? c->facing : -c->facing;
+                    if ((dir > 0 ? x1 - c->x : c->x - x0) < CK_HOP_LO_PX) dir = -dir;
+                    ck_hop(t, c, c->x + dir * tank_randf(t, CK_HOP_LO_PX, CK_HOP_HI_PX));
+                }
+            }
+            break;
+        case CK_HOP: {
+            c->timer += dt;
+            const float ph = clampf(c->timer / c->hop_s, 0, 1);
+            c->x = c->x0 + (c->x1 - c->x0) * ph;
+            c->y = ck_ground(p, c->x) - c->hop_h * 4 * ph * (1 - ph);
+            if (ph >= 1) ck_sit(t, c);
+            break; }
+        case CK_CRAWL: {
+            const float d = c->x1 - c->x, step = CK_CRAWL_PX_S * dt;
+            if (fabsf(d) <= step) { c->x = c->x1; c->state = CK_HIDE; c->timer = tank_randf(t, CK_HIDE_LO_S, CK_HIDE_HI_S); }
+            else c->x += d > 0 ? step : -step;
+            c->y = ck_ground(p, c->x);
+            break; }
+        case CK_HIDE:
+            if ((c->timer -= dt) <= 0) {                        /* out again: a hop back the way it crawled in (no room: the other way) */
+                float x0, x1; ck_span(p, &x0, &x1);
+                int dir = -c->facing;
+                if ((dir > 0 ? x1 - c->x : c->x - x0) < CK_HOP_LO_PX) dir = -dir;
+                ck_hop(t, c, c->x + dir * tank_randf(t, CK_HOP_LO_PX, CK_HOP_HI_PX));
+            }
+            break;
+        default: break;
+        }
+    }
+    return live;
+}
+
 void tank_touch_hold(tank_t *t, float x, float y) {
     tank_handled(t);
     if (t->tool == TOOL_MISTER) { t->mist_hold = true; t->mist_x = x; t->mist_y = y; return; }   /* the mister held on a lizard: the soak (touch_tick) */
@@ -3026,6 +3302,24 @@ bool tank_stroking(const tank_t *t) { return t->drag_has_prev && t->drag_dist >=
 
 void tank_feed(tank_t *t, float x, int n) {
     tank_handled(t);
+    if (PT_TERRARIUM) {                          /* THE CRICKETS (tank.h): n from the hand at x - or, over the dish, the dish filled */
+        float dx = 0, dy;
+        if (tank_dish_here(t)) tank_dish_point(t, &dx, &dy);
+        if (tank_dish_here(t) && fabsf(x - dx) <= DISH_FEED_PX) {
+            if (t->dish_worms < DISH_WORMS) { t->dish_worms = DISH_WORMS; tank_emit(TEV_FEED, -1); }
+        } else {
+            int dropped = 0;
+            for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {   /* (the draws a pellet's were: its jitter, its height) */
+                const float cx = ck_drop_x(t, x + tank_randf(t, -14, 14));
+                ck_drop_at(t, i, cx, tank_glass_top(cx) + tank_randf(t, 6, 18), true);
+                dropped++;
+            }
+            if (dropped) tank_emit(TEV_FEED, -1);
+        }
+        t->feed_spot_x = t->feed_spot_x < 0 ? x : t->feed_spot_x + (x - t->feed_spot_x) * 0.3f;
+        t->feed_open = true;                     /* a meal once a lizard eats from it */
+        return;
+    }
     x = clampf(x, TANK_FX0 + 25, TANK_FX1 - 25);
     int dropped = 0;
     for (int i = 0; i < MAX_FOOD && n > 0; i++) {
@@ -3062,7 +3356,9 @@ static void tank_startle(tank_t *t, float x, float y) {
             f->stress = fminf(10, f->stress + 2.5f);
             f->trust = fmaxf(0, f->trust - 0.4f);
         }
+        if (PT_TERRARIUM && tank_dist(f->x, f->y, x, y) < STARTLE_RADIUS * 1.6f) lizard_spook(t, i);   /* THE RAP: a dash for cover */
     }
+    if (PT_TERRARIUM) ck_scare(t, x, y, STARTLE_RADIUS);
     spook_visitors(t, x, y);
     shrimp_scatter(t, x, y, STARTLE_RADIUS);
     tank_crab_scare(t, x);                       /* the crab feels the knock anywhere on the glass: it runs for cover (0.3.9) */
@@ -3090,7 +3386,11 @@ void tank_touch_tap(tank_t *t, float x, float y) {
     tank_emit(TEV_TAP, -1);
     if (t->startled) {                              /* chasing: keep them spooked */
         t->startle_x = x; t->startle_y = y; t->startle_cooldown = STARTLE_COOLDOWN;
-        for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) t->fish[i].stress = fminf(10, t->fish[i].stress + 0.6f);
+        for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) {
+            t->fish[i].stress = fminf(10, t->fish[i].stress + 0.6f);
+            if (PT_TERRARIUM && tank_dist(t->fish[i].x, t->fish[i].y, x, y) < STARTLE_RADIUS * 1.6f) lizard_spook(t, i);   /* (kept in its cover) */
+        }
+        if (PT_TERRARIUM) ck_scare(t, x, y, STARTLE_RADIUS);
         spook_visitors(t, x, y);
         shrimp_scatter(t, x, y, STARTLE_RADIUS);
     } else if (t->tap_count >= 3) tank_startle(t, x, y);   /* aggressive: engage */
@@ -3127,10 +3427,11 @@ static void touch_tick(tank_t *t, float dt) {
             t->hold_ph = norm_ang(t->hold_ph + t->hold_dir * HOLD_RING_W * dt);
             if ((t->hold_turn_s -= dt) <= 0) { t->hold_dir = (int8_t)-t->hold_dir; t->hold_turn_s = tank_randf(t, 12, 26); }   /* a while one way, then back */
         }
+        float hx, hy; tank_hand_point(t, &hx, &hy);    /* (the finger; a terrarium's hand on the ground nearest it: THE HAND) */
         for (int i = 0; i < t->n_fish; i++) {
             fish_t *f = &t->fish[i];
             if (f->away) continue;
-            float d = tank_dist(f->x, f->y, t->hold_x, t->hold_y);
+            float d = tank_dist(f->x, f->y, hx, hy);
             if (d < HOLD_RADIUS) {
                 /* 0.3.6: the base rate is slower than it was (0.02/s, 2026-09-04
                  * .. 0.3.5) and a hitched seahorse doubles it - "twice as fast"
@@ -3271,6 +3572,13 @@ void tank_light_choice_set(tank_t *t, int choice) {
 }
 
 void tank_scatter_food(tank_t *t, int n) {
+    if (PT_TERRARIUM) {                          /* AUTO CRICKETS (tank.h THE CRICKETS): the tank's own, at a random x (a pellet's draws) */
+        for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {
+            const float x = ck_drop_x(t, tank_randf(t, TANK_FX0 + 25, TANK_FX1 - 25));
+            ck_drop_at(t, i, x, tank_glass_top(x) + tank_randf(t, 6, 20), false);
+        }
+        return;
+    }
     for (int i = 0; i < MAX_FOOD && n > 0; i++) {
         if (t->food[i].alive) continue;
         t->food[i].alive = true; t->food[i].from_player = false;
@@ -3399,7 +3707,7 @@ static void shed_step(const species_t *p, fish_t *f, float dt, float damp_until)
             if (damp > 0 && f->shed_damp + damp >= SHED_SOAK_S) {   /* enough damp time: off clean */
                 float need = SHED_SOAK_S - f->shed_damp;
                 f->shed_s += stuck ? need : -need;
-                f->shed_damp = SHED_SOAK_S; f->shed = SHED_CLEAN; at = dt;
+                f->shed_damp = SHED_SOAK_S; f->shed = SHED_CLEAN; at = dt; f->shed_helped = stuck;   /* (a stuck one's stay: helped off) */
                 break;
             }
             f->shed_damp += damp;
@@ -3435,7 +3743,7 @@ bool tank_mist_soak(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     f->stress = clampf(f->stress + 1.0f, 0, 10);     /* the spray: they dislike it, soaked or not */
     if (f->shed != SHED_STUCK) return false;
-    f->shed = SHED_CLEAN;                             /* the soak: it comes off at once (progression finishes it) */
+    f->shed = SHED_CLEAN; f->shed_helped = true;      /* the soak: it comes off at once (progression finishes it) - helped off */
     if (f->trust >= 6.0f) f->trust = fminf(10, f->trust + 0.2f);   /* helped by a hand it knows */
     return true;
 }
@@ -3463,6 +3771,10 @@ void tank_tick_sleep(tank_t *t, float seconds) {
     t->idle_s = 0;                                      /* the wake press is handling: lights up */
     for (int i = 0; i < MAX_FOOD; i++)                  /* overnight pellets go stale */
         if (t->food[i].alive && (t->food[i].age += seconds) > 45) t->food[i].alive = false;
+    for (int i = 0; i < MAX_CRICKETS; i++) {            /* ... and the crickets live out their time (a night: gone); the dish's worms stay */
+        cricket_t *c = &t->cricket[i];
+        if (c->state != CK_NONE && (c->age += seconds) > CK_LIFE_S) { c->state = CK_NONE; t->ck_lost++; }
+    }
     coral_grow(t, seconds);
     cluster_grow(t, seconds);
     shrimp_sleep(t, seconds);
@@ -4272,8 +4584,9 @@ static void update_fish(tank_t *t, int idx, float dt) {
 #define LZ_FREEZE_HI_S   1.1f
 #define LZ_LUNGE_MAX_S   0.6f       /* a lunge lasts at most this */
 #define LZ_MISS_REST_S   1.2f       /* after a miss: a beat before it stalks again */
-#define LZ_SNOUT         12.0f      /* its snout this x its size ahead of its middle */
-#define LZ_BITE_PX       8.0f       /* a pellet this near its snout (+ 3 x its size) is caught */
+#define LZ_BITE_PX       8.0f       /* a cricket this near its snout (+ 3 x its size) is in its jaws - its snout the drawn body's half length
+                                     * ahead of its middle (tank_lizard_half_len) */
+#define LZ_DISH_REACH_PX 8.0f       /* at the dish: its snout this near the dish's middle */
 #define LZ_HIDDEN_LO_S   8.0f       /* in a hide: hidden this long (x 1.4 - 0.8 bold: a bold one looks out sooner) ... */
 #define LZ_HIDDEN_HI_S   25.0f
 #define LZ_LOOK_LO_S     2.0f       /* ... then a look out this long */
@@ -4294,8 +4607,8 @@ typedef struct {
     bool    flick;                  /* its stops are tongue flicks (explore, investigate) */
     int     enter;                  /* the hide it goes into once there (-1 none) */
     bool    stay_in;                /* in a hide, it stays in (the hide goal's own hide; rest) */
-    int     prey;                   /* the hunt's pellet (-1 none) ... */
-    bool    prey_down;              /* ... on the sand (a strike), or still falling (it waits under it) */
+    int     prey;                   /* the hunt's prey (a cricket's slot, PREY_DISH the dish; -1 none) ... */
+    bool    in_reach;               /* ... in its snout's striking reach: a freeze and a lunge (the dish: a look in and a dab) */
 } walk_plan_t;
 
 int tank_lizard_hide_for(const tank_t *t, int i) {
@@ -4327,17 +4640,113 @@ bool tank_lizard_enter(tank_t *t, int i, int k) {
 }
 void tank_lizard_leave(tank_t *t, int i) { if (i >= 0 && i < N_FISH_SLOTS && t->fish[i].hide >= 0) lizard_out(&t->fish[i]); }
 
-/* the hunt's prey: the pellet nearest along the floor (one still falling is waited for under it); -1 none */
-static int lizard_prey(const tank_t *t, const fish_t *f) {
-    int best = -1; float bd = 1e9f;
-    for (int i = 0; i < MAX_FOOD; i++) {
-        if (!t->food[i].alive) continue;
-        float d = fabsf(t->food[i].x - f->x) + (FOOD_FLOOR_Y - t->food[i].y) * 0.25f;   /* (a pellet down already is the better bet) */
-        if (d < bd) { bd = d; best = i; }
+/* ---- THE HUNT's prey and its meal (tank.h THE CRICKETS; the crickets themselves: THE CRICKETS above) ----
+ * the prey: the cricket about, or the dish while it holds worms, nearest by the route - the dish at LZ_DISH_X its cost - the
+ * one it is after (fish_t.prey) kept unless another is LZ_PREY_SWITCH cheaper; -1 none. A cricket it is after is where it
+ * was last seen (fish_t.seen_surf, seen_x: a cricket crawling into cover is seen to the spot) */
+static int lizard_prey(const tank_t *t, fish_t *f) {
+    const terrain_t *tr = tank_terrain(t);
+    int best = -1; float bc = 1e30f, cur = 1e30f;
+    for (int i = 0; i <= PREY_DISH; i++) {
+        int s; float px, py; terrain_hop_t hop;
+        if (!prey_spot(t, i, &s, &px, &py) || !terrain_route(tr, f->surf, f->x, s, px, &hop)) continue;
+        const float cost = hop.cost * (i == PREY_DISH ? LZ_DISH_X : 1.0f);
+        if (i == f->prey) cur = cost;
+        if (cost < bc) { bc = cost; best = i; }
     }
+    if (cur < 1e30f && !(bc < LZ_PREY_SWITCH * cur)) best = f->prey;
+    f->prey = (int8_t)best;
+    if (best >= 0 && best < MAX_CRICKETS) { f->seen_surf = t->cricket[best].surf; f->seen_x = t->cricket[best].x; }
     return best;
 }
-static bool prey_down(const food_t *q) { return q->floor_s > 0 || q->y >= FOOD_FLOOR_Y - 12; }
+/* where on path s it stands to strike prey at px facing dir (the dish: its snout over it): its snout - sdx ahead of its
+   middle - in the strike's reach of px (LZ_BITE_PX behind .. LZ_STRIKE_PX ahead; the dish's LZ_DISH_REACH_PX either way),
+   LZ_ARRIVE_PX inside it (a walk stops that short of its point), as near the stalk's mark (LZ_STRIKE_PX x 0.6 short) as its
+   span lets it; false: no such spot facing dir (a narrow ledge, the prey at its end) */
+static bool strike_spot(const tank_t *t, const fish_t *f, int s, float px, float sdx, int dir, bool dish, float *x) {
+    float x0, x1; walk_span(t, f, &tank_terrain(t)->path[s], 0, &x0, &x1);
+    const float behind = dish ? LZ_DISH_REACH_PX : LZ_BITE_PX, ahead = dish ? LZ_DISH_REACH_PX : LZ_STRIKE_PX;
+    float lo = dir > 0 ? px - ahead - sdx : px - behind + sdx, hi = dir > 0 ? px + behind - sdx : px + ahead + sdx;
+    if (hi - lo > 2 * LZ_ARRIVE_PX + 1) { lo += LZ_ARRIVE_PX + 0.5f; hi -= LZ_ARRIVE_PX + 0.5f; }
+    lo = fmaxf(lo, x0); hi = fminf(hi, x1);
+    if (lo > hi) return false;
+    *x = clampf(px - dir * (sdx + (dish ? 0 : LZ_STRIKE_PX * 0.6f)), lo, hi);
+    return true;
+}
+/* a strike's odds of missing (tank.h LZ_MISS*): the cold, its stage, the cricket in the air or frightened */
+static float lizard_miss_odds(const fish_t *f, const cricket_t *c) {
+    float m = LZ_MISS;
+    if (f->heat < HEAT_SLOW) m += LZ_MISS_COLD * (1 - clampf(f->heat, 0, HEAT_SLOW) / HEAT_SLOW);
+    m += f->stage == STAGE_FRY ? LZ_MISS_HATCH : f->stage == STAGE_JUV ? LZ_MISS_JUV : f->stage == STAGE_ELDER ? LZ_MISS_ELDER : 0;
+    if (c->state == CK_HOP) m += LZ_MISS_HOP;
+    if (c->alert > 0) m += LZ_MISS_ALERT;
+    return clampf(m, 0, 0.95f);
+}
+/* a meal: hunger off by its pack's hunger_per_cricket x worth - and from the keeper's hand a MEAL, as a fish's pellet is
+   (eat_nearby_food): eaten_player, the first-meal badge, the meal's pay; the feed gesture counted once */
+static void lizard_meal(tank_t *t, int idx, float worth, bool from_player) {
+    fish_t *f = &t->fish[idx];
+    f->hunger = clampf(f->hunger - tank_species(t)->hunger_per_cricket * worth, 0, 10);
+    f->energy = clampf(f->energy + worth, 0, 10);
+    f->eaten++;
+    tank_emit(TEV_EAT, idx);
+    if (from_player) {
+        if (!tank_is_visitor(idx)) { f->eaten_player++; f->ms_bits |= MS_FIRST_MEAL_FROM_YOU; f->meal_due = true; }
+        if (t->feed_open) { t->player_feedings++; t->feed_open = false; }   /* the gesture became a meal */
+    }
+}
+static void lizard_catch(tank_t *t, int idx, int i) {
+    cricket_t *c = &t->cricket[i];
+    const bool mine = c->from_player;
+    c->state = CK_NONE; t->ck_caught++; t->fish[idx].prey = -1; t->fish[idx].seen_surf = -1;   /* (eaten: nothing to look for) */
+    lizard_meal(t, idx, 1.0f, mine);
+}
+static void lizard_worm(tank_t *t, int idx) {                 /* a worm from the dish (the keeper filled it) */
+    if (!t->dish_worms) return;
+    t->dish_worms--; t->dish_eaten++;
+    lizard_meal(t, idx, DISH_WORM_X, true);
+}
+static void lizard_missed(tank_t *t, cricket_t *c, float from_x) {
+    t->ck_missed++;
+    if (c->state == CK_HOP) c->alert = CK_ALERT_S; else ck_flee(t, c, from_x);   /* (mid-hop: it lands first, wide awake) */
+}
+/* THE RAP (tank.h THE WALK): lizard i dashes for the hide nearest by its route - it stays in the one it is in - and stays
+   LZ_SPOOK_S; a strike under way is off */
+static void lizard_spook(tank_t *t, int i) {
+    fish_t *f = &t->fish[i];
+    const terrain_t *tr = tank_terrain(t);
+    const habitat_t *h = tank_habitat(t);
+    int best = f->hide; float bc = 1e30f;
+    for (int k = 0; f->hide < 0 && k < h->n_hides; k++) {      /* (out of every hide: the nearest by its route) */
+        float hx, hy; terrain_hop_t hop; tank_hide_point(t, k, &hx, &hy);
+        if (terrain_route(tr, f->surf, f->x, 0, hx, &hop) && hop.cost < bc) { bc = hop.cost; best = k; }
+    }
+    f->spook_s = LZ_SPOOK_S; f->spook_hide = (int8_t)best; f->hesitate = 0; f->pause_s = 0;
+    if (f->pose == LZ_POSE_STALK || f->pose == LZ_POSE_LUNGE) { f->strike_s = 0; f->pose = LZ_POSE_STAND; }
+}
+/* THE HAND (tank.h THE WALK): a settled hold draws a lizard - trusting, not too hungry, awake, not overheating, not frightened */
+static bool hand_draws(const tank_t *t, const fish_t *f) {
+    return t->hold_active && t->hold_time >= HOLD_ATTRACT_S && f->trust >= 4.0f && f->hunger < HOLD_HUNGER_VETO
+        && tank_activity_phase(t) == PHASE_ACTIVE && f->heat < HEAT_HOT && f->spook_s <= 0;
+}
+/* ... to the hand's place on the ground (tank_hand_point: up a rock if that is nearest the finger), beside it: the first one
+   LZ_HAND_GAP to its left, the next to its right, then further out - a side its ground has no room for skipped - facing it,
+   flicking its tongue */
+static void lizard_hand(tank_t *t, int idx, walk_plan_t *w) {
+    const fish_t *f = &t->fish[idx];
+    float gx, gy; int gs = hand_ground(t, &gx, &gy); if (gs < 0) gs = 0;   /* (-1: not a terrarium's - the walk is only ever one's) */
+    float x0, x1; walk_span(t, f, &tank_terrain(t)->path[gs], 0, &x0, &x1);
+    int rank = 0;
+    for (int i = 0; i < idx; i++) rank += tank_swims(t, i) && hand_draws(t, &t->fish[i]);
+    float x = clampf(gx - LZ_HAND_GAP, x0, x1);              /* (no slot with room: as near as its ground lets it) */
+    for (int k = 0, n = 0; k < 2 * N_FISH_SLOTS; k++) {
+        const float s = gx + (k / 2 + 1) * LZ_HAND_GAP * (k & 1 ? 1.0f : -1.0f);
+        if (s < x0 || s > x1) continue;
+        if (n++ == rank) { x = s; break; }
+    }
+    w->go = true; w->surf = gs; w->x = x; w->lane = 0;
+    w->face = gx >= x ? 1 : -1; w->pace = 0.9f; w->stops = 0.8f; w->flick = true; w->pose = LZ_POSE_FLICK;
+}
 /* where its way to (to, tx) comes onto path `to` - its own x when it is on it already (the side it approaches from) */
 static float lizard_entry(const terrain_t *tr, const fish_t *f, int to, float tx) {
     terrain_hop_t hop;
@@ -4371,7 +4780,7 @@ static void lizard_explore_pick(tank_t *t, fish_t *f) {
     const terrain_t *tr = tank_terrain(t);
     int count[6] = { 0 };
     for (int s = 0; s < tr->n_paths; s++) {
-        float x0, x1; walk_span(f, &tr->path[s], 0, &x0, &x1);
+        float x0, x1; walk_span(t, f, &tr->path[s], 0, &x0, &x1);
         for (float x = x0; x <= x1; x += LZ_EXPLORE_STEP) { const int z = zone_in(x, terrain_y(&tr->path[s], x)); if (z >= 0) count[z]++; }
     }
     const int cur = zone_of(f->x, f->y);
@@ -4386,7 +4795,7 @@ static void lizard_explore_pick(tank_t *t, fish_t *f) {
     const int z = (second >= 0 && (xr(t) % 3) == 0) ? second : best;
     int k = (int)(xr(t) % (uint32_t)count[z]);
     for (int s = 0; s < tr->n_paths; s++) {
-        float x0, x1; walk_span(f, &tr->path[s], 0, &x0, &x1);
+        float x0, x1; walk_span(t, f, &tr->path[s], 0, &x0, &x1);
         for (float x = x0; x <= x1; x += LZ_EXPLORE_STEP) {
             const float y = terrain_y(&tr->path[s], x);
             if (zone_in(x, y) == z && k-- == 0) { f->explore_surf = (int8_t)s; f->explore_x = x; f->explore_y = y; return; }
@@ -4398,16 +4807,15 @@ static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
     fish_t *f = &t->fish[idx];
     const terrain_t *tr = tank_terrain(t);
     w->go = false; w->surf = f->surf; w->x = f->x; w->lane = 0; w->pose = LZ_POSE_STAND; w->face = 0;
-    w->pace = 1; w->stops = 1; w->flick = false; w->enter = -1; w->stay_in = false; w->prey = -1; w->prey_down = false;
+    w->pace = 1; w->stops = 1; w->flick = false; w->enter = -1; w->stay_in = false; w->prey = -1; w->in_reach = false;
     goal_id_t g = f->goal.id;
-    const int pi = lizard_prey(t, f);
-    const bool starving = f->hunger >= 8.0f && pi >= 0;
+    const bool starving = f->hunger >= 8.0f && tank_food_sight(t, idx, NULL, NULL, NULL);
     /* the night: the sleep phase is for rest, or a hide (a starving lizard still hunts); and with the lamp out a bask's
        warmth is the warm hide's mat (the hide its need picks) - never a climb to a cold rock it would have to come down from */
     if (tank_activity_phase(t) == PHASE_SLEEP && g != GOAL_LZ_HIDE && !(g == GOAL_LZ_HUNT && starving)) g = GOAL_LZ_REST;
     if (t->night && g == GOAL_LZ_BASK) g = GOAL_LZ_HIDE;
     /* what outranks the goal, as with the fish: the spawning's pair to the nursery, the setup page's lizard to its
-       spot, a startle's flight - the advisor keeps the goal */
+       spot, THE RAP's dash for cover, THE HAND - the advisor keeps the goal */
     if (t->spawning && (idx == t->court_a || idx == t->court_b) && !starving) {
         float cx, cy, rx; court_site(t, &cx, &cy, &rx);
         const float side = idx == t->court_a ? -1.0f : 1.0f;
@@ -4419,25 +4827,48 @@ static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
         w->face = sinf(anim(t) * 0.7f + f->wander) > 0 ? 1 : -1;     /* it turns about now and then: both flanks show */
         return;
     }
-    if (t->startled && tank_dist(f->x, f->y, t->startle_x, t->startle_y) < STARTLE_RADIUS * 1.6f) {
-        w->go = true; w->x = f->x + (f->x >= t->startle_x ? 1 : -1) * 120; w->pace = LZ_LUNGE_X * 0.8f; w->stops = 0;   /* away along its own path */
+    if (f->spook_s > 0) {                                     /* THE RAP: for cover at a dash, and in it while the fright lasts */
+        const int k = f->spook_hide;
+        if (f->hide >= 0 && (k < 0 || f->hide == k)) { w->stay_in = true; return; }
+        if (k >= 0) { float hx, hy; tank_hide_point(t, k, &hx, &hy); w->go = true; w->surf = 0; w->x = hx; w->enter = k; w->pace = LZ_DASH_X; w->stops = 0; return; }
+        w->go = true; w->x = f->x + (f->x >= t->startle_x ? 1 : -1) * 120; w->pace = LZ_DASH_X; w->stops = 0;   /* (no hide: away along its path) */
         return;
     }
+    if (hand_draws(t, f)) { lizard_hand(t, idx, w); return; }
     switch (g) {
     case GOAL_LZ_HUNT: {
-        if (pi < 0) {                                         /* nothing to hunt: a slow walk to where food came last */
+        const int pi = lizard_prey(t, f);
+        if (pi < 0 && f->seen_surf >= 0 && f->seen_surf < tr->n_paths) {   /* its prey gone from sight (into cover): to where it was
+                                                                               last seen, its snout over the spot (a cricket hidden there
+                                                                               is flushed: CK_FLUSH_PX), tongue-flicking - once there, forgotten */
+            const int ss = f->seen_surf;
+            const float sdx = tank_lizard_half_len(t, f) * cosf(terrain_tilt(&tr->path[ss], f->seen_x, 1));
+            int dir = f->seen_x >= lizard_entry(tr, f, ss, f->seen_x) ? 1 : -1;
+            float sx;
+            if (!strike_spot(t, f, ss, f->seen_x, sdx, dir, true, &sx)) { if (strike_spot(t, f, ss, f->seen_x, sdx, -dir, true, &sx)) dir = -dir; else sx = f->seen_x - dir * sdx; }
+            if (f->surf == ss && fabsf(f->x - sx) <= 2 * LZ_ARRIVE_PX) f->seen_surf = -1;   /* (there: nothing - it looks elsewhere next) */
+            w->go = true; w->surf = ss; w->x = sx; w->face = dir; w->pace = 0.8f; w->stops = 0.8f; w->flick = true; w->pose = LZ_POSE_FLICK;
+            break;
+        }
+        if (pi < 0) {                                         /* nothing to hunt, nothing seen: a slow walk to where food came last */
             float sx = t->feed_spot_x >= 0 ? t->feed_spot_x : TANK_W * 0.5f;
             w->go = f->surf != 0 || fabsf(sx - f->x) > 40; w->surf = 0; w->x = sx; w->pace = 0.6f; w->stops = 1.5f; w->flick = true; w->pose = LZ_POSE_FLICK;
             break;
         }
-        const food_t *q = &t->food[pi];
-        const int dir = q->x >= lizard_entry(tr, f, 0, q->x) ? 1 : -1;   /* (from the side its way down reaches the floor) */
-        const float snout = LZ_SNOUT * f->size, ahead = (q->x - (f->x + f->facing * snout)) * f->facing;
-        w->prey = pi; w->prey_down = prey_down(q); w->pose = LZ_POSE_STALK; w->stops = 0.6f;
-        if (f->surf == 0 && ahead >= -snout && ahead <= (w->prey_down ? LZ_STRIKE_PX : 8)) { w->face = f->facing; break; }   /* in reach on the
-                                                                                                   floor, ahead of it: from here (one still falling: right under it) */
-        w->go = true; w->surf = 0; w->face = dir;
-        w->x = q->x - dir * (snout + (w->prey_down ? LZ_STRIKE_PX * 0.7f : 4));   /* to its striking distance, or under it */
+        int ps; float px, py; prey_spot(t, pi, &ps, &px, &py);
+        const bool dish = pi == PREY_DISH;
+        const float half = tank_lizard_half_len(t, f);
+        w->prey = pi; w->pose = dish ? LZ_POSE_STAND : LZ_POSE_STALK; w->stops = 0.6f;
+        if (f->surf == ps) {                                  /* on its ground: in reach ahead of its snout - or the last stretch, a creep */
+            const float ahead = (px - (f->x + f->facing * half * cosf(f->slope))) * f->facing;
+            if (dish ? fabsf(ahead) <= LZ_DISH_REACH_PX : ahead >= -LZ_BITE_PX && ahead <= LZ_STRIKE_PX) { w->face = f->facing; w->in_reach = true; break; }
+            if (!dish && fabsf(ahead) <= LZ_CREEP_FROM) w->pace = LZ_CREEP_X;
+        }
+        const float sdx = half * cosf(terrain_tilt(&tr->path[ps], px, 1));   /* (its snout's reach along that ground) */
+        int dir = px >= lizard_entry(tr, f, ps, px) ? 1 : -1;  /* (from the side its way onto that ground reaches it; else the other) */
+        float sx;
+        if (!strike_spot(t, f, ps, px, sdx, dir, dish, &sx)) { if (strike_spot(t, f, ps, px, sdx, -dir, dish, &sx)) dir = -dir; else sx = px - dir * sdx; }
+        w->go = true; w->surf = ps; w->x = sx; w->face = dir;
         break;
     }
     case GOAL_LZ_BASK:
@@ -4483,19 +4914,57 @@ static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
     }
 }
 
-/* a bite at the hunt's pellet: hunger off by its pack's catch, the meal's bookkeeping as a fish's (eat_nearby_food) */
-static void lizard_bite(tank_t *t, int idx, int i) {
-    fish_t *f = &t->fish[idx];
-    t->food[i].alive = false;
-    f->hunger = clampf(f->hunger - tank_species(t)->hunger_per_cricket, 0, 10);
-    f->energy = clampf(f->energy + 1.0f, 0, 10);
-    f->eaten++;
-    tank_emit(TEV_EAT, idx);
-    if (t->food[i].from_player) {
-        if (!tank_is_visitor(idx)) { f->eaten_player++; f->ms_bits |= MS_FIRST_MEAL_FROM_YOU; f->meal_due = true; }
-        if (t->feed_open) { t->player_feedings++; t->feed_open = false; }   /* the gesture became a meal */
-    }
+/* ---- P3b DRAW-ONLY: THE LOOK (tank.h fish_t lz_*; render_lizard.h lizard_pose_t) ----
+ * What draw_lizard needs of a lizard that THE WALK does not keep, worked out each tick from what it does: the walk's
+ * phase (by the ground it covers, so a planted foot stays put - its stride, species.h lizard_stride_px - the turn's
+ * shuffle and the dig's scrabble by the clock; a lunge's phase is how far it has reached), the blink, the tongue's flicks
+ * (often while it explores or looks at the other - FLICK -, now and then stalking or standing), and the fat reserve its
+ * tail shows (meals and hunger, slowly). The engine never reads these, and nothing here draws on the tank's random
+ * stream (each lizard's own hash of its uid and its count): the walk runs exactly as without it. */
+#define LOOK_BLINK_S      0.18f      /* a blink: shut and open again */
+#define LOOK_TONGUE_S     0.26f      /* a flick: out and back */
+#define LOOK_FAT_TAU_S    180.0f     /* the tail's girth follows its meals this slowly */
+static float look_hash01(const fish_t *f, uint32_t n) {
+    uint32_t h = f->uid * 0x9E3779B1u ^ n * 0x85EBCA77u;
+    h ^= h >> 15; h *= 0x2C1B3C6Du; h ^= h >> 12;
+    return (float)(h & 0xffff) / 65535.0f;
 }
+static void lizard_look(tank_t *t, fish_t *f, float dt) {
+    const species_t *p = tank_species(t);
+    const float stride = lizard_stride_px(&p->geom, tank_lizard_scale(f));
+    if (f->pose == LZ_POSE_LUNGE) f->lz_phase = f->pose_s + f->strike_s > 0 ? clampf(f->pose_s / (f->pose_s + f->strike_s), 0, 1) : 1;   /* the reach: a lunge's or a dab's
+                                                                                                  share done (its seconds so far, and left) */
+    else {
+        float cyc = f->speed > 0 ? f->speed * dt / (stride > 1 ? stride : 1)    /* the ground covered (along the slope) */
+                  : f->pose == LZ_POSE_TURN ? 1.6f * dt                        /* the turn's shuffle */
+                  : f->pose == LZ_POSE_DIG ? 2.4f * dt : 0;                    /* the scrabble */
+        f->lz_phase += cyc;
+        f->lz_phase -= floorf(f->lz_phase);
+    }
+    /* the blink: every 2.5..7 s; lz_blink_s under 0 while one is under way */
+    if (f->lz_blink_s > 0) { f->lz_blink_s -= dt; if (f->lz_blink_s <= 0) f->lz_blink_s = -LOOK_BLINK_S; }
+    else {
+        f->lz_blink_s += dt;
+        if (f->lz_blink_s >= 0) f->lz_blink_s = 2.5f + 4.5f * look_hash01(f, (uint32_t)(t->clock * 3.0));
+    }
+    { const float u = f->lz_blink_s < 0 ? 1 + f->lz_blink_s / LOOK_BLINK_S : 1; f->lz_blink = f->lz_blink_s < 0 ? 1 - fabsf(2 * u - 1) : 0; }
+    /* the tongue: a flick, then the next by what it is doing */
+    const bool flicks = f->pose == LZ_POSE_FLICK || f->pose == LZ_POSE_STALK || f->pose == LZ_POSE_STAND || f->pose == LZ_POSE_WALK
+                        || f->pose == LZ_POSE_PEEK || f->pose == LZ_POSE_STANDOFF;
+    if (f->lz_tongue_s > 0) { f->lz_tongue_s -= dt; if (f->lz_tongue_s <= 0 && flicks) f->lz_tongue_s = -LOOK_TONGUE_S; else if (f->lz_tongue_s <= 0) f->lz_tongue_s = 1; }
+    else {
+        f->lz_tongue_s += dt;
+        if (f->lz_tongue_s >= 0) {
+            const float r = look_hash01(f, (uint32_t)(t->clock * 5.0) + 7919u);
+            f->lz_tongue_s = f->pose == LZ_POSE_FLICK ? 0.5f + 1.2f * r : f->pose == LZ_POSE_STALK || f->pose == LZ_POSE_PEEK ? 1.8f + 2.5f * r : 4.0f + 6.0f * r;
+        }
+    }
+    f->lz_tongue = f->lz_tongue_s < 0 ? sinf(3.14159265f * (1 + f->lz_tongue_s / LOOK_TONGUE_S)) : 0;
+    /* the fat reserve: fed and not hungry, a full tail; starving, a thin one */
+    const float want = clampf(0.30f + 0.45f * (1 - f->hunger / 10) + 0.25f * clampf(f->eaten / 40.0f, 0, 1), 0.08f, 1);
+    f->lz_fat = f->lz_fat <= 0 ? want : f->lz_fat + (want - f->lz_fat) * clampf(dt / LOOK_FAT_TAU_S, 0, 1);
+}
+/* ---- (P3b DRAW-ONLY: THE LOOK ends) ---- */
 
 static void update_lizard(tank_t *t, int idx, float dt) {
     fish_t *f = &t->fish[idx];
@@ -4542,12 +5011,14 @@ static void update_lizard(tank_t *t, int idx, float dt) {
     if (f->wander >= 62.831853f) f->wander = fmodf(f->wander, 62.831853f);
     f->goal_age += dt; f->ask_age += dt;
 
-    /* 4. the plan, and a moment's hesitation over a torn decision (it stands; in a hide it stays in) */
+    /* 4. the plan, and a moment's hesitation over a torn decision (it stands; in a hide it stays in) - never in the rap's dash */
     walk_plan_t w; lizard_plan(t, idx, &w);
     if (f->hesitate > 0) {
         f->hesitate -= dt;
-        w.go = false; w.pose = LZ_POSE_STAND; w.face = 0; w.enter = -1; w.stay_in = true; w.prey = -1;
+        if (f->spook_s <= 0) { w.go = false; w.pose = LZ_POSE_STAND; w.face = 0; w.enter = -1; w.stay_in = true; w.prey = -1; w.in_reach = false; }
     }
+    if (f->spook_s > 0) f->spook_s = fmaxf(0, f->spook_s - dt * (f->hide >= 0 ? 1.0f : 0.25f));   /* THE RAP: the fright runs out in its cover */
+    f->to_hide = (int8_t)w.enter;                             /* (render's stack: the hide this walk goes into) */
     /* 5. a hide: in it while the plan keeps it there, else out at its mouth */
     if (f->hide >= 0 && !(w.stay_in || w.enter == f->hide)) lizard_out(f);
     /* 6. THE ROUTE: the point onto its path (as near as the glass lets it), and the way there - the next leg along its own
@@ -4557,7 +5028,7 @@ static void update_lizard(tank_t *t, int idx, float dt) {
     float wx = f->x; int via = -1;
     if (w.go) {
         if (w.surf < 0 || w.surf >= tr->n_paths) w.surf = 0;
-        float x0, x1; walk_span(f, &tr->path[w.surf], w.surf != 0 ? 0 : f->surf == 0 ? f->y - PLACE_Y : w.lane, &x0, &x1);
+        float x0, x1; walk_span(t, f, &tr->path[w.surf], w.surf != 0 ? 0 : f->surf == 0 ? f->y - PLACE_Y : w.lane, &x0, &x1);
         w.x = clampf(w.x, x0, x1);
         for (int k = 0; k < 4; k++) {
             terrain_hop_t hop;
@@ -4578,8 +5049,10 @@ static void update_lizard(tank_t *t, int idx, float dt) {
     pace *= terrain_pace(climb);                              /* uphill slower, downhill a little careful */
     float speed = 0, dx = 0;
     uint8_t pose = w.pose;
-    const food_t *q = w.prey >= 0 ? &t->food[w.prey] : NULL;
-    const float snout = LZ_SNOUT * f->size;
+    const float sdx = tank_lizard_half_len(t, f) * cosf(f->slope);   /* its snout: the drawn body's half length ahead of its middle */
+    int ps = -1; float px = 0, py = 0;
+    const bool prey = w.prey >= 0 && prey_spot(t, w.prey, &ps, &px, &py) && ps == f->surf;   /* its prey, on its ground */
+    const bool dish = w.prey == PREY_DISH;
     if (f->hide >= 0) {                                       /* in a hide: hidden, looking out now and then */
         pose = f->pose == LZ_POSE_PEEK ? LZ_POSE_PEEK : LZ_POSE_HIDDEN;
         if ((f->peek_s -= dt) <= 0) {
@@ -4588,16 +5061,21 @@ static void update_lizard(tank_t *t, int idx, float dt) {
         }
     } else if (f->turn_s > 0) {                               /* turning about on the spot: it stands while its yaw swings */
         f->turn_s -= dt; pose = LZ_POSE_TURN;
-    } else if (f->pose == LZ_POSE_LUNGE && f->strike_s > 0 && q && w.prey_down && f->surf == 0) {   /* the lunge: at the prey, flat out */
+    } else if (f->pose == LZ_POSE_LUNGE && f->strike_s > 0 && prey) {   /* the lunge: at the prey, flat out (the dish: a dab) */
         f->strike_s -= dt; pose = LZ_POSE_LUNGE;
-        dx = q->x - (f->x + f->facing * snout);
-        if (fabsf(dx) <= LZ_BITE_PX + 3 * f->size) {
-            const float miss = LZ_MISS + (f->heat < HEAT_SLOW ? LZ_MISS_COLD : 0);
-            if (tank_randf(t, 0, 1) >= miss) lizard_bite(t, idx, w.prey);   /* caught */
-            pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S;   /* (caught or missed: a beat) */
-        } else if (dx * f->facing > 0) speed = pace * LZ_LUNGE_X;
-        else { pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S; }   /* past it: a miss */
-        if (f->strike_s <= 0 && pose == LZ_POSE_LUNGE) { pose = LZ_POSE_STAND; f->pause_s = LZ_MISS_REST_S; }
+        if (dish) {
+            if (f->strike_s <= 0) { lizard_worm(t, idx); pose = LZ_POSE_STAND; f->pause_s = DISH_CHEW_S; }   /* a worm, every time; then it chews */
+        } else {
+            cricket_t *c = &t->cricket[w.prey];
+            const float lift = ck_ground(path, c->x) - c->y;  /* (mid-hop: off the ground) */
+            dx = c->x - (f->x + f->facing * sdx);
+            if (fabsf(dx) <= LZ_BITE_PX + 3 * f->size && lift <= CK_REACH_DY) {   /* the strike: caught, or missed */
+                if (tank_randf(t, 0, 1) >= lizard_miss_odds(f, c)) lizard_catch(t, idx, w.prey);
+                else lizard_missed(t, c, f->x + f->facing * sdx);
+                pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S;   /* (caught or missed: a beat) */
+            } else if (dx * f->facing > 0 && f->strike_s > 0) speed = pace * LZ_LUNGE_X;
+            else { lizard_missed(t, c, f->x + f->facing * sdx); pose = LZ_POSE_STAND; f->strike_s = 0; f->pause_s = LZ_MISS_REST_S; }   /* past it, or out of time: a miss */
+        }
     } else {
         dx = w.go ? wx - f->x : 0;
         const bool there = !w.go || (via < 0 && fabsf(dx) <= LZ_ARRIVE_PX);
@@ -4623,13 +5101,13 @@ static void update_lizard(tank_t *t, int idx, float dt) {
             f->strike_s = 0;
         } else {                                              /* there: what the goal does here */
             f->walk_s = 0;
-            if (f->pause_s > 0) { f->pause_s -= dt; pose = LZ_POSE_STAND; }   /* (a beat after a strike) */
+            if (f->pause_s > 0) { f->pause_s -= dt; pose = LZ_POSE_STAND; }   /* (a beat after a strike; a worm's chewing) */
             else if (w.enter >= 0 && f->surf == 0) { lizard_into(f, w.enter); pose = LZ_POSE_HIDDEN; }
-            else if (q && w.prey_down && f->surf == 0) {      /* the strike: a freeze, then the lunge */
+            else if (w.in_reach && prey) {                    /* the strike: a freeze, then the lunge (the dish: a look in, then a dab) */
                 if (f->pose != LZ_POSE_STALK || f->strike_s <= 0) {
-                    if (f->pose == LZ_POSE_STALK) { pose = LZ_POSE_LUNGE; f->strike_s = LZ_LUNGE_MAX_S; }   /* the freeze is over */
-                    else { pose = LZ_POSE_STALK; f->strike_s = tank_randf(t, LZ_FREEZE_LO_S, LZ_FREEZE_HI_S); }
-                } else { f->strike_s -= dt; pose = LZ_POSE_STALK; if (f->strike_s <= 0) { pose = LZ_POSE_LUNGE; f->strike_s = LZ_LUNGE_MAX_S; } }
+                    if (f->pose == LZ_POSE_STALK) { pose = LZ_POSE_LUNGE; f->strike_s = dish ? DISH_DAB_S : LZ_LUNGE_MAX_S; }   /* the freeze is over */
+                    else { pose = LZ_POSE_STALK; f->strike_s = dish ? tank_randf(t, DISH_LOOK_LO_S, DISH_LOOK_HI_S) : tank_randf(t, LZ_FREEZE_LO_S, LZ_FREEZE_HI_S); }
+                } else { f->strike_s -= dt; pose = LZ_POSE_STALK; if (f->strike_s <= 0) { pose = LZ_POSE_LUNGE; f->strike_s = dish ? DISH_DAB_S : LZ_LUNGE_MAX_S; } }
             }
         }
     }
@@ -4643,7 +5121,7 @@ static void update_lizard(tank_t *t, int idx, float dt) {
         f->x += f->facing * step;
     }
     {
-        float x0, x1; walk_span(f, path, f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
+        float x0, x1; walk_span(t, f, path, f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
         f->x = clampf(f->x, x0, x1);
         const float line = terrain_y(path, f->x);
         if (f->surf != 0) f->y = line;
@@ -4659,6 +5137,7 @@ static void update_lizard(tank_t *t, int idx, float dt) {
     if (pose != f->pose) { f->pose = pose; f->pose_s = 0; } else f->pose_s += dt;
     tank_fish_trail(f, dt);                                   /* (render's body and tail follow, as a fish's) */
     fish_beat(f, dt);
+    lizard_look(t, f, dt);                                    /* P3b DRAW-ONLY: the phase, the blink, the tongue, the fat (THE LOOK) */
 }
 
 /* Coarse state signature (the browser prototype's "blunt" gate): banded
@@ -4680,8 +5159,8 @@ static uint32_t state_signature(const tank_t *t, int idx) {
      *           near/clear whenever a decision is made for another reason.
      * The model sees the exact distances in its state line either way; this
      * only decides WHEN it is asked. */
-    float fd = 1e9f; int fi = tank_nearest_food(t, f, &fd);
-    int food = (fi < 0 || band3(f->hunger) == 0) ? 0 : fd < 70 ? 2 : 1;
+    float fd = 1e9f; const bool seen = tank_food_sight(t, idx, NULL, NULL, &fd);   /* (the aquarium: the nearest pellet; a lizard: its prey) */
+    int food = (!seen || band3(f->hunger) == 0) ? 0 : fd < 70 ? 2 : 1;
     uint32_t sig = (uint32_t)band3(f->hunger) | (uint32_t)band3(f->energy) << 2 | (uint32_t)band3(f->stress) << 4
                  | (uint32_t)food << 6
                  | (uint32_t)t->night << 10 | (uint32_t)band3(f->curiosity) << 11
@@ -4725,6 +5204,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
         } else p->floor_s += dt;                        /* resting on the floor (FOOD_FLOOR_S) */
         if (p->floor_s > 0 ? p->floor_s > FOOD_FLOOR_S : p->age > FOOD_LIFE_S) p->alive = false;
     }
+    if (PT_TERRARIUM) live_food += ck_tick(t, dt);           /* THE CRICKETS: they fall, sit, hop, fly, hide (tank.h) */
     /* the tank's own trickle keeps fish alive when nobody is home (never
      * ruined by absence); the keeper's pellets are what progression counts.
      * Hunger-gated (see the hunger economy notes above): a pellet only when
@@ -4740,7 +5220,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
         if (tank_swims(t, i) && t->fish[i].hunger > hungriest) hungriest = t->fish[i].hunger;
     bool hold = (t->ravenous && !t->ravenous_fed) || t->trickle_off || t->autofeed_off;   /* (AUTO FEED off: the keeper's alone, 0.3.2) */
     if (PT_TERRARIUM && tank_activity_phase(t) != PHASE_ACTIVE) hold = true;   /* (P2b: nobody feeds lizards after lights-out - settle or sleep;
-                                                                                 P2c's crickets replace the pellets. The aquarium's as ever) */
+                                                                                 P2c: AUTO CRICKETS, in the active phase only. The aquarium's as ever) */
     if (!hold && live_food < 2 && hungriest >= TRICKLE_HUNGER &&
         tank_randf(t, 0, 1) < TRICKLE_RATE * dt)
         tank_scatter_food(t, 1);
@@ -4796,7 +5276,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
             /* prototype's urgent path: starving with food in view gets
              * asked NOW instead of waiting its turn */
             bool urgent = f->hunger > 8.0f && f->goal.id != GOAL_W_FOOD &&
-                          f->goal_age > 0.8f && tank_nearest_food(t, f, 0) >= 0;
+                          f->goal_age > 0.8f && tank_food_sight(t, i, NULL, NULL, NULL);
             bool changed = sig != f->sig && f->ask_age > ADVISOR_MIN_INTERVAL;
             bool idle = f->ask_age > ADVISOR_IDLE_CEILING;
             bool want = changed || idle || (urgent && f->ask_age > 0.5f);
@@ -4839,7 +5319,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
         fish_t *f = &t->fish[i];
         if (f->hunger > 8.5f && f->goal.id != GOAL_W_FOOD &&
             f->goal.id != GOAL_FLEE_SHADOW && f->goal_age > 4.0f &&
-            !f->starve_flagged && tank_nearest_food(t, f, 0) >= 0) {
+            !f->starve_flagged && tank_food_sight(t, i, NULL, NULL, NULL)) {
             f->starve_flagged = true;          /* count once per episode */
             tank_reflex_overrides++;
         }

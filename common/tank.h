@@ -504,6 +504,23 @@ typedef struct {
     int8_t   hide, surf, to_surf, explore_surf;
     uint8_t  pose;
     float    pose_s, lane, to_x, slope, walk_s, pause_s, turn_s, strike_s, peek_s;
+    /* THE CRICKETS and THE HAND (P2c; tank.h below): prey - the hunt's target (a cricket's slot, PREY_DISH the mealworm
+     * dish, -1 none), kept while no other is LZ_PREY_SWITCH cheaper to reach; seen_surf, seen_x - where its prey was last
+     * seen about (a path and an x; -1 none): a cricket gone into cover is looked for there, the lizard's snout over the spot
+     * (it flushes it: CK_FLUSH_PX), and the memory is spent there; spook_s - a rap's fright: it dashes for cover
+     * (spook_hide, the hide nearest by its route; -1 none: away along its path) and stays in it, the seconds counting down
+     * in full in a hide and at a quarter on the way there; shed_helped - the shed coming off had stuck (cleared by a damp
+     * stay or a soak): no clean shed's pay for it (progression.c); to_hide - the hide this walk is going into (the plan's,
+     * every tick: the hide goal's, the rap's dash; -1 none - render's stack draws it behind the hide's front). None saved */
+    int8_t   prey, seen_surf, spook_hide, to_hide;
+    float    seen_x, spook_s;
+    bool     shed_helped;
+    /* THE LOOK (P3b, DRAW-ONLY: tank.c's marked block lizard_look updates them each tick; the engine never reads them, nothing
+     * saves them - render_lizard.h lizard_pose_t): lz_phase - the walk's cycle 0..1, advanced by the ground it covers (its
+     * stride: the planted feet stay put), and the dig's scrabble; lz_blink 0 open .. 1 shut, lz_blink_s seconds to the next
+     * blink; lz_tongue 0 in .. 1 out, lz_tongue_s seconds to the next flick (exploring and investigating it flicks often,
+     * stalking now and then); lz_fat the fat reserve 0..1 (the tail's girth), easing toward what its meals and hunger say */
+    float    lz_phase, lz_blink, lz_blink_s, lz_tongue, lz_tongue_s, lz_fat;
 } fish_t;
 enum { DOOR_NONE, DOOR_HEADING, DOOR_ASKED, DOOR_PASSING, DOOR_ENTERING };
 
@@ -527,6 +544,89 @@ typedef struct { float x, y, age; bool alive, from_player; float floor_s, nibble
 #define FOOD_LIFE_S    (FOOD_FLOOR_Y / FOOD_SINK_PX_S + 5.0f)
 #define FOOD_FLOOR_S  30.0f          /* ... and how long it rests there (15 from 2026-09-29; doubled 2026-10-24, Strato testing the crab: "it's quite
                                       * challenging to have the crab get any food ... he can't get there quick enough") */
+
+/* THE CRICKETS (pocket-terrarium P2c; tank.c THE CRICKETS): the terrarium's live prey, in place of the pellets - its food[]
+ * stays empty, the aquarium's pellets are as they always were. The keeper's FEED gesture (a tap at the top, FEED_ZONE_Y, or
+ * a drag down from it: the fish's own) drops n crickets from the hand at its x (+-14 px); each FALLS straight down and
+ * lands on the first top under it - the highest ground at its x (tank_terrain's paths: its feet on a walking line +
+ * TERRAIN_FEET_DY) - never through rock: dropped over the high rock, it lands on the high rock. On the ground it SITS, and
+ * HOPS now and then in a short arc along its own path (a hop stays on its path: its ends and the glass bound it); a lizard
+ * that comes near - its snout within CK_ALERT_PX walking, CK_CREEP_PX creeping (slower than CK_CALM_PX_S) or turning,
+ * CK_STILL_PX standing still; never in a hide or mid-lunge - startles it into a FLIGHT (CK_NOTICE_PER_S its odds a second,
+ * a creeper's half, a still one's a third): a longer hop away along its path (cornered on the floor: the other way, over the
+ * lizard), or, up on a rock or a ramp, cornered or CK_DROP_ODDS of the time, off the front down to the ground below. Now
+ * and then (CK_COVER_ODDS; CK_COVER_SCARED after a fright) it CRAWLS into COVER on its path within CK_COVER_REACH_PX - on
+ * the floor a hide's side or the floor under a rock's end; up on a rock, its ends; a ramp has none - and stays HIDDEN
+ * CK_HIDE_LO_S..HI_S (out of every lizard's sight; a snout within CK_FLUSH_PX flushes it), then comes out with a hop back
+ * the way it crawled in (so a calm one is about some three quarters of its life). Uneaten it is
+ * gone CK_LIFE_S after its drop (it dies, or slips away for good); a night asleep (tank_tick_sleep) takes them all. The
+ * keeper's rap (THE WALK's THE RAP) sends those about within STARTLE_RADIUS flying. The tank's own trickle is AUTO
+ * CRICKETS in the terrarium (tank_scatter_food: dropped at a random x, never the keeper's), in its active phase only.
+ * THE MEALWORM DISH: the habitat's fixed place on the floor (habitat_t.dish, dish_u), filled to DISH_WORMS by a feed
+ * gesture over it (its x within DISH_FEED_PX of the dish's: no crickets then), saved with the tank. A slow, sure meal: at
+ * the dish a lizard looks in (DISH_LOOK_*), dabs (DISH_DAB_S) and takes a worm every time - DISH_WORM_X of a cricket's worth
+ * - then chews DISH_CHEW_S before the next.
+ * PREY (a lizard's `prey` sighting: the L1 line's, the rule stub's, the bridge's `food`; tank_food_sight): the nearest by
+ * the straight line - the schema's distance buckets - of the crickets ABOUT (on the ground, mid-hop or crawling: not
+ * falling from the hand, not in cover) on a path its route reaches from its own (terrain_route's links: every path of a
+ * habitat is reachable from the floor, terrain_check - so on the desert, all of them), and the dish while it holds worms.
+ * THE HUNT (tank.h THE WALK) goes for the prey nearest by the route (the dish at LZ_DISH_X its cost: a cricket is the
+ * better meal); a catch takes the pack's hunger_per_cricket off, and from the keeper's hand (a cricket the keeper dropped,
+ * a worm of the dish the keeper filled) it is a MEAL as a pellet is for a fish: eaten_player, the first-meal badge, the
+ * meal's pay (progression.c), the gesture counted once in player_feedings. */
+#define MAX_CRICKETS      12
+enum { CK_NONE = 0, CK_FALL, CK_SIT, CK_HOP, CK_CRAWL, CK_HIDE, CK_STATES };
+extern const char *const CK_STATE_NAMES[CK_STATES];
+typedef struct {
+    float   x, y;                       /* its feet: on the ground on its path's top (walking line + TERRAIN_FEET_DY); in the air, there */
+    float   vy;                         /* falling: px/s down */
+    float   age;                        /* seconds in the terrarium */
+    float   timer;                      /* SIT: seconds to its next move; HIDE: to coming out; HOP: seconds into the hop */
+    float   hop_s, x0, x1, hop_h;       /* a HOP: its seconds, from x0 to x1 along its path, hop_h px high at its top (x at a phase of
+                                           timer / hop_s); a CRAWL: x1 the cover it crawls to */
+    float   alert;                      /* seconds of fright left (a flight, a rap, a strike): readier to take cover, harder to strike */
+    int8_t  surf;                       /* the path it is on (tank_terrain); falling: the one it left (it falls past it), -1 from the hand */
+    uint8_t state;                      /* CK_* */
+    int8_t  facing;                     /* +1 it faces right, -1 left */
+    bool    from_player;                /* the keeper's hand dropped it (a catch is a meal), else the tank's own */
+} cricket_t;
+#define CK_GRAVITY        520.0f        /* px/s^2: a fall from the hand */
+#define CK_FALL_MAX       320.0f        /* ... at most this fast (a frame's step stays short of a ledge's thickness) */
+#define CK_LIFE_S         600.0f        /* uneaten this long, it is gone (it dies, or slips away) */
+#define CK_SIT_LO_S       1.5f          /* sitting: its next move this many seconds on */
+#define CK_SIT_HI_S       6.0f
+#define CK_HOP_LO_PX      10.0f         /* an idle hop's length ... */
+#define CK_HOP_HI_PX      32.0f
+#define CK_FLEE_LO_PX     36.0f         /* ... a flight's */
+#define CK_FLEE_HI_PX     64.0f
+#define CK_HOP_T0_S       0.22f         /* a hop takes CK_HOP_T0_S + its length / CK_HOP_PX_S ... */
+#define CK_HOP_PX_S       160.0f
+#define CK_HOP_H0         4.0f          /* ... and rises CK_HOP_H0 + CK_HOP_HK x its length (a 30 px hop: 13 px) */
+#define CK_HOP_HK         0.3f
+#define CK_ALERT_PX       48.0f         /* a walking lizard's snout this near startles it ... */
+#define CK_CREEP_PX       18.0f         /* ... a creeping one's (slower than CK_CALM_PX_S) this near ... */
+#define CK_STILL_PX       10.0f         /* ... a still one's this near */
+#define CK_CALM_PX_S      14.0f
+#define CK_NOTICE_PER_S   3.0f          /* its odds a second of noticing a walker in range (a creeper half, a still one a third) */
+#define CK_DROP_ODDS      0.35f         /* a flight up on a rock or a ramp goes off the front, down, this often (always when cornered) */
+#define CK_COVER_ODDS     0.06f         /* a calm cricket's next move is into cover this often (about ~3/4 of its life) ... */
+#define CK_COVER_SCARED   0.6f          /* ... a frightened one's */
+#define CK_COVER_REACH_PX 140.0f        /* cover on its path this near */
+#define CK_CRAWL_PX_S     14.0f
+#define CK_EDGE_PX        6.0f          /* under a rock's end: this far in under it */
+#define CK_HIDE_LO_S      10.0f         /* in cover this long, then out with a hop back the way it came */
+#define CK_HIDE_HI_S      30.0f
+#define CK_FLUSH_PX       12.0f         /* a snout this near cover flushes it out */
+#define CK_ALERT_S        6.0f          /* a fright lasts this */
+#define CK_GLASS_M        6.0f          /* its feet keep this far inside the glass */
+#define CK_REACH_DY       16.0f         /* a lunge reaches a cricket this far over its own feet (mid-hop: a 30 px hop's top is 13) */
+#define DISH_WORMS        6             /* a full dish */
+#define DISH_WORM_X       0.5f          /* a worm's worth: this share of a cricket's */
+#define DISH_FEED_PX      30.0f         /* a feed gesture this near the dish's x fills it */
+#define DISH_LOOK_LO_S    0.8f          /* at the dish: a look in ... */
+#define DISH_LOOK_HI_S    1.6f
+#define DISH_DAB_S        0.3f          /* ... a dab: a worm, every time ... */
+#define DISH_CHEW_S       2.5f          /* ... and a beat before the next */
 
 /* the shrimp school (2026-09-29, the shop's sixth item, SD_ITEM_SHRIMP): cherry
  * shrimp that swim as a loose school with a pull toward the grass, swarm the
@@ -1024,6 +1124,12 @@ typedef struct tank {
     bool     mist_hold, mist_done;
     float    mist_x, mist_y, mist_s;
     int8_t   mist_fish;
+    /* THE CRICKETS and the dish (P2c, THE CRICKETS above): the crickets in the terrarium (not saved: a boot finds none, a
+     * night takes them); the mealworm dish's worms (saved, progression.c); the census's counters - crickets dropped (by
+     * the keeper and the tank alike), caught, struck at and missed, gone uneaten; worms eaten from the dish (not saved) */
+    cricket_t cricket[MAX_CRICKETS];
+    uint8_t   dish_worms;
+    uint32_t  ck_dropped, ck_caught, ck_missed, ck_lost, dish_eaten;
 } tank_t;
 
 /* Advisor interface (Track 1 model, rule stub, or firmware LLM core).
@@ -1213,7 +1319,7 @@ bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on anima
  * A lizard is ON A PATH (fish_t.surf) at an x on it: its middle on the path's walking line - on the floor in the floor's
  * band, LZ_LANE_BACK..LZ_LANE_FRONT px about PLACE_Y (the back and the front lane a walk takes, so two can pass; a place
  * is on the line itself); a rock or a ramp is one lane - and its body inside the glass at its height: its middle at least
- * LZ_GLASS_M in, and LZ_HALF_LEN x its size (the bowl narrows toward its ends, the watch's corners close in). It steps
+ * LZ_GLASS_M in, and its body as drawn (tank_lizard_half_len) on either side (the bowl narrows toward its ends, the watch's corners close in). It steps
  * from one path onto another only where they meet (a ramp's end: a link), so it never drops, floats or passes through
  * rock; off the floor its lane is 0 first (it takes a ramp from the middle of the floor). It walks at its pack's pace for
  * its stage (species_t.walk_px_s) x the urgency's 0.8..1.25, x the cold's HEAT_SLOW, x 0.45 spent (energy under 1.2), x
@@ -1223,9 +1329,17 @@ bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on anima
  * flicks) - and it TURNS ABOUT ON THE SPOT (turn_s: it stands while its yaw swings through head-on, its lane held too) -
  * at a switchback's corner too. Every goal resolves to a point on the ground (a path and an x) and what it does there;
  * the way is THE ROUTE (terrain_route: along the paths, through the links, the quickest):
- *   hunt         the prey (the nearest pellet, on the floor, until P2c's crickets): down to it, a freeze (STALK) within
- *                LZ_STRIKE_PX, then a LUNGE at LZ_LUNGE_X its pace that misses LZ_MISS of the time (LZ_MISS_COLD more
- *                cold); a pellet still falling: it waits under it; none: a slow walk to where food came last
+ *   hunt         the prey (THE CRICKETS above): the one nearest by the route - a cricket about on whatever ground it is,
+ *                or the mealworm dish (LZ_DISH_X its route's cost) - kept while none is LZ_PREY_SWITCH cheaper; to it,
+ *                creeping the last LZ_CREEP_FROM px of its snout's way on its path (LZ_CREEP_X its pace: crickets miss
+ *                a creeper), a freeze (STALK) with its snout within LZ_STRIKE_PX, then a LUNGE along its path at LZ_LUNGE_X
+ *                its pace: a cricket in its snout's reach (LZ_BITE_PX, CK_REACH_DY over its feet) is caught unless the
+ *                strike misses (lizard_miss_odds: LZ_MISS, + LZ_MISS_COLD x the cold under HEAT_SLOW, + its stage's
+ *                LZ_MISS_HATCH / _JUV / _ELDER, + LZ_MISS_HOP a cricket mid-hop, + LZ_MISS_ALERT a frightened one) -
+ *                past it, or out of reach, is a miss too, and a missed cricket flies; at the dish a look and a dab, a
+ *                worm every time (DISH_*); its prey gone into cover: to where it was last seen, its snout over the
+ *                spot (fish_t.seen_surf, seen_x - a cricket hidden there is flushed), once; no prey: a slow walk to
+ *                where food came last
  *   bask         to the basking spot (the high rock's top under the lamp, in the desert), then flat on it (BASK) until
  *                the goal changes - heat rises; with the lamp out, into the hide its need picks (the warm one's mat)
  *   hide         into the hide its need picks (tank_lizard_hide_for: the humid hide with a shed coming, on or stuck,
@@ -1242,6 +1356,17 @@ bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on anima
  *   rest         lies still where it is, on any ground (REST; in a hide it stays in)
  * The night: in its species' sleep phase every goal but hide is performed as rest (a starving lizard, hunger 8 and
  * up, still hunts). The spawning's pair walks to the nursery and stands there; the setup page's lizard to its spot.
+ * THE RAP (the keeper's three quick taps, tank_touch_tap): every lizard within STARTLE_RADIUS x 1.6 of it DASHES FOR
+ * COVER - into the hide nearest by its route at LZ_DASH_X its pace, no stops - and stays in LZ_SPOOK_S (fish_t.spook_s;
+ * more taps while spooked keep it in), its stress up and its trust down as a fish's (tank_startle); a habitat without
+ * hides: away along its path. THE HAND (a finger resting on the glass, tank_touch_hold): the keeper's hand resting in the
+ * terrarium, on the ground nearest the finger (tank_hand_point: the sand under it, a rock beside it). After HOLD_ATTRACT_S
+ * a lizard of trust 4 and up, not too hungry (HOLD_HUNGER_VETO), awake (the active phase) and not overheating walks - and
+ * climbs - to it and stands beside it, LZ_HAND_GAP from its x (the next one the other side, then further out; a side its
+ * ground has no room for skipped), tongue-flicking it (FLICK); every lizard earns TRUST_PER_S while the hand rests, as a
+ * fish does, and one that came from HOLD_APPROACH_FROM out to within HOLD_APPROACH_AT of the hand's place earns the
+ * hold-approach badge (touch_tick, tank_at_finger: distances to the hand's place). The rap outranks the hand, the hand
+ * the goal (the advisor keeps it). A TAP ON A LIZARD is its card: the platforms' hit test along its body (tank_tap_d2).
  * Drives run on its pack's rates (species_t: hunger, energy spent walking or digging and back lying still, curiosity
  * up except exploring or investigating - LZ_CURIOSITY_SPEND_X its rise spent then); stress settles 0.18 a second,
  * twice that in a hide or lying still.
@@ -1255,13 +1380,29 @@ extern const char *const LZ_POSE_NAMES[LZ_POSES];
 #define LZ_LANE_BACK     (-5.0f)      /* px off PLACE_Y: the back lane ... */
 #define LZ_LANE_FRONT    5.0f         /* ... and the front one: the floor's band */
 #define LZ_GLASS_M       24.0f        /* its middle keeps this far inside the glass at its height ... */
-#define LZ_HALF_LEN      20.0f        /* ... and its body this x its size (the fish body render.c draws it with until P3) */
+/* ... and its body as drawn: the size render_lizard draws it at - its stage's (species.h lizard_stage_scale) x its own build
+   (the roster's size 0.86..1.08 pulled halfway to 1: 0.93..1.04) - and half its length, its nose or its tail tip from its
+   middle (an adult gecko ~42 px, an elder up to ~47: terrain.h TERRAIN_LINK_IN_PX keeps every ramp's end within reach) */
+float tank_lizard_scale(const fish_t *f);
+float tank_lizard_half_len(const tank_t *t, const fish_t *f);
 #define LZ_SLOPE_RATE    2.5f         /* rad/s: its body's slope eases to the ground's (a ramp's 37 deg in a quarter second) */
 #define LZ_ARRIVE_PX     6.0f         /* at a place: this close to it */
 #define LZ_STRIKE_PX     30.0f        /* the hunt: its snout this near the prey, it freezes, then lunges */
 #define LZ_LUNGE_X       3.0f
-#define LZ_MISS          0.15f
-#define LZ_MISS_COLD     0.35f
+#define LZ_MISS          0.15f        /* a strike's misses: an adult's, comfortable, at a cricket sitting unaware ... */
+#define LZ_MISS_COLD     0.35f        /* ... + this at heat 0, falling straight to 0 at HEAT_SLOW ... */
+#define LZ_MISS_HATCH    0.10f        /* ... + a hatchling's clumsiness, a juvenile's, an elder's slowness ... */
+#define LZ_MISS_JUV      0.05f
+#define LZ_MISS_ELDER    0.08f
+#define LZ_MISS_HOP      0.35f        /* ... + a cricket in the air ... */
+#define LZ_MISS_ALERT    0.15f        /* ... + a frightened one (cricket_t.alert) */
+#define LZ_CREEP_FROM    64.0f        /* the hunt: its snout this near the prey (on its path), it creeps ... */
+#define LZ_CREEP_X       0.45f        /* ... at this share of its pace */
+#define LZ_PREY_SWITCH   0.7f         /* a new prey: it must be this much cheaper to reach than the one it is after */
+#define LZ_DISH_X        1.6f         /* the dish counts at this many times its route's cost */
+#define LZ_DASH_X        2.4f         /* the rap: its dash for cover at this many times its pace ... */
+#define LZ_SPOOK_S       20.0f        /* ... and the seconds it stays in */
+#define LZ_HAND_GAP      44.0f        /* the hand: lizards stand this far apart beside it */
 #define LZ_CONTACT_PX    32.0f        /* investigate: up to the other this close (nose to it) ... */
 #define LZ_STANDOFF_PX   70.0f        /* ... or, territorial, no closer than this */
 #define LZ_SOCIAL_LOW    0.33f
@@ -1272,6 +1413,20 @@ bool  tank_lizard_enter(tank_t *t, int i, int k);       /* staging (the director
                                                           false = no such hide (nothing changes) */
 void  tank_lizard_leave(tank_t *t, int i);              /* ... and out of the one it is in, at its mouth */
 int   tank_lizard_hide_for(const tank_t *t, int i);     /* the hide lizard i's need picks (the hide goal's), -1 = the habitat has none */
+/* THE CRICKETS' and the dish's (tank.h THE CRICKETS): PREY_DISH is a lizard's prey at the dish (fish_t.prey) */
+#define PREY_DISH MAX_CRICKETS
+int   tank_cricket_drop(tank_t *t, float x, bool from_player);   /* one cricket from the hand at x: it falls to the first top under it; its
+                                                                    slot, -1 none free (tank_feed, the trickle, the tests) */
+bool  tank_cricket_about(const cricket_t *c);                    /* on the ground, mid-hop or crawling: not falling, not in cover */
+int   tank_crickets_about(const tank_t *t);
+bool  tank_dish_here(const tank_t *t);                           /* the habitat has a mealworm dish (habitat_t.dish) */
+void  tank_dish_point(const tank_t *t, float *x, float *y);      /* its middle on the sand: the floor's x at dish_u, PLACE_Y + TERRAIN_FEET_DY */
+/* the food fish idx sees, its world's: the nearest pellet (the aquarium, tank_nearest_food), or a lizard's PREY (THE CRICKETS);
+   false none. Every sighting of food reads this: the advisors' lines, the rule stub, the asking's signature */
+bool  tank_food_sight(const tank_t *t, int idx, float *x, float *y, float *dist);
+int   tank_food_count(const tank_t *t);                          /* food there is to eat: pellets (the aquarium); crickets (any), and the dish
+                                                                    while it holds worms (the terrarium) - the famine's gate (progression.c) */
+void  tank_clear_food(tank_t *t);                                /* no pellets, no crickets (the dish as it is): the tests' clean slate */
 /* Tank light (2026-09-15). It is on while the device is being handled and
  * goes off LIGHT_IDLE_S after the last handling - the tank sitting still on
  * a desk is night: the fish rest, the palette dims, the panel dims. The
@@ -1342,7 +1497,12 @@ void  tank_quarter_to_upright(int q, float *x, float *y);
  *    are harmless again and it takes 3 quick taps to re-trigger. Spooking
  *    costs trust; calm holds earn it.
  *  tank_feed: the keeper drops n pellets at x (surface). Player feeding is what
- *    progression counts; the tank's own trickle feed is not. */
+ *    progression counts; the tank's own trickle feed is not.
+ *  THE TERRARIUM (P2c) reads the same gestures the same way (the sim's mouse and the board's touch port alike): the feed
+ *    gesture drops n crickets from the hand at x (tank.h THE CRICKETS) - or, over the mealworm dish, fills it; the hold is
+ *    the keeper's hand resting in the terrarium (THE WALK's THE HAND: trusting lizards come and stand beside it, trust as
+ *    the fish's); 3+ quick taps are THE RAP (lizards dash for cover, the crickets near it fly); a tap on a lizard is its
+ *    card (the platform's hit test, as a fish's); the tools' rules are the same (a tool in hand owns the glass). */
 #ifdef TANK_ROUND
 #define FEED_ZONE_Y 45.0f   /* the bowl's surface is its rim: 26 px there is 2.5 mm of glass and a fingertip scatters 9 px (2026-10-03) -
                                a feed tap that fell short was a tank tap, and two of them the light's double tap */
@@ -1426,8 +1586,18 @@ void  tank_grow_algae(tank_t *t, int steps);
 float tank_dist(float ax, float ay, float bx, float by);
 int   tank_nearest_food(const tank_t *t, const fish_t *f, float *dist_out);
 int   tank_nearest_friend(const tank_t *t, int fish_idx, float *dist_out);
-/* fish i has come to a resting finger (the hold is drawing fish, and it is at the finger's edge) */
+/* fish i has come to a resting finger (the hold is drawing fish, and it is at the finger's edge - a lizard: at the hand's
+   place, tank_hand_point) */
 bool  tank_at_finger(const tank_t *t, int fish_idx);
+/* where the resting finger's hand is: the finger itself (the aquarium: fish swim to it); the terrarium's hand rests on the
+   ground - the point of the ground's walking lines nearest the finger (THE WALK's THE HAND: lizards come to it, the trust's
+   and the hold-approach's distances are to it) */
+void  tank_hand_point(const tank_t *t, float *x, float *y);
+/* a tap at (px, py) on animal i as if its middle were at (x, y) - the platforms test it at press time and now: the squared
+   distance from the tap to its body, a fish's middle (as pocket-tank's taps always were), a lizard's body line nose to tail
+   tip as drawn (tank_lizard_half_len along its slope). Within TANK_TAP_R it is a tap on that animal: its card */
+float tank_tap_d2(const tank_t *t, int i, float x, float y, float px, float py);
+#define TANK_TAP_R 38.0f   /* (a fingertip on the 322 ppi panel covers ~60 px) */
 float tank_randf(tank_t *t, float lo, float hi);
 /* roster preset count (6) and a preset's display name, for UI */
 int   tank_roster_count(void);

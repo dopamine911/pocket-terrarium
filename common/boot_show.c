@@ -11,7 +11,10 @@
  * each frame (render_boot_grass_live), growing on the show's clock.
  *
  * Its memory: the empty tank (a frame) and a landing map, half a byte a pixel - which piece makes that pixel what the
- * scene has (0: the empty tank's own). Once the fish come the empty tank's frame holds the tank drawn without them. */
+ * scene has (0: the empty tank's own). Once the fish come the empty tank's frame holds the tank drawn without them.
+ *
+ * The aquarium's alone (P3b): the terrarium has no water, no pieces and no grass loop - boot_show_begin refuses it there,
+ * and its tank comes up as it is (the platform's loading frames: its first scene baked) */
 #include "boot_show.h"
 #include "render.h"
 #include <string.h>
@@ -69,6 +72,7 @@ void boot_show_end(void) {
 }
 
 bool boot_show_begin(const tank_t *t, bool fill, void *(*alloc)(size_t), void (*release)(void *)) {
+    if (PT_TERRARIUM) return false;                 /* (the aquarium's show: above) */
     boot_show_end();
     const uint16_t *sc = render_scene_buf(NULL);
     if (!sc || !alloc) return false;

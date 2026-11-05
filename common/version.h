@@ -84,14 +84,21 @@ static inline const char *pt_board_words(const char *id) {
                                                   so a pocket-tank refuses our image over the air and we refuse its ("PTBOARD") */
 #define PT_BOARD_MARKER_OFFSET 0x120           /* ... at this offset in the app image: the image header (24) + the
                                                   first segment's header (8) + esp_app_desc_t (256) */
+typedef struct { char magic[8]; char board[24]; } pt_board_marker_t;   /* the marker (firmware/main/board_marker.c): every image
+                                                  carries one; tools/pt_boards.py reads it, the update's download checks it */
 
 /* pocket-terrarium: the networked features, off (PLAN.md D4: the port is a
- * proof of concept). 0 = Wi-Fi never starts: no update check, no Improv
+ * proof of concept). 0 = compiled out: no Wi-Fi, no update check, no Improv
  * provisioning, no clock from the internet; no tank link (ESP-NOW), so no
- * visits, gifts or passports; no VISITORS square on the keeper page. The code
- * stays compiled so upstream merges stay easy; only its entry points are shut.
- * Turning it back on needs our own OTA manifest + key and a link identity of
- * our own, or a terrarium would update into a pocket-tank and trade with one. */
+ * visits, gifts or passports; no VISITORS square on the keeper page. The
+ * networking sources leave the build (sim/Makefile NET, the firmware's
+ * CMakeLists read this line) and the linker drops the Wi-Fi / ESP-NOW / lwip /
+ * TLS / HTTP / OTA stacks. `make NET=1` builds the networked bin for the
+ * networking tests (sim/Makefile check-net). Turning it on for a board needs
+ * our own OTA manifest + key and a link identity of our own, or a terrarium
+ * would update into a pocket-tank and trade with one. */
+#ifndef PT_NET
 #define PT_NET 0
+#endif
 
 #endif

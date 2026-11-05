@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "link.h"
+#include "sim_tmp.h"   /* the run's scratch directory (P2c) */
 
 #define NT_MAX   4
 #define NF       3                 /* fish per tank */
@@ -581,7 +582,7 @@ static int d_wait_home(tank_t *t, uint32_t uid) {
     return -1;
 }
 int selftest_doors(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-doors.sav", 1);   /* (the births and welcomes save: never into the sim's own tank) */
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-doors.sav"), 1);   /* (the births and welcomes save: never into the sim's own tank) */
     d_fails = 0; dnow = 1000; dqn = 0;
     tank_init(&DA, 31); progression_fresh(&DA); tank_ensure_ids(&DA);   /* (progression booted for A: scenario 6 runs its tick) */
     tank_init(&DB, 32); tank_new_population(&DB); tank_ensure_ids(&DB);
@@ -598,8 +599,9 @@ int selftest_doors(void) {
       R.n_fish = n0;
       printf("selftest-doors: room = 5 fish a tank: 2 at home host 3, 4 host 1, 5 host none; fish away make room\n"); }
     LA = calloc(1, (size_t)link_size()); LB = calloc(1, (size_t)link_size());
-    (void)system("rm -rf /tmp/pt-doors-shelf && mkdir -p /tmp/pt-doors-shelf/frame");   /* (the keeper's name for A, on its passports) */
-    setenv("POCKET_TANK_STORAGE", "/tmp/pt-doors-shelf/storage.bin", 1); setenv("POCKET_TANK_FRAME", "/tmp/pt-doors-shelf/frame", 1);
+    { char cmd[700]; const char *d = sim_tmp("pt-doors-shelf"), *e = sim_tmp("pt-doors-shelf/storage.bin"), *fr = sim_tmp("pt-doors-shelf/frame");
+      snprintf(cmd, sizeof cmd, "rm -rf '%s' && mkdir -p '%s'", d, fr); (void)system(cmd);   /* (the keeper's name for A, on its passports) */
+      setenv("POCKET_TANK_STORAGE", e, 1); setenv("POCKET_TANK_FRAME", fr, 1); }
     shelf_boot(0); shelf_rename(-1, "SAM'S\nREEF");
     link_host_t ha = tank_link_host(&DA, d_send), hb = tank_link_host(&DB, d_send);
     link_init(LA, DA.uid, &ha, 1, dnow); link_init(LB, DB.uid, &hb, 2, dnow);
@@ -1680,7 +1682,7 @@ static int fc_count(const tank_t *t, uint32_t uid) {   /* a fish here: at home, 
     return n;
 }
 int selftest_fry_cap(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-fry-cap.sav", 1);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-fry-cap.sav"), 1);
     d_fails = 0; fc_over = 0; dnow = 1000; dqn = 0; d_deaf[0] = d_deaf[1] = false;
     tank_init(&DA, 41); progression_fresh(&DA); tank_ensure_ids(&DA);
     tank_init(&DB, 42); tank_new_population(&DB); tank_ensure_ids(&DB);
@@ -2191,7 +2193,7 @@ static int give_here_run(uint32_t seed, uint32_t chaos_ms, bool quiet) {
 int selftest_give(void) {
     fails = 0;
     {   /* the notes' save slot (gift.c): written, read back into a new book, the same */
-        setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-gift.sav", 1);
+        setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-gift.sav"), 1);
         static gift_book_t a, b; memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); a.persist = b.persist = true;
         gift_clear(&a);
         passport_t pp; memset(&pp, 0, sizeof pp); pp.uid = 0x1234567u; pp.home_tank = 0xabcdu; snprintf(pp.name, sizeof pp.name, "kelp");
@@ -2216,7 +2218,7 @@ int selftest_give(void) {
         setenv("POCKET_TANK_SAVE", "/dev/null/no-such-dir/gift.sav", 1);
         LCHECK(!gift_given_add(&a, pp.uid, 0x11u, 0x22u, &pp) && !gift_given_has(&a, pp.uid) && a.n_given == 0, "gift notes: a GIVEN note the flash refused still counted");
         LCHECK(!gift_arriving_add(&a, pp.uid, 0x11u, 0x22u, &pp) && a.n_arr == 0 && gift_state(&a, pp.uid, 0x11u, NULL) == LINK_GS_NONE, "gift notes: an ARRIVING note the flash refused still counted");
-        setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-gift.sav", 1);
+        setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-gift.sav"), 1);
         LCHECK(gift_given_add(&a, pp.uid, 0x11u, 0x22u, &pp) && a.n_given == 1, "gift notes: a note did not save once the flash took it");
         gift_clear(&a);
         printf("selftest-give: a note the flash refuses is taken back out (no fish leaves on it, no yes goes out on it)\n");
@@ -2224,11 +2226,11 @@ int selftest_give(void) {
     {   /* GIVEN BACK (0.4 rc round two): A gives F to B, B's GIVEN_OK is lost (A keeps GIVEN(F)); F comes back to A from a
            third tank C, B -> C -> A. The stale note read as a gift cut short at A's next boot (gift_boot) and took F out -
            and fish_held counted F twice. Through the door (GIVE_ALIVE adopts it) and given where it is (a visitor here) */
-        setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-givenback.sav", 1);
+        setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-givenback.sav"), 1);
         static tank_t A; static gift_book_t GA2;
         const uint32_t B = 0xB0B0B0B0u, C = 0xC0C0C0C0u; const int f0 = fails;
         for (int where = 0; where < 2; where++) {
-            remove("/tmp/pocket-tank-selftest-givenback.sav"); remove("/tmp/pocket-tank-selftest-givenback.sav.gifts");
+            remove(sim_tmp("pocket-tank-selftest-givenback.sav")); remove(sim_tmp("pocket-tank-selftest-givenback.sav.gifts"));
             tank_init(&A, 77); memset(&GA2, 0, sizeof GA2); GA2.persist = true; gift_attach(&A, &GA2); progression_boot(&A);
             while (A.n_fish < 4) tank_add_fish(&A, 0, 1);
             tank_ensure_ids(&A); for (int i = 0; i < A.n_fish; i++) A.fish[i].stage = STAGE_ADULT;

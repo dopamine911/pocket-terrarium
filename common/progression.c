@@ -281,6 +281,8 @@ typedef struct {
     float    body_c[N_FISH_MAX], shed_s[N_FISH_MAX], shed_damp[N_FISH_MAX];
     float    moist[HABITAT_HIDES_MAX];
     uint32_t pack_print[N_FISH_MAX];
+    /* the mealworm dish's worms (pocket-terrarium P2c: tank.h THE CRICKETS; an older save's zero: an empty dish) */
+    uint8_t  dish_worms;
     /* never a field: where this build's fields end and a newer build's tail
      * begins (SAVE_FIELDS_END; new fields go above it) */
     uint8_t  newer_tail[];
@@ -406,7 +408,9 @@ SAVE_AT(shed_state, 1960); SAVE_AT(shed_growth, 1966); SAVE_AT(shed_clean, 1972)
 SAVE_AT(body_c, 1984); SAVE_AT(shed_s, 2008); SAVE_AT(shed_damp, 2032); SAVE_AT(moist, 2056);       /* (moist: HABITAT_HIDES_MAX is a bound of the lock too) */
 SAVE_AT(pack_print, 2072);                                                                             /* (its own prints: pack_slot) */
 _Static_assert(sizeof(save_t) >= 2096, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2096 of fields */
-/* (the next field: SAVE_AT(its_name, 2096 or its type's alignment past it);) */
+SAVE_AT(dish_worms, 2096);                                                                             /* the mealworm dish, pocket-terrarium P2c */
+_Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2097 of fields, padded to 8 */
+/* (the next field: SAVE_AT(its_name, 2097 or its type's alignment past it);) */
 /* A ROLLBACK keeps the newer build's tail (2026-10-05): a save longer than
  * this build's fields loads its head, and every save writes the bytes past
  * SAVE_FIELDS_END back as they were - so the update back up finds its tail
@@ -429,9 +433,9 @@ _Static_assert(SAVE_FIELDS_END >= 1952 && SAVE_FIELDS_END <= sizeof(save_t), "SA
  * is 3 x ~128 = ~390 entries, plus ~10 for the settings, "bat"/"hist" and
  * the batlog's "bed": under 2/3 of the 630, so GC always has room. Past it,
  * saves can start failing for space, and any nvs_flash_init error makes
- * main.c ERASE the partition. 1912 B today (the seahorse, 0.3.6: its tally and its snacks, the pumpkin
- * and the pieces' order past 0.4's genes, IDs, prints and link at 1688..1863; 1908 of fields padded to 8;
- * ~59 entries a copy): 2088 B of headroom. A rolled-back tank writes the newer build's length instead
+ * main.c ERASE the partition. 2104 B today (pocket-terrarium: P2a's packs tail at 1956..2095 and P2c's mealworm
+ * dish at 2096 past pocket-tank 0.4's 1956; 2097 of fields padded to 8; ~66 entries a copy): 1896 B of headroom
+ * under the 4000. A rolled-back tank writes the newer build's length instead
  * (SAVE_FIELDS_END).
  * MY TANKS holds the save in a slot of SHELF_SAVE_MAX (3840, shelf.h), under the 4000 the NVS math allows: that is the
  * budget. A longer save cannot go on the shelf (a rolled-back tank's newer save: shelf_swap refuses it). */
@@ -471,8 +475,12 @@ static bool  s_setup_pending;        /* the first-run flow still owed (setup.c) 
    note holds its place too until the gift settles: GIVEN_LOST brings the fish back (11-03 rc: the giver refilled to five
    while the note was out, and the restore made a sixth) */
 static int fish_held(const tank_t *t) {
+#if PT_NET
     const gift_book_t *g = gift_of(t);
     int n = t->n_fish + (g ? g->n_arr + g->n_given : 0);
+#else
+    int n = t->n_fish;                                   /* (no gift notes without the network: version.h PT_NET) */
+#endif
     for (int h = 0; h < TANK_FRY_HOLDS; h++) n += t->fry_hold[h].peer != 0;
     return n;
 }
@@ -656,6 +664,7 @@ int progression_fish_value(const tank_t *t, int fish) {
 /* fish of ours already on their way out but `except` - a GIVE confirmed, asked next door, accepted and swimming
    out: gone for the keeper's count (the 11-02 sweep: 3 fish, F given and swimming, G sold = ONE fish left) */
 static int gifts_in_flight(const tank_t *t, int except) {
+#if PT_NET
     const gift_book_t *g = gift_of(t);
     if (!g) return 0;
     const uint32_t u[4] = { g->want_uid, g->wait_uid, g->asking_uid, g->leaving_uid };
@@ -665,13 +674,18 @@ static int gifts_in_flight(const tank_t *t, int except) {
         for (int k = 0; k < 4; k++) if (u[k] && t->fish[i].uid == u[k]) { n++; break; }
     }
     return n;
+#else
+    return 0;                                            /* (no gifts without the network: version.h PT_NET) */
+#endif
 }
 bool progression_keeps_two(const tank_t *t, int fish) {   /* `fish` may go and the last pair still stays (the gifts on their way out gone) */
     return fish >= 0 && fish < t->n_fish && t->n_fish - gifts_in_flight(t, fish) > FISH_KEEP_MIN;
 }
 static bool keeper_may_part(const tank_t *t, int fish) {   /* the keeper's own rules for selling or giving: the last pair stays, a welcome owed first */
+#if PT_NET
     const gift_book_t *g = gift_of(t);                     /* (a fish being given is not for sale meanwhile) */
     if (g && fish >= 0 && fish < t->n_fish && (t->fish[fish].uid == g->asking_uid || t->fish[fish].uid == g->leaving_uid)) return false;
+#endif
     return progression_keeps_two(t, fish) && s_newborn < 0;
 }
 bool progression_fish_sellable(const tank_t *t, int fish) {
@@ -777,14 +791,17 @@ static void apply_growth(fish_t *f) {
 }
 
 /* a shed come off clean (SHED_CLEAN: a damp stay or a soak, tank.c): one more clean shed, the timer restarted for the
- * stage it has now, and a growth shed's stage on (silent, as every stage change; the new skin shows it in P3) */
+ * stage it has now, and a growth shed's stage on (silent, as every stage change; the new skin shows it in P3) - and one
+ * that never stuck pays SD_SHED_CLEAN, as a stage reached pays (P2c: the keeper's upkeep in time; one helped off a stuck
+ * shed, fish_t.shed_helped, does not) */
 static void shed_done(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     if (f->shed != SHED_CLEAN) return;
     bool grew = f->shed_growth && stage_for(t, s_age[i]) > f->stage;
     if (grew) f->stage = (stage_t)(f->stage + 1);
     if (f->shed_clean < 65535) f->shed_clean++;
-    f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_damp = 0;
+    if (!f->shed_helped) sd_award(t, SD_SHED_CLEAN);
+    f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_damp = 0; f->shed_helped = false;
     f->shed_s = tank_species(t)->shed_every_s[f->stage & 3];
     mark_dirty();
     apply_stage(t, i, false);                    /* the badges, and the next stage already due (a long absence): its shed at once */
@@ -979,7 +996,9 @@ static void do_arrival(tank_t *t) {
         t->fry_force = -1;
     }
     uint32_t parent_uid = cross ? t->fish[b].uid : 0;
+#if PT_NET
     if (cross) collection_fry(parent_uid);
+#endif
     int slot = tank_add_fish(t, a, b);
     s_arrival_pending = false;
     s_spawn_in = -1; t->spawning = false; t->spawn_danced = 0;
@@ -1020,7 +1039,9 @@ void progression_fry_kept(tank_t *t, int k) {
     if (fish_held(t) >= POP_CAP || t->n_fish >= N_FISH_MAX) {
         const fish_t *fry = &t->fish[N_FISH_MAX + k];
         uint32_t vis = t->fry_give_parent, mate = fry->parent_uid[0] == vis ? fry->parent_uid[1] : fry->parent_uid[0];
+#if PT_NET
         collection_fry_undo(vis);
+#endif
         if (vis && !t->fry_partner) { t->fry_partner = vis; t->fry_mate = mate; t->fry_home_room = -1; t->fry_asked = false; }   /* (gone: fry_partner_roll lets go) */
         return;
     }
@@ -1031,6 +1052,7 @@ void progression_fry_kept(tank_t *t, int k) {
     welcome_birth(t, slot);
     progression_cap_check(t, "progression_fry_kept");
 }
+#if PT_NET
 /* home: one of ours, born next door (LEV_FRY_IN) - away there, swimming home */
 int progression_fry_adopt(tank_t *t, const passport_t *pp, int edge) {
     if (!progression_fry_room(t)) return -1;
@@ -1046,6 +1068,7 @@ int progression_fry_adopt(tank_t *t, const passport_t *pp, int edge) {
     progression_save(t);                     /* (saved at once, as a gift: the host has handed it over - 11-03 rc) */
     return slot;
 }
+#endif
 int progression_fry_room(const tank_t *t) {
     return fish_held(t) < POP_CAP && fish_held(t) < N_FISH_MAX;   /* (a gift we said yes to holds its place) */
 }
@@ -1068,6 +1091,7 @@ bool progression_give_out(tank_t *t, int fish) {
     progression_save(t);
     return true;
 }
+#if PT_NET
 /* a gift from next door, ours from now on: the fish its passport says, at its
    age, its stage and badges kept - and every stage it has already reached,
    and its trust bonus, counted as paid here, so a fish given back and forth
@@ -1113,6 +1137,7 @@ static void gift_boot(tank_t *t) {
         if (here) gift_received(g, g->arriving[k].uid, g->arriving[k].nonce); else k++;
     }
 }
+#endif
 /* home: a fry born next door is here - its birth flow now */
 void progression_fry_home(tank_t *t, int slot) {
     if (slot < 0 || slot >= t->n_fish || !t->fish[slot].born_away) return;
@@ -1453,8 +1478,11 @@ void progression_fresh(tank_t *t) {
    the tank switcher) - the shelf, the wallet and the board's settings stay */
 void progression_reset(tank_t *t, uint32_t seed) {
     progression_carry_t c; progression_carry_take(t, &c);
-    persist_port_erase(); collection_reset(); gift_clear(gift_of(t));
+    persist_port_erase();
+#if PT_NET
+    collection_reset(); gift_clear(gift_of(t));
     render_give_modal_close();       /* the old tank's GIVE modal (the evening sweep: CANNOT BE GIVEN RIGHT NOW over the new one) */
+#endif
     tank_init(t, seed);
     progression_fresh(t);
     progression_carry_give(t, &c);
@@ -1589,6 +1617,9 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
             t->moist[k] = !humid ? 0 : packs_ok && m >= 0 && m <= 1 ? m : h->moist_start;
         }
     }
+    /* the mealworm dish's worms (P2c, tank.h THE CRICKETS): the save's pair's dish as it was (more than a full dish: full); a
+       habitat without a dish, a pair not held (the defaults, as the hides' moisture) or an older save (its zero): empty */
+    t->dish_worms = tank_dish_here(t) && packs_ok ? (sv.dish_worms <= DISH_WORMS ? sv.dish_worms : DISH_WORMS) : 0;
     if (sv.tank_uid) t->uid = sv.tank_uid;
     tank_ensure_ids(t);                       /* a pre-0.4 save: fresh IDs, the parents' from their slots */
     s_setup_pending = sv.setup_pending != 0;
@@ -1771,9 +1802,13 @@ void progression_slept(tank_t *t, float seconds) {
 float progression_wake(tank_t *t, int64_t now_unix) {
     int64_t saved_unix;
     s_booted = true;
+#if PT_NET
     collection_load();
     if (!load_save(t, &saved_unix)) { progression_fresh(t); tank_ensure_ids(t); gift_boot(t); return -1; }
     gift_boot(t);
+#else
+    if (!load_save(t, &saved_unix)) { progression_fresh(t); tank_ensure_ids(t); return -1; }
+#endif
     float slept = -1;
     if (now_unix > 0 && saved_unix > 0 && now_unix > saved_unix) {
         int64_t span = now_unix - saved_unix;
@@ -1896,7 +1931,7 @@ void progression_tick(tank_t *t, float dt) {
      * event). Entered at boot after a long absence, or live whenever everyone
      * is starving - waking from device sleep lands here naturally. If nobody
      * comes, after a while the fish give up and the tank feeds itself. */
-    int any_food = 0; for (int i = 0; i < MAX_FOOD; i++) any_food |= t->food[i].alive;
+    int any_food = tank_food_count(t) > 0;       /* (pellets; a terrarium's crickets and its dish's worms: tank.h THE CRICKETS) */
     if (!s_ravenous && !any_food && t->n_fish > 0) {
         float mn = 10;
         for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away && t->fish[i].hunger < mn) mn = t->fish[i].hunger;
@@ -1934,7 +1969,9 @@ void progression_tick(tank_t *t, float dt) {
      * the one do_arrival will name (pick_parents). */
     fry_partner_roll(t);
     bond_tick(t, dt);
+#if PT_NET
     collection_tick(t, dt);
+#endif
     t->courting = false; t->court_a = t->court_b = -1;
     if (fish_held(t) < POP_CAP && fish_held(t) < N_FISH_MAX && tank_nursery_bed(t) >= 0) {
         /* ... and only with a nursery: a bed tall enough to hide in. Shave
@@ -1984,7 +2021,9 @@ void progression_tick(tank_t *t, float dt) {
 }
 
 bool progression_save(tank_t *t) {
+#if PT_NET
     kin_flush();                                       /* (the KIN book's waiting change, with the tank's: sleep, a SWAP IN, a sale) */
+#endif
     save_t sv; memset(&sv, 0, sizeof sv);
     sv.magic = SAVE_MAGIC; sv.saved_unix = clock_port_now_unix(); sv.clock = (float)t->clock;
     sv.saved_release = PT_RELEASE_NUM;
@@ -2067,6 +2106,7 @@ bool progression_save(tank_t *t) {
     }
     sv.pack_v = 1; sv.pack_id = t->pack_id; sv.habitat_id = t->habitat_id;
     for (int k = 0; k < HABITAT_HIDES_MAX; k++) sv.moist[k] = t->moist[k];
+    sv.dish_worms = tank_dish_here(t) ? t->dish_worms : 0;   /* (an aquarium's: always 0 - freshwater has no dish) */
     sv.tank_uid = t->uid;
     const void *out = &sv; size_t out_n = sizeof sv; uint8_t *joined = NULL;
     if (s_newer && (joined = malloc(SAVE_FIELDS_END + s_newer_n))) {   /* a newer build's tail, as it left it */

@@ -27,6 +27,7 @@
  * render.c can keep its dirty and touched masks. */
 #include "render_lizard.h"
 #include "render.h"                 /* FB_SWAP16 */
+#include "render_scene_desert.h"    /* scene_light_rgb: the light it stands in, as the scene's */
 #include "pt_util.h"
 #include <math.h>
 #include <stdlib.h>
@@ -37,11 +38,15 @@
 #define LZ_SHOULDER 7               /* the node the front legs hang from */
 #define LZ_HIP      13              /* ... the hind legs: the middle of its length - the anchor and the turn's pivot */
 #define LZ_GW       128             /* the body grid's most cells across ... */
-#define LZ_GH       48              /* ... and down (an elder at 1.3, lunging or turned head-on, fits: the sheet counts) */
+#define LZ_GH       96              /* ... and down (an elder at 1.3, lunging or turned head-on, fits - and pitched on a 40 deg
+                                       ramp, its length standing up the grid: the sheet counts) */
 #define LZ_SLOTS    24              /* the bodies kept: three geckos' poses, breaths and turn steps (measured: a busy minute
                                        of three builds 36 bodies at 24, 137 at 20 - the working set) */
-#define LZ_PALS     4               /* the palettes kept (a morph, a stage, a shed, the night) */
-#define LZ_DUTY     0.62f           /* a foot's share of the walk cycle on the sand */
+#define LZ_PALS     8               /* the palettes kept (a morph, a stage, a shed, the night, the lamp's pool) */
+#define LZ_DUTY        LIZARD_DUTY     /* a foot's share of the walk cycle on the sand (species.h: the walk's stride is the body plan's) */
+#define LZ_WALK_STRIDE LIZARD_STRIDE   /* the walk's stride, x the limb: how far a planted foot sweeps back */
+#define LZ_TONGUE_IN   0.8f            /* the tongue's length, x scale^0.8: just showing ... */
+#define LZ_TONGUE_OUT  4.6f            /* ... and how much more all the way out */
 
 /* along the body, snout 0 .. tail tip 1 */
 static const float LZ_S[LZ_N] = { 0.000f, 0.030f, 0.062f, 0.095f, 0.128f, 0.160f, 0.195f, 0.250f, 0.290f, 0.330f, 0.370f, 0.410f,
@@ -179,6 +184,7 @@ typedef struct {
     uint32_t seed;
     uint16_t scale_q;
     uint8_t  cls, stage, pat, shed, shed_k, peek, breath, wig, reach, yaw_h, yaw_t, fat;
+    int8_t   pitch;
 } lz_key_t;
 #define Q_YAW   4                    /* the turn's steps from side-on to head-on (a turn builds ~2 x Q_YAW bodies, then keeps them) */
 #define Q_FAT   8
@@ -186,6 +192,7 @@ typedef struct {
 #define Q_PEEK  12
 #define Q_WIG   4
 #define Q_REACH 3
+#define Q_PITCH 0.05f                /* the body's pitch in steps of this (radians, ~3 deg: its ends off the ground by a pixel at most) */
 
 /* what the live parts hang from, kept with a body: the chain at the shoulder, the hip, the eye, the snout, the
    snout's next node and the jaw's hinge; the trunk's footprint on the sand (the contact shadow) */
@@ -193,8 +200,9 @@ enum { SUM_SHOULDER, SUM_HIP, SUM_EYE, SUM_SNOUT, SUM_NOSE2, SUM_HINGE, SUM_N };
 static const float LZ_SUM_S[SUM_N] = { 0.250f, 0.500f, LZ_T_EYE, 0.0f, 0.062f, 0.090f };
 typedef struct {
     float P[SUM_N][3], r[SUM_N], w[SUM_N], phi[SUM_N];
-    float shx0, shx1, shz0, shz1;            /* the footprint: screen x, and depth x LZ_TILT, from the anchor */
+    float shx0, shx1, shz0, shz1;            /* the footprint: screen x, and depth x LZ_TILT, from the anchor (before the pitch) */
     float sl, juv, scale;
+    float pc, ps;                            /* the pitch it was built with (facing right): its cos and sin */
 } lz_sum_t;
 
 typedef struct {
@@ -206,7 +214,7 @@ typedef struct {
     uint8_t  tn[LZ_GW * LZ_GH];
 } lz_slot_t;
 typedef struct { uint16_t c[P_N]; } lz_pal_t;
-typedef struct { const void *art, *morph; uint8_t stage, banded, shed; float dim; uint32_t used; lz_pal_t pal; } lz_palc_t;
+typedef struct { const void *art, *morph; uint8_t stage, banded, shed; bool moon; float dim, glow; uint32_t used; lz_pal_t pal; } lz_palc_t;
 #define LZ_LAST 8                            /* the lizards whose last body is remembered (the budget's fallback) */
 typedef struct { uint32_t seed, key, used; const void *geom; int slot; } lz_last_t;
 typedef struct {
@@ -223,7 +231,7 @@ static int  g_lz_builds, g_lz_clipped, g_lz_budget = -1;
 static int  g_box[4]; static bool g_box_ok;
 size_t lizard_scratch_bytes(void) { return sizeof(lz_scratch_t); }
 void   lizard_set_scratch(void *buf) { g_lz = (lz_scratch_t *)buf; if (g_lz) memset(g_lz, 0, sizeof *g_lz); }
-void   lizard_frame(int builds) { g_lz_budget = builds; }
+int    lizard_frame(int builds) { const int left = g_lz_budget; g_lz_budget = builds; return left; }
 void   lizard_cache_on(bool on) { g_lz_nocache = !on; }
 int    lizard_cache_builds(void) { return g_lz_builds; }
 int    lizard_cache_clipped(void) { return g_lz_clipped; }
@@ -234,10 +242,16 @@ bool   lizard_last_box(int *x0, int *y0, int *x1, int *y1) {
     return true;
 }
 
-float lizard_stage_scale(int stage) {
-    static const float K[4] = { 0.42f, 0.68f, 1.0f, 1.08f };   /* a hatchling ~8 cm of an adult's ~20 */
-    return K[stage < 0 ? 0 : stage > 3 ? 3 : stage];
+const morph_t *lizard_morph_of(const species_t *sp, const fish_t *f) {
+    /* LOOK_COLORS order: teal, coral, green, lavender, yellow, pink, blue, silver, charcoal -> the gecko's NORMAL 0,
+       TANGERINE 1, ALBINO 2, BLIZZARD 3, MACK SNOW 4 (species/gecko.c) */
+    static const uint8_t BY_BODY[LOOK_N] = { 0, 1, 0, 4, 0, 2, 3, 3, 4 };
+    if (!sp || !sp->morphs || !sp->n_morphs) return NULL;
+    const int g = tank_gene(f, GENE_BODY);
+    return &sp->morphs[BY_BODY[g < 0 || g >= LOOK_N ? 0 : g] % sp->n_morphs];
 }
+/* (the walk's stride, species.h lizard_stride_px: lz_legs plants a foot LIZARD_DUTY of the cycle and sweeps it back
+   LIZARD_STRIDE x the limb meanwhile) */
 lizard_pose_t lizard_pose(int kind, float yaw) {
     lizard_pose_t p; memset(&p, 0, sizeof p);
     p.kind = (uint8_t)kind; p.yaw = yaw; p.yaw_tail = yaw; p.fat = 0.5f; p.peek = 0.28f; p.shed = SHED_NORMAL;
@@ -247,9 +261,10 @@ lizard_pose_t lizard_pose(int kind, float yaw) {
 /* ---- the skeleton (built with a body; the live parts read its summary) ---- */
 typedef struct {
     float X[LZ_N], Y[LZ_N], Z[LZ_N];        /* 3D from the anchor on the floor: along the screen, up, toward the glass */
-    float sx[LZ_N], sy[LZ_N];               /* the screen (y down) */
+    float sx[LZ_N], sy[LZ_N];               /* the screen (y down), the pitch on */
     float r[LZ_N], w[LZ_N], phi[LZ_N];      /* half height, half width, heading in the floor plane (0 right, pi/2 the glass) */
     float L, sl, juv;                       /* the length; the limbs' scale; 1 a hatchling .. 0 grown */
+    float pc, ps;                           /* the pitch (facing right, + nose up): the screen turns by it about the anchor */
 } lz_spine_t;
 
 static void lz_shape_of(int cls, const lz_key_t *k, lz_shape_t *s) {
@@ -274,7 +289,7 @@ static void lz_shape_of(int cls, const lz_key_t *k, lz_shape_t *s) {
     }
 }
 
-static void lz_spine(lz_spine_t *sp, const lizard_look_t *lk, const lz_shape_t *sh, float scale, float yaw_h, float yaw_t, float fat) {
+static void lz_spine(lz_spine_t *sp, const lizard_look_t *lk, const lz_shape_t *sh, float scale, float yaw_h, float yaw_t, float fat, float pitch) {
     const lizard_geom_t *g = lk->geom;
     const float L = g->length_px * scale;
     const float juv = lk->stage == STAGE_FRY ? 1.0f : lk->stage == STAGE_JUV ? 0.5f : 0.0f;
@@ -337,7 +352,13 @@ static void lz_spine(lz_spine_t *sp, const lizard_look_t *lk, const lz_shape_t *
         float du = u[i + 1] - u[i], pm = 0.5f * (sp->phi[i] + sp->phi[i + 1]);
         sp->X[i + 1] = sp->X[i] + du * cosf(pm); sp->Z[i + 1] = sp->Z[i] + du * sinf(pm);
     }
-    for (int i = 0; i < LZ_N; i++) { sp->Y[i] = h[i]; sp->sx[i] = sp->X[i]; sp->sy[i] = -h[i] + sp->Z[i] * LZ_TILT; }
+    /* the pitch: the screen turned about the anchor (its feet's point), nose up for + - the ground under it with it */
+    sp->pc = cosf(pitch); sp->ps = sinf(pitch);
+    for (int i = 0; i < LZ_N; i++) {
+        sp->Y[i] = h[i];
+        const float x = sp->X[i], y = -h[i] + sp->Z[i] * LZ_TILT;
+        sp->sx[i] = x * sp->pc + y * sp->ps; sp->sy[i] = -x * sp->ps + y * sp->pc;
+    }
 }
 /* the chain at s (0..1), and what the live parts read of it */
 static void lz_at(const lz_spine_t *sp, float s, float P[3], float *r, float *w, float *phi) {
@@ -358,7 +379,7 @@ static void lz_summarize(lz_sum_t *m, const lz_spine_t *sp, float scale) {
         if (gz - e * LZ_TILT < m->shz0) m->shz0 = gz - e * LZ_TILT;
         if (gz + e * LZ_TILT > m->shz1) m->shz1 = gz + e * LZ_TILT;
     }
-    m->sl = sp->sl; m->juv = sp->juv; m->scale = scale;
+    m->sl = sp->sl; m->juv = sp->juv; m->scale = scale; m->pc = sp->pc; m->ps = sp->ps;
 }
 
 /* ---- the build: the body's tones into a grid ---- */
@@ -483,11 +504,12 @@ static void lz_build(lz_slot_t *sl, const lz_spine_t *sp, const lz_bctx_t *b) {
                 if (zi <= m->zq[c]) continue;                                          /* a part as near is there already */
                 const float dx = qx - uu * vx, dy = qy - uu * vy, d2 = dx * dx + dy * dy, R = ra + (rb - ra) * uu;
                 if (d2 >= R * R) continue;
-                if (py > z * LZ_TILT + 0.5f) continue;                                 /* under the sand at its depth */
+                if ((gx0 + gx + 0.5f) * sp->ps + py * sp->pc > z * LZ_TILT + 0.5f) continue;   /* under the sand at its depth (the pitch's
+                                                                                                  ground: the row turned back) */
                 const float t = clampf(LZ_S[i] + (LZ_S[i + 1] - LZ_S[i]) * ue, 0, 1);  /* ... so a cap's cells keep their own place along the
                                                                                            body, whichever segment reaches them first */
                 if (t > b->peek) continue;
-                const float v = clampf(dy / R, -1, 1);
+                const float v = clampf((dx * sp->ps + dy * sp->pc) / R, -1, 1);       /* (round the body from its own up, pitched) */
                 m->zq[c] = zi; m->tq[c] = (uint8_t)(t * 255);
                 sl->tn[c] = lz_tone(b, t, v, R * b->iscale * lz_asin(v), R);
             }
@@ -562,7 +584,9 @@ static const lz_art_t *lz_art_of(const morph_t *m, lz_art_t *own) {
     own->iris = 0x504840; own->pupil = 0x101010; own->rim = 0x242020; own->spots = 0.80f; own->wash = 0;
     return own;
 }
-static void lz_palette(lz_pal_t *P, const lizard_look_t *lk, const lz_art_t *art, bool banded, int shed, float dim) {
+typedef struct { float dim, glow; bool moon; } lz_light_t;                     /* the light it stands in (lz_canvas_t's) */
+static inline uint16_t lz_lit(uint32_t rgb, const lz_light_t *L) { return lz_565(L->glow > 0 || L->moon ? scene_light_rgb(rgb, L->glow, L->moon) : rgb, L->dim); }
+static void lz_palette(lz_pal_t *P, const lizard_look_t *lk, const lz_art_t *art, bool banded, int shed, const lz_light_t *L) {
     const morph_t *m = lk->morph;
     uint32_t g = art->ground ? art->ground : m ? m->body : 0xd8b878;
     uint32_t p = art->pattern ? art->pattern : m ? m->accent : 0x403028;
@@ -585,8 +609,8 @@ static void lz_palette(lz_pal_t *P, const lizard_look_t *lk, const lz_art_t *art
     for (int k = 1; k < T_N; k++) {
         uint32_t v = c[k];
         if (dull && k < T_STUCK) v = rgb_mix(lz_desat(v, 0.50f), 0xd6d2ca, 0.20f);
-        P->c[k] = lz_565(v, dim);
-        P->c[k | T_LOOSE] = lz_565(lz_desat(rgb_mix(c[k], 0xf0ece6, 0.68f), 0.45f), dim);   /* the old skin, loose: papery */
+        P->c[k] = lz_lit(v, L);
+        P->c[k | T_LOOSE] = lz_lit(lz_desat(rgb_mix(c[k], 0xf0ece6, 0.68f), 0.45f), L);   /* the old skin, loose: papery */
     }
     for (int k = T_N; k < 32; k++) P->c[k] = P->c[k | T_LOOSE] = P->c[T_BASE];
     P->c[0] = P->c[T_LOOSE] = P->c[T_BASE];
@@ -597,27 +621,28 @@ static void lz_palette(lz_pal_t *P, const lizard_look_t *lk, const lz_art_t *art
     uint32_t gl = g, ps = p;
     if (dull) { gl = rgb_mix(lz_desat(g, 0.50f), 0xd6d2ca, 0.20f); ps = rgb_mix(lz_desat(p, 0.50f), 0xd6d2ca, 0.20f); }
     const uint32_t lidc = dull ? (lid == p ? ps : gl) : lid;
-    P->c[P_RIM] = lz_565(rim, dim); P->c[P_IRIS] = lz_565(iris, dim); P->c[P_IRIS2] = lz_565(iris2, dim);
-    P->c[P_PUPIL] = lz_565(pupil, dim); P->c[P_GLINT] = lz_565(0xffffff, dim);
-    P->c[P_LID] = lz_565(lidc, dim); P->c[P_LIDLINE] = lz_565(rgb_mix(lidc, 0x000000, 0.42f), dim);
-    P->c[P_TONGUE] = lz_565(0xe0687a, dim); P->c[P_TONGUE_TIP] = lz_565(0xf4a6b0, dim); P->c[P_MOUTH_IN] = lz_565(0xa63a4a, dim);
-    P->c[P_SAND] = lz_565(0xb48c60, dim); P->c[P_SAND2] = lz_565(0x8e6c48, dim);   /* sand from below the top: darker, damper */
-    P->c[P_LEG] = lz_565(gl, dim); P->c[P_LEG_E] = lz_565(rgb_mix(gl, sh, 0.45f), dim);
-    P->c[P_LEGF] = lz_565(rgb_mix(gl, sh, 0.40f), dim); P->c[P_LEGF_E] = lz_565(rgb_mix(gl, sh, 0.70f), dim);
-    P->c[P_TOE] = lz_565(rgb_mix(gl, b, 0.35f), dim); P->c[P_TOEF] = lz_565(rgb_mix(gl, sh, 0.50f), dim);
-    P->c[P_STUCK] = lz_565(0xf6f4ee, dim);
+    P->c[P_RIM] = lz_lit(rim, L); P->c[P_IRIS] = lz_lit(iris, L); P->c[P_IRIS2] = lz_lit(iris2, L);
+    P->c[P_PUPIL] = lz_lit(pupil, L); P->c[P_GLINT] = lz_lit(0xffffff, L);
+    P->c[P_LID] = lz_lit(lidc, L); P->c[P_LIDLINE] = lz_lit(rgb_mix(lidc, 0x000000, 0.42f), L);
+    P->c[P_TONGUE] = lz_lit(0xe0687a, L); P->c[P_TONGUE_TIP] = lz_lit(0xf4a6b0, L); P->c[P_MOUTH_IN] = lz_lit(0xa63a4a, L);
+    P->c[P_SAND] = lz_lit(0xb48c60, L); P->c[P_SAND2] = lz_lit(0x8e6c48, L);   /* sand from below the top: darker, damper */
+    P->c[P_LEG] = lz_lit(gl, L); P->c[P_LEG_E] = lz_lit(rgb_mix(gl, sh, 0.45f), L);
+    P->c[P_LEGF] = lz_lit(rgb_mix(gl, sh, 0.40f), L); P->c[P_LEGF_E] = lz_lit(rgb_mix(gl, sh, 0.70f), L);
+    P->c[P_TOE] = lz_lit(rgb_mix(gl, b, 0.35f), L); P->c[P_TOEF] = lz_lit(rgb_mix(gl, sh, 0.50f), L);
+    P->c[P_STUCK] = lz_lit(0xf6f4ee, L);
 }
-static const lz_pal_t *lz_palette_of(lz_scratch_t *m, const lizard_look_t *lk, const lz_art_t *art, bool banded, int shed, float dim) {
+static const lz_pal_t *lz_palette_of(lz_scratch_t *m, const lizard_look_t *lk, const lz_art_t *art, bool banded, int shed, const lz_light_t *L) {
     int old = 0;
     for (int i = 0; i < LZ_PALS; i++) {
         lz_palc_t *e = &m->pal[i];
         if (e->used && e->art == (const void *)art && e->morph == (const void *)lk->morph && e->stage == lk->stage && e->banded == banded
-            && e->shed == shed && e->dim == dim && art != NULL && art->name != NULL) { e->used = ++m->clock; return &e->pal; }
+            && e->shed == shed && e->dim == L->dim && e->glow == L->glow && e->moon == L->moon && art != NULL && art->name != NULL) { e->used = ++m->clock; return &e->pal; }
         if (m->pal[i].used < m->pal[old].used) old = i;
     }
     lz_palc_t *e = &m->pal[old];                                                     /* (a morph not listed: its art is on the stack - never kept) */
-    lz_palette(&e->pal, lk, art, banded, shed, dim);
-    e->art = art; e->morph = lk->morph; e->stage = lk->stage; e->banded = (uint8_t)banded; e->shed = (uint8_t)shed; e->dim = dim;
+    lz_palette(&e->pal, lk, art, banded, shed, L);
+    e->art = art; e->morph = lk->morph; e->stage = lk->stage; e->banded = (uint8_t)banded; e->shed = (uint8_t)shed;
+    e->dim = L->dim; e->glow = L->glow; e->moon = L->moon;
     e->used = art->name ? ++m->clock : 0;
     return &e->pal;
 }
@@ -637,42 +662,63 @@ static inline bool lz_clip(const lz_canvas_t *cv, int *x0, int *x1, int y) {
     if (*x1 > cv->ox + cv->w - 1) *x1 = cv->ox + cv->w - 1;
     return *x0 <= *x1;
 }
+/* the cover (lz_canvas_t): this pixel stands behind it */
+static inline bool lz_covered(const lz_canvas_t *cv, int x, int y) {
+    const int cx = x - cv->cover_x0, cy = y - cv->cover_y0;
+    return (unsigned)cx < (unsigned)cv->cover_w && (unsigned)cy < (unsigned)cv->cover_h && (cv->cover[cy * cv->cover_wpr + (cx >> 5)] >> (cx & 31) & 1u);
+}
+static inline bool lz_cover_row(const lz_canvas_t *cv, int x0, int x1, int y) {   /* the run x0..x1 of row y may be covered */
+    return cv->cover && (unsigned)(y - cv->cover_y0) < (unsigned)cv->cover_h && x1 >= cv->cover_x0 && x0 < cv->cover_x0 + cv->cover_w;
+}
+/* the run as written: its covered pixels left out, each stretch written marked */
+#define LZ_RUN_OP(o, x0, x1, y, OP) do {                                                                              \
+    const lz_canvas_t *cv_ = (o)->cv; uint16_t *row_ = cv_->fb + (size_t)((y) - cv_->oy) * cv_->stride - cv_->ox;     \
+    if (!lz_cover_row(cv_, (x0), (x1), (y))) {                                                                         \
+        for (int x = (x0); x <= (x1); x++) { uint16_t *p = row_ + x; OP; }                                             \
+        if (cv_->mark) cv_->mark(cv_->user, (x0), (x1), (y));                                                          \
+        lz_box((o), (x0), (x1), (y));                                                                                  \
+    } else {                                                                                                           \
+        int a_ = -1;                                                                                                   \
+        for (int x = (x0); x <= (x1) + 1; x++) {                                                                       \
+            if (x <= (x1) && !lz_covered(cv_, x, (y))) { uint16_t *p = row_ + x; OP; if (a_ < 0) a_ = x; continue; }   \
+            if (a_ >= 0) { if (cv_->mark) cv_->mark(cv_->user, a_, x - 1, (y)); lz_box((o), a_, x - 1, (y)); a_ = -1; } \
+        }                                                                                                              \
+    }                                                                                                                  \
+} while (0)
+static inline uint16_t lz_darken(uint16_t pv, int inv) {
+    const uint16_t v = FB_SWAP16(pv);
+    return FB_SWAP16((uint16_t)(((((v >> 11) * inv) >> 8) << 11) | (((((v >> 5) & 63) * inv) >> 8) << 5) | (((v & 31) * inv) >> 8)));
+}
 static void lz_run(lz_out_t *o, int x0, int x1, int y, uint16_t c) {
-    const lz_canvas_t *cv = o->cv;
-    if (!lz_clip(cv, &x0, &x1, y)) return;
-    uint16_t *p = cv->fb + (size_t)(y - cv->oy) * cv->stride + (x0 - cv->ox);
-    for (int x = x0; x <= x1; x++) *p++ = c;
-    if (cv->mark) cv->mark(cv->user, x0, x1, y);
-    lz_box(o, x0, x1, y);
+    if (!lz_clip(o->cv, &x0, &x1, y)) return;
+    LZ_RUN_OP(o, x0, x1, y, *p = c);
 }
 static inline void lz_px(lz_out_t *o, int x, int y, uint16_t c) { lz_run(o, x, x, y, c); }
 static void lz_darken_run(lz_out_t *o, int x0, int x1, int y, int a) {             /* toward black by a/256 */
-    const lz_canvas_t *cv = o->cv;
-    if (a <= 0 || !lz_clip(cv, &x0, &x1, y)) return;
-    uint16_t *p = cv->fb + (size_t)(y - cv->oy) * cv->stride + (x0 - cv->ox);
+    if (a <= 0 || !lz_clip(o->cv, &x0, &x1, y)) return;
     const int inv = 256 - a;
-    for (int x = x0; x <= x1; x++, p++) {
-        const uint16_t v = FB_SWAP16(*p);
-        *p = FB_SWAP16((uint16_t)(((((v >> 11) * inv) >> 8) << 11) | (((((v >> 5) & 63) * inv) >> 8) << 5) | (((v & 31) * inv) >> 8)));
-    }
-    if (cv->mark) cv->mark(cv->user, x0, x1, y);
-    lz_box(o, x0, x1, y);
+    LZ_RUN_OP(o, x0, x1, y, *p = lz_darken(*p, inv));
 }
-/* a row of a soft ellipse's shadow: x0..x1 on row y, d = ((x - cx) / rx)^2 + dy2 under 1, darkened by
-   strong (1 - d)^2 + 18 (1 - d) - the soft falloff, worked out along the run (no divide, no root) */
-static void lz_shadow_run(lz_out_t *o, int x0, int x1, int y, float cx, float irx, float dy2, float strong) {
+/* a soft ellipse's shadow, rx along the ground and ry across it, the ground turned by (c, s) - its cos and sin, + rising to
+   the right - darkened by strong (1 - d)^2 + 18 (1 - d) where d < 1 is the ellipse's own distance: each row's run solved
+   from the quadratic (the run is exactly the ellipse's), its falloff worked out along it */
+static void lz_shadow(lz_out_t *o, float cx, float cy, float rx, float ry, float c, float s, float strong) {
     const lz_canvas_t *cv = o->cv;
-    if (!lz_clip(cv, &x0, &x1, y)) return;
-    uint16_t *p = cv->fb + (size_t)(y - cv->oy) * cv->stride + (x0 - cv->ox);
-    for (int x = x0; x <= x1; x++, p++) {
-        const float dx = (x + 0.5f - cx) * irx, e = 1 - dx * dx - dy2;
-        if (e <= 0) continue;
-        const int inv = 256 - (int)(strong * e * e + 18 * e);
-        const uint16_t v = FB_SWAP16(*p);
-        *p = FB_SWAP16((uint16_t)(((((v >> 11) * inv) >> 8) << 11) | (((((v >> 5) & 63) * inv) >> 8) << 5) | (((v & 31) * inv) >> 8)));
+    const float irx2 = 1 / (rx * rx), iry2 = 1 / (ry * ry);
+    const float A = c * c * irx2 + s * s * iry2, B = 2 * c * s * (iry2 - irx2), C = s * s * irx2 + c * c * iry2;
+    const float hy = sqrtf(rx * rx * s * s + ry * ry * c * c);
+    for (int y = lz_floori(cy - hy); y <= (int)ceilf(cy + hy); y++) {
+        const float dy = y + 0.5f - cy, D = B * B * dy * dy - 4 * A * (C * dy * dy - 1);
+        if (D <= 0) continue;
+        const float sq = sqrtf(D), i2a = 0.5f / A;
+        int x0 = (int)ceilf(cx + (-B * dy - sq) * i2a - 0.5f), x1 = lz_floori(cx + (-B * dy + sq) * i2a - 0.5f);
+        if (x0 > x1 || !lz_clip(cv, &x0, &x1, y)) continue;
+        LZ_RUN_OP(o, x0, x1, y, {
+            const float dx = x + 0.5f - cx;
+            const float e = 1 - (A * dx * dx + B * dx * dy + C * dy * dy);
+            if (e > 0) *p = lz_darken(*p, 256 - (int)(strong * e * e + 18 * e));
+        });
     }
-    if (cv->mark) cv->mark(cv->user, x0, x1, y);
-    lz_box(o, x0, x1, y);
 }
 /* a capsule A..B of radius r, row by row; shade 1: its lower rim in the edge colour (a limb lit from above - the
    capsule in the edge colour a little lower, the fill over it a little thinner) */
@@ -753,7 +799,7 @@ static void lz_legs(lz_leg_t lg[4], const lz_sum_t *sm, const lizard_look_t *lk,
             }
             break;
         default:         al = hind ? -0.06f : 0.22f; out = hind ? 0.30f : 0.26f;
-                         if (kind == LZ_POSE_WALK) { stride = 0.45f; liftk = 0.22f; }
+                         if (kind == LZ_POSE_WALK) { stride = LZ_WALK_STRIDE; liftk = 0.22f; }
                          else if (kind == LZ_POSE_TURN) { stride = 0.22f; liftk = 0.16f; }
                          break;
         }
@@ -782,10 +828,12 @@ static void lz_legs(lz_leg_t lg[4], const lz_sum_t *sm, const lizard_look_t *lk,
     }
 }
 
-/* ---- the anchor's transform ---- */
-typedef struct { int ax, ay; bool mirror; } lz_xf_t;
+/* ---- the anchor's transform: the body's frame (facing right) turned by its pitch about the feet's point, then mirrored
+   for a lizard facing left ---- */
+typedef struct { int ax, ay; bool mirror; float pc, ps; } lz_xf_t;
 static inline void lz_scr(const lz_xf_t *xf, const float p[3], float *x, float *y) {
-    float lx = p[0], ly = -p[1] + p[2] * LZ_TILT;
+    const float x0 = p[0], y0 = -p[1] + p[2] * LZ_TILT;
+    const float lx = x0 * xf->pc + y0 * xf->ps, ly = -x0 * xf->ps + y0 * xf->pc;
     *x = xf->mirror ? xf->ax - lx : xf->ax + lx; *y = xf->ay + ly;
 }
 static void lz_draw_leg(lz_out_t *o, const lz_xf_t *xf, const lz_leg_t *L, const lz_pal_t *P, bool stuck) {
@@ -895,7 +943,9 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
     if (cls == C_STANDOFF) k.wig = (uint8_t)(lz_floori(lz_frac(pose->clock * 0.7f) * Q_WIG) % Q_WIG);
     const float reach = cls == C_LUNGE ? clampf(pose->phase, 0, 1) : 0;
     if (cls == C_LUNGE) k.reach = (uint8_t)(reach * Q_REACH + 0.5f);
-    const float qpeek = (float)k.peek / Q_PEEK, qreach = (float)k.reach / Q_REACH;
+    const float pb = clampf(mirror ? -pose->pitch : pose->pitch, -0.70f, 0.70f);   /* the pitch in the body's frame (facing right) */
+    k.pitch = (int8_t)lz_floori(pb / Q_PITCH + 0.5f);
+    const float qpeek = (float)k.peek / Q_PEEK, qreach = (float)k.reach / Q_REACH, qpitch = k.pitch * Q_PITCH;
     /* the body's grid, and what the live parts hang from: cached */
     uint32_t key = 2166136261u;
     { const uint8_t *bp = (const uint8_t *)&k; for (size_t i = 0; i < sizeof k; i++) { key ^= bp[i]; key *= 16777619u; } }
@@ -918,7 +968,7 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
     if (slot < 0) {
         const float qscale = k.scale_q / 64.0f, qyh = (float)k.yaw_h / Q_YAW, qyt = (float)k.yaw_t / Q_YAW - 1, qfat = (float)k.fat / Q_FAT;
         lz_shape_t sh; lz_shape_of(cls, &k, &sh);
-        lz_spine_t sp; lz_spine(&sp, lk, &sh, qscale, qyh, qyt, qfat);
+        lz_spine_t sp; lz_spine(&sp, lk, &sh, qscale, qyh, qyt, qfat, qpitch);
         lz_bctx_t b; memset(&b, 0, sizeof b);
         b.L0 = lk->geom->length_px; b.scale = qscale; b.iscale = 1.0f / qscale; b.seed = lk->seed;
         b.banded = banded; b.breakup = banded && lk->stage == STAGE_JUV ? 1.0f : 0.0f;
@@ -934,25 +984,24 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
     S->used = ++m->clock;
     m->last[me].seed = lk->seed; m->last[me].geom = lk->geom; m->last[me].slot = slot; m->last[me].key = S->key; m->last[me].used = m->clock;
     const lz_sum_t *sm = &S->sum;
-    const lz_pal_t *P = lz_palette_of(m, lk, art, banded, pose->shed, cv->dim > 0 ? cv->dim : 1);
+    const lz_light_t L = { cv->dim > 0 ? cv->dim : 1, cv->glow > 0 ? 0.04f * (float)lz_floori(cv->glow * 25 + 0.5f) : 0, cv->moon };   /* (the pool's gain in
+                                                                                 steps of 0.04: a walk through it takes a few palettes, not one a frame) */
+    const lz_pal_t *P = lz_palette_of(m, lk, art, banded, pose->shed, &L);
     /* the walk's bob: the body a pixel up as the diagonal pairs pass */
     const int bob = kind == LZ_POSE_WALK && sinf(12.566371f * pose->phase) > 0.35f ? 1 : 0;
-    lz_xf_t xf = { lz_floori(x + 0.5f), lz_floori(floor_y + 0.5f) - bob, mirror };
+    lz_xf_t xf = { lz_floori(x + 0.5f), lz_floori(floor_y + 0.5f) - bob, mirror, sm->pc, sm->ps };   /* (the body's own pitch: a frame over the
+                                                                                 budget draws its last body as it was) */
     lz_out_t o; memset(&o, 0, sizeof o); o.cv = cv;
     lz_leg_t lg[4]; lz_legs(lg, sm, lk, kind, cls, lz_frac(pose->phase), qreach, qpeek);
     if (bob) for (int j = 0; j < 4; j++) { lg[j].foot[1] -= 1; for (int t = 0; t < 4; t++) lg[j].toe[t][1] -= 1; }   /* (the feet stay down) */
-    /* 1 the contact shadow: the trunk's footprint on the sand, soft */
+    /* 1 the contact shadow: the trunk's footprint on the ground, soft, along its slope */
     if (qpeek >= 1) {
         const float cxl = 0.5f * (sm->shx0 + sm->shx1), cyl = 0.5f * (sm->shz0 + sm->shz1) + 1.0f + bob;
         const float rx = 0.5f * (sm->shx1 - sm->shx0) + 2, ry = 0.5f * (sm->shz1 - sm->shz0) + 1.6f + 0.9f * sm->sl;
-        const float cx = mirror ? xf.ax - cxl : xf.ax + cxl, cy = xf.ay + cyl;
+        const float lx = cxl * sm->pc + cyl * sm->ps, ly = -cxl * sm->ps + cyl * sm->pc;
+        const float cx = mirror ? xf.ax - lx : xf.ax + lx, cy = xf.ay + ly;
         const float strong = (cls == C_BASK || cls == C_REST) ? 120 : 92;
-        for (int yy = lz_floori(cy - ry); yy <= (int)ceilf(cy + ry); yy++) {
-            const float dy = (yy + 0.5f - cy) / ry, d2 = dy * dy;
-            if (d2 >= 1) continue;
-            const float hw = rx * sqrtf(1 - d2);
-            lz_shadow_run(&o, (int)ceilf(cx - hw - 0.5f), lz_floori(cx + hw - 0.5f), yy, cx, 1 / rx, d2, strong);
-        }
+        lz_shadow(&o, cx, cy, rx, ry, sm->pc, mirror ? -sm->ps : sm->ps, strong);
     }
     const bool stuck = pose->shed == SHED_STUCK;
     if (cls == C_DIG && qpeek >= 1) {                                            /* the dig's pit under the front feet */
@@ -980,10 +1029,11 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
         const uint8_t *row = S->tn + gy * S->gw;
         uint16_t *dst = cv->fb + (size_t)(y - cv->oy) * cv->stride;
         int ra = 1, rb = 0;                                                      /* the run being written, screen x (ra > rb: none) */
+        const bool cov = cv->cover && (unsigned)(y - cv->cover_y0) < (unsigned)cv->cover_h;
         for (int gx = S->x0[gy]; gx <= S->x1[gy]; gx++) {
             const uint8_t tn = row[gx];
             const int xx = mirror ? xf.ax - 1 - (S->gx0 + gx) : xf.ax + S->gx0 + gx;
-            if (tn && (unsigned)(xx - cv->ox) < (unsigned)cv->w) {
+            if (tn && (unsigned)(xx - cv->ox) < (unsigned)cv->w && !(cov && lz_covered(cv, xx, y))) {
                 dst[xx - cv->ox] = P->c[tn];
                 if (ra > rb) ra = rb = xx; else if (xx < ra) ra = xx; else rb = xx;
                 continue;
@@ -1031,7 +1081,7 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
         }
         const float tg = clampf(pose->tongue, 0, 1);
         if (tg > 0.05f) {                                                        /* forward and a little down, a rounded tip */
-            const float len = (0.8f + 4.6f * tg) * powf(sm->scale, 0.8f), a = turn * 0.32f, ca = cosf(a), sa = sinf(a);
+            const float len = (LZ_TONGUE_IN + LZ_TONGUE_OUT * tg) * powf(sm->scale, 0.8f), a = turn * 0.32f, ca = cosf(a), sa = sinf(a);
             const float dx = hx * ca - hy * sa, dy = hx * sa + hy * ca;
             const float bx = sx + hx * 0.6f, by = sy + 0.25f * r0, ex = bx + dx * len, ey = by + dy * len;
             float tr = 0.62f * powf(sm->scale, 0.4f); if (tr < 0.55f) tr = 0.55f;
@@ -1052,4 +1102,12 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *lk, const lizard_po
         }
     }
     if (o.any) { g_box[0] = o.bx0; g_box[1] = o.by0; g_box[2] = o.bx1; g_box[3] = o.by1; g_box_ok = true; }
+}
+
+void lizard_reach(const lizard_geom_t *g, float scale, float *back, float *ahead) {
+    const float half = 0.5f * g->length_px * scale;
+    float tr = 0.62f * powf(scale, 0.4f); if (tr < 0.55f) tr = 0.55f;
+    *back = half + 1;                                                            /* (the tail's tip: its round end, its pixel) */
+    *ahead = half + 1 + 0.6f + (LZ_TONGUE_IN + LZ_TONGUE_OUT) * powf(scale, 0.8f) + tr + 1;   /* the snout, the tongue's base past it,
+                                                                                                   the tongue out, its tip's round end and pixel */
 }

@@ -48,6 +48,9 @@ sim/fishsim-aquarium
 sim/fishsim-round-aquarium
 sim/fishsim-watch-aquarium
 sim/fishsim-square-aquarium
+# the networked bins (P3b: make NET=1, sim/Makefile), beside the others
+sim/build*-net/
+sim/fishsim*-net
 firmware/host_test/decide_host
 
 # CodeGraph index (local, rebuilt by codegraph)

@@ -27,6 +27,7 @@
 #include "progression.h"
 #include "render.h"
 #include "advisor_core.h"
+#include "sim_tmp.h"
 
 static const char *s_name = "";
 #define PF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
@@ -36,14 +37,14 @@ static bool  s_parked[N_FISH_MAX];
 static float s_px[N_FISH_MAX], s_py[N_FISH_MAX];
 static bool  s_fed = true;                   /* parked lizards kept at hunger 2 (a starving one begs: progression's famine) */
 
-/* a fresh tank on a scratch save, progression booted (two hatchlings), the tank's own trickle off and no pellets */
+/* a fresh tank on a scratch save, progression booted (two hatchlings), the tank's own trickle off and no food */
 static void fresh(tank_t *t, uint32_t seed) {
-    const char *sav = "/tmp/pocket-terrarium-selftest-packs.sav";
+    const char *sav = sim_tmp("pocket-terrarium-selftest-packs.sav");
     setenv("POCKET_TANK_SAVE", sav, 1); remove(sav);
     tank_init(t, seed);
     progression_wake(t, 0);
     t->trickle_off = true;
-    for (int i = 0; i < MAX_FOOD; i++) t->food[i].alive = false;   /* (tank_init's two pellets: nobody eats in these tests) */
+    tank_clear_food(t);                          /* (tank_init's two pellets, or the terrarium's two crickets: nobody eats in these tests) */
     for (int i = 0; i < N_FISH_MAX; i++) s_parked[i] = false;
     s_fed = true;
 }

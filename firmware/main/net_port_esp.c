@@ -18,7 +18,7 @@
  *                 needs_cable, model{version,size,url}. A manifest naming
  *                 another board is refused (common/update.c)
  *   the board     every image carries a board marker right after its app
- *                 descriptor (pt_board_marker below, PT_BOARD_MARKER_OFFSET):
+ *                 descriptor (board_marker.c, PT_BOARD_MARKER_OFFSET):
  *                 the download reads it back from the slot at the first
  *                 sector and stops on another board's - all three boards
  *                 share the signing key, so the signature alone would let a
@@ -58,11 +58,6 @@ static const char *TAG = "net";
  * update_target_board: another board's version installed here fetches this
  * board's own) */
 #define OTA_MANIFEST_BASE "https://github.com/mediacutlet/pocket-tank/releases/latest/download/latest-"
-/* the board marker: in .rodata_custom_desc, which the linker places right
- * after esp_app_desc_t - a fixed offset in the image (PT_BOARD_MARKER_OFFSET;
- * tools/make_ota_manifest.py and make_installer.py read it back from the .bin) */
-typedef struct { char magic[8]; char board[24]; } pt_board_marker_t;
-const __attribute__((section(".rodata_custom_desc"), used)) pt_board_marker_t pt_board_marker = { PT_BOARD_MAGIC, PT_BOARD };
 
 /* ---- the store ---- */
 static bool nvs_get_str_ns(const char *key, char *out, size_t cap) {

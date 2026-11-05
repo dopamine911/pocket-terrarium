@@ -14,6 +14,11 @@
 #include "tank_events.h"
 #include "setup.h"
 #include "version.h"
+#if PT_TERRARIUM
+#include "render_lizard.h"       /* THE TERRARIUM: the lizards ... */
+#include "render_scene_desert.h" /* ... and the desert */
+#endif
+#include <stdint.h>
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -843,7 +848,9 @@ static void draw_fish_core(ctx_t *c, const fish_t *f, float beat, bool asleep, f
 #undef BY
 }
 /* the tank's fish (the previews below draw a fish of their own) */
+#if PT_NET
 static void link_badge_draw(ctx_t *c, int cx, int cy, int r, int badge, int a);   /* the link's badges, at the end */
+#endif
 static bool g_no_animals;                        /* THE EDITOR (0.3.9.4, Strato): a placement page up - every creature hidden, the frame rate to the drag */
 static bool g_page_animals;                      /* (the tests: the creatures drawn under a placement page all the same - the layering checks) */
 void render_debug_page_animals(bool show) { g_page_animals = show; }
@@ -958,7 +965,12 @@ static const uint16_t *g_primed_fb = NULL;
 static unsigned  g_primed_epoch = 0;
 static uint8_t  *g_vig = NULL;                  /* per-pixel vignette alpha (static) */
 static bool      g_vig_filled = false;
-void render_set_scene_cache(uint16_t *buf) { g_scene = buf; g_scene_dim = -1; }
+#if PT_TERRARIUM
+static void ts_reset(uint16_t *scene);            /* THE TERRARIUM (below): its two scenes start again */
+#else
+static void ts_reset(uint16_t *scene) { (void)scene; }
+#endif
+void render_set_scene_cache(uint16_t *buf) { g_scene = buf; g_scene_dim = -1; ts_reset(buf); }
 void render_set_vignette_cache(uint8_t *buf) { g_vig = buf; g_vig_filled = false; }
 
 const uint16_t *render_scene_buf(unsigned *epoch) {
@@ -5974,7 +5986,423 @@ int render_debug_piece_grass(int item, int *bands, int *fines, void *(*alloc)(si
     if (tmp && release) release(tmp);
     return worst;
 }
+
+#if PT_TERRARIUM
+/* ==== THE TERRARIUM (pocket-terrarium P3b): render_tank in the terrarium's bin ====
+ * The scene is the desert (render_scene_desert.h) on the habitat's ground (terrain.h), baked into the scene cache; over
+ * it each frame the mealworm dish, the crickets and the lizards (draw_lizard, render_lizard.h, from the engine's state),
+ * back to front by where their feet stand on the glass - lower is nearer - then the mister's spray, the vignette
+ * re-applied on what was drawn, the film on the glass and the snail on it. The cards, the pages, the tool chip are the
+ * platform's, drawn after render_tank as in the aquarium.
+ *
+ * THE BAKE: one scene per light - the shown one in g_scene, the other in the second buffer (render_set_scene_spare; the
+ * sim's calloc'd at the first need) - so the light's switch is a swap, no bake. The light not shown is baked in the
+ * background, TS_BAKE_US of a frame (TS_BAKE_ROWS rows without a clock); a switch before it is done keeps the old light
+ * on the glass while the bake hurries (TS_HURRY_US a frame), then swaps. A humid hide's moisture step repaints only its
+ * box (scene_desert_moist_box) in the scene shown, at once - the other one when it is next shown. Only the first scene of
+ * a habitat is baked whole in one frame (a boot, a new tank).
+ *
+ * THE STACK: a lizard up on a rock is behind one on the floor below it and over the rock it stands on (the scene); one
+ * going into a hide, coming out of it or looking out of its door is drawn BEHIND the hide's front (lz_canvas_t.cover:
+ * the hide's front from the door's open edge back, scene_desert_hide_part) - it shows through the door's dark and in
+ * front of the hide's flank on the open side; a HIDDEN one is not drawn. In the lamp's pool a lizard is lit as the rock
+ * under it (scene_desert_lamp_at: the pool's gain at its feet, x TS_GLOW_K - it is round, the rock's top flat), with the
+ * lamp out moonlit as the scene. Its look: lizard_morph_of (the morph by its body colour's gene), its stage's pattern
+ * and size (tank_lizard_scale), its shed (SHEDDING's loose skin by how far through the window it is), the engine's
+ * draw-only phase, blink, tongue and fat (tank.c THE LOOK), its pitch the ground's slope under it (fish_t.slope). */
+#define TS_BAKE_US    5000              /* the background bake's share of a frame on the board (~4 rows of the 1.8's) ... */
+#define TS_HURRY_US   16000             /* ... and a switch's, while the old light still shows */
+#define TS_BAKE_ROWS  12                /* (without a clock - the sim's tests: rows a frame) */
+#define TS_HURRY_ROWS 48
+#define TS_GLOW_K     0.6f              /* the lamp's pool on a lizard: this share of the rock's gain */
+#define TS_COVER_W    96                /* a hide's box (scene_desert_hide_box: the warm cave's 82 x 42 the widest) */
+#define TS_COVER_H    48
+#define TS_COVER_WPR  ((TS_COVER_W + 31) / 32)
+#define TS_PEEK       0.30f             /* a look out: the head and the neck (lizard_pose_t.peek), in over ~0.45 s, back over 0.35 */
+#define TS_PATCH_FRAMES 3               /* a moisture step's box, copied into this many frames primed with the scene as it was (the
+                                           platform's two buffers and one in flight) */
+typedef struct { short x0, y0, x1, y1; } ts_rect_t;
+typedef struct { bool ok; uint8_t lit, hab, moist[HABITAT_HIDES_MAX]; } ts_key_t;
+static uint16_t *g_ts_scene0, *g_ts_spare;      /* the platform's scene cache, the second buffer (render_set_scene_spare) */
+static bool      g_ts_spare_own, g_ts_swapped;  /* (the sim's own spare); the spare is the one shown (g_scene) */
+static ts_key_t  g_ts_show, g_ts_other;         /* what the scene shown holds, and the other buffer (whole) */
+static ts_key_t  g_ts_job; static int g_ts_job_row;   /* the bake under way into the other buffer: its key, its next row */
+static ts_key_t  g_ts_ctx; static unsigned g_ts_ctx_n;   /* scene_desert_begin's context: the key it was begun with (and its count) */
+static scene_desert_t g_ts_d; static int g_ts_d_hab = -1;   /* the layout on this glass: the hides, the peek, the lamp */
+static uint32_t  g_ts_cover[HABITAT_HIDES_MAX][TS_COVER_H * TS_COVER_WPR];   /* each hide's front, from its door's open edge back */
+static int       g_ts_cov[HABITAT_HIDES_MAX][4];                              /* ... its box: x0, y0, w, h */
+static uint32_t  g_ts_in_uid[N_FISH_SLOTS]; static int8_t g_ts_in_k[N_FISH_SLOTS];   /* a lizard last seen in hide k (out: behind its front until clear) */
+static int       g_ts_rows, g_ts_slices; static int64_t g_ts_us_max;            /* (render_terrarium_bake_stats) */
+static ts_rect_t g_ts_patch; static int g_ts_patch_n;                           /* the moisture step's box, and the frames still to take it */
+
+static void ts_reset(uint16_t *scene) {
+    g_ts_scene0 = scene; g_ts_swapped = false;
+    g_ts_show.ok = g_ts_other.ok = g_ts_job.ok = g_ts_ctx.ok = false; g_ts_patch_n = 0;
+}
+void render_set_scene_spare(uint16_t *buf) {
+    if (g_ts_spare_own) free(g_ts_spare);
+    g_ts_spare = buf; g_ts_spare_own = false;
+    if (g_ts_swapped && g_ts_scene0) g_scene = g_ts_scene0;          /* (the spare was shown: the platform's own back on the glass) */
+    ts_reset(g_ts_scene0);
+}
+void render_terrarium_bake_stats(int *rows, int *slices, int64_t *us_max) {
+    if (rows) *rows = g_ts_rows;
+    if (slices) *slices = g_ts_slices;
+    if (us_max) *us_max = g_ts_us_max;
+}
+void render_terrarium_bake_stats_reset(void) { g_ts_rows = g_ts_slices = 0; g_ts_us_max = 0; }
+static uint16_t *ts_other(void) {                /* the buffer not shown */
+#ifndef ESP_PLATFORM
+    if (!g_ts_spare) { g_ts_spare = (uint16_t *)calloc((size_t)TANK_W * TANK_H, sizeof(uint16_t)); g_ts_spare_own = g_ts_spare != NULL; }
+#endif
+    return g_ts_swapped ? g_ts_scene0 : g_ts_spare;
+}
+static void ts_swap(void) {
+    uint16_t *o = ts_other();
+    const ts_key_t k = g_ts_show;
+    g_scene = o; g_ts_swapped = !g_ts_swapped;
+    g_ts_show = g_ts_other; g_ts_other = k;
+    g_scene_epoch++;
+}
+static inline bool ts_eq(const ts_key_t *a, const ts_key_t *b) { return a->ok && b->ok && !memcmp(a, b, sizeof *a); }
+static inline bool ts_light_eq(const ts_key_t *a, const ts_key_t *b) { return a->ok && b->ok && a->lit == b->lit && a->hab == b->hab; }
+static ts_key_t ts_want(const tank_t *t, const habitat_t *h) {
+    ts_key_t k; memset(&k, 0, sizeof k);
+    k.ok = true; k.lit = !t->night; k.hab = h->id;
+    for (int i = 0; i < h->n_hides && i < HABITAT_HIDES_MAX; i++)   /* (only a humid hide shows its moisture) */
+        k.moist[i] = h->hides[i].kind == HIDE_HUMID ? (uint8_t)scene_desert_moist_step(t->moist[i]) : 0;
+    return k;
+}
+/* the layout on this glass and each hide's cover, once a habitat */
+static void ts_layout(const habitat_t *h) {
+    if (g_ts_d_hab == h->id) return;
+    const glass_t g = glass_here();
+    scene_desert_layout(&g, h, &g_ts_d); g_ts_d_hab = h->id;
+    memset(g_ts_cover, 0, sizeof g_ts_cover);
+    for (int k = 0; k < g_ts_d.n_hides && k < HABITAT_HIDES_MAX; k++) {
+        int x0, y0, x1, y1; scene_desert_hide_box(&g_ts_d, k, &x0, &y0, &x1, &y1);
+        const int w = x1 - x0 + 1 < TS_COVER_W ? x1 - x0 + 1 : TS_COVER_W, hh = y1 - y0 + 1 < TS_COVER_H ? y1 - y0 + 1 : TS_COVER_H;
+        g_ts_cov[k][0] = x0; g_ts_cov[k][1] = y0; g_ts_cov[k][2] = w; g_ts_cov[k][3] = hh;
+        for (int y = 0; y < hh; y++)                  /* (scene_desert_hide_covers: the front on the closed side of the door's edge at each row) */
+            for (int x = 0; x < w; x++)
+                if (scene_desert_hide_covers(&g_ts_d, k, x0 + x + 0.5f, y0 + y + 0.5f)) g_ts_cover[k][y * TS_COVER_WPR + (x >> 5)] |= 1u << (x & 31);
+    }
+}
+static void ts_vig(void) {                       /* the vignette's LUT, as bake_scene fills it */
+    if (!g_vig || g_vig_filled) return;
+    for (int y = 0; y < TANK_H; y++) for (int x = 0; x < TANK_W; x++) g_vig[y * TANK_W + x] = (uint8_t)vig_alpha(x, y);
+    g_vig_filled = true;
+}
+static void ts_begin(const tank_t *t, const ts_key_t *k) {
+    if (ts_eq(&g_ts_ctx, k) && g_ts_ctx_n == scene_desert_begun()) return;
+    float m[HABITAT_HIDES_MAX];
+    for (int i = 0; i < HABITAT_HIDES_MAX; i++) m[i] = k->moist[i] / 8.0f;
+    const glass_t g = glass_here();
+    scene_desert_begin(&g, tank_habitat(t), k->lit, m, k->lit ? 1.0f : 0.45f, g_vig_filled ? g_vig : NULL);
+    g_ts_ctx = *k; g_ts_ctx_n = scene_desert_begun();
+}
+/* rows of scene k into buf from y0 - until the budget (the clock's, or the rows') is spent, at least one - the next row */
+static int ts_rows(const tank_t *t, uint16_t *buf, const ts_key_t *k, int y0, int64_t budget_us, int rows) {
+    const int64_t t0 = PROF_MARK();
+    ts_begin(t, k);
+    int y = y0;
+    while (y < TANK_H) {
+        scene_desert_rows(buf, TANK_W, y, y, 0, TANK_W - 1); y++;
+        if (render_clock_us ? render_clock_us() - t0 >= budget_us : y - y0 >= rows) break;
+    }
+    g_ts_rows += y - y0; g_ts_slices++;
+    if (render_clock_us && render_clock_us() - t0 > g_ts_us_max) g_ts_us_max = render_clock_us() - t0;
+    return y;
+}
+/* the humid hides' boxes whose step differs, repainted in buf at key `to`: false none; else their union in *box */
+static bool ts_moist(const tank_t *t, uint16_t *buf, const ts_key_t *from, const ts_key_t *to, ts_rect_t *box) {
+    bool any = false;
+    for (int k = 0; k < HABITAT_HIDES_MAX; k++) any |= from->moist[k] != to->moist[k];
+    if (!any) return false;
+    ts_begin(t, to);
+    any = false;
+    for (int k = 0; k < g_ts_d.n_hides && k < HABITAT_HIDES_MAX; k++) {
+        int x0, y0, x1, y1;
+        if (from->moist[k] == to->moist[k] || !scene_desert_moist_box(&g_ts_d, k, &x0, &y0, &x1, &y1)) continue;
+        scene_desert_rows(buf, TANK_W, y0, y1, x0, x1);
+        x0 = x0 < 0 ? 0 : x0; y0 = y0 < 0 ? 0 : y0; x1 = x1 > TANK_W - 1 ? TANK_W - 1 : x1; y1 = y1 > TANK_H - 1 ? TANK_H - 1 : y1;
+        if (!any) { box->x0 = (short)x0; box->y0 = (short)y0; box->x1 = (short)x1; box->y1 = (short)y1; any = true; }
+        else { if (x0 < box->x0) box->x0 = (short)x0; if (y0 < box->y0) box->y0 = (short)y0; if (x1 > box->x1) box->x1 = (short)x1; if (y1 > box->y1) box->y1 = (short)y1; }
+    }
+    return any;
+}
+/* the scene the frame shows: baked, swapped, its boxes repainted - and the other light's baked a slice */
+/* (tick: the tank's clock moved since the last frame drawn - the slices below are a TICK's: a frame drawn twice, as the
+   restore test's fresh reference is, bakes no more and swaps in the same draw as the first) */
+static void ts_scene(const tank_t *t, const habitat_t *h, bool tick) {
+    const ts_key_t want = ts_want(t, h);
+    ts_vig();
+    if (!g_ts_show.ok || g_ts_show.hab != want.hab) {                 /* the first scene: whole, now */
+        ts_rows(t, g_scene, &want, 0, INT64_MAX, TANK_H);
+        g_ts_show = want; g_ts_other.ok = g_ts_job.ok = false; g_scene_epoch++;
+        return;
+    }
+    uint16_t *other = ts_other();
+    if (g_ts_show.lit == want.lit) {                                   /* the light as shown */
+        if (!ts_eq(&g_ts_show, &want)) {                               /* a moisture step: its box repainted - the frames primed with the scene as it
+                                                                          was take the box from it (TS_PATCH_FRAMES: the platform's buffers), the rest
+                                                                          of them stays as primed (no epoch: no whole copy) */
+            if (ts_moist(t, g_scene, &g_ts_show, &want, &g_ts_patch)) g_ts_patch_n = TS_PATCH_FRAMES;
+            g_ts_show = want;
+        }
+        if (!other || !tick) return;
+        ts_key_t opp = want; opp.lit = !want.lit;                      /* the background: the other light, if the other buffer has it not */
+        if (g_ts_other.ok && ts_light_eq(&g_ts_other, &opp)) return;  /* (its moisture is fixed when it is next shown) */
+        if (!ts_light_eq(&g_ts_job, &opp)) { g_ts_job = opp; g_ts_job_row = 0; g_ts_other.ok = false; }
+        g_ts_job_row = ts_rows(t, other, &g_ts_job, g_ts_job_row, TS_BAKE_US, TS_BAKE_ROWS);
+        if (g_ts_job_row >= TANK_H) { g_ts_other = g_ts_job; g_ts_job.ok = false; }
+        return;
+    }
+    if (!other) {                                                      /* the light switched, one buffer: baked whole, now */
+        ts_rows(t, g_scene, &want, 0, INT64_MAX, TANK_H);
+        g_ts_show = want; g_scene_epoch++;
+        return;
+    }
+    if (!(g_ts_other.ok && ts_light_eq(&g_ts_other, &want))) {         /* the other light is not whole yet: hurried, the old light shown meanwhile */
+        if (!tick) return;
+        if (!ts_light_eq(&g_ts_job, &want)) { g_ts_job = want; g_ts_job_row = 0; g_ts_other.ok = false; }
+        g_ts_job_row = ts_rows(t, other, &g_ts_job, g_ts_job_row, TS_HURRY_US, TS_HURRY_ROWS);
+        if (g_ts_job_row < TANK_H) return;
+        g_ts_other = g_ts_job; g_ts_job.ok = false;
+    }
+    ts_swap();                                                         /* the switch: the other light on the glass */
+    if (!ts_eq(&g_ts_show, &want)) { ts_rect_t box; ts_moist(t, g_scene, &g_ts_show, &want, &box); g_ts_show = want; }   /* (the swap copies the
+                                                                                                         whole scene: no patch) */
+}
+
+/* ---- what moves ---- */
+#define TS_RECTS (N_FISH_SLOTS + MAX_CRICKETS + 4)
+static void ts_mark(void *user, int x0, int x1, int y) {             /* draw_lizard's runs: the dirty and touched masks */
+    (void)user;
+    if ((unsigned)y >= (unsigned)TANK_H) return;
+    if (x0 < 0) x0 = 0;
+    if (x1 > TANK_W - 1) x1 = TANK_W - 1;
+    if (x0 > x1) return;
+    dirty_span(x0, x1, y); touch_span_f(x0, x1, y);
+}
+/* the hide a lizard out on the floor is going into (fish_t.to_hide: its walk's, a rap's dash too) - or coming out of (the
+   one it was last seen in, until it is clear of it): its front stands before it; -1 none */
+static int ts_behind(const tank_t *t, int i) {
+    const fish_t *f = &t->fish[i];
+    if (g_ts_in_uid[i] != f->uid) { g_ts_in_uid[i] = f->uid; g_ts_in_k[i] = -1; }
+    if (f->hide >= 0) { g_ts_in_k[i] = f->hide; return f->hide; }
+    if (f->surf != 0) { g_ts_in_k[i] = -1; return -1; }
+    const float half = tank_lizard_half_len(t, f);
+    const int out = g_ts_in_k[i];
+    if (out >= 0 && out < g_ts_d.n_hides && fabsf(f->x - g_ts_d.hide[out].cx) < g_ts_d.hide[out].half_w + half) return out;
+    g_ts_in_k[i] = -1;
+    const int k = f->to_hide;
+    if (k < 0 || k >= g_ts_d.n_hides || fabsf(f->x - g_ts_d.hide[k].cx) >= g_ts_d.hide[k].half_w + half) return -1;
+    return k;
+}
+static bool ts_lizard(ctx_t *c, const tank_t *t, int i, const habitat_t *h, bool lit, float dim, ts_rect_t *box) {
+    const fish_t *f = &t->fish[i];
+    const species_t *sp = tank_species(t);
+    if (sp->plan != PLAN_LIZARD) return false;
+    const int cover = ts_behind(t, i);
+    if (f->hide >= 0 && f->pose != LZ_POSE_PEEK) return false;         /* in a hide: out of sight */
+    lizard_look_t lk = { &sp->geom, lizard_morph_of(sp, f), sp->pattern[f->stage & 3], (uint8_t)f->stage, f->uid };
+    lizard_pose_t p = lizard_pose(f->pose, f->yaw);
+    p.yaw_tail = f->yaw_tail; p.pitch = f->slope;
+    p.phase = f->lz_phase; p.blink = f->lz_blink; p.tongue = f->lz_tongue; p.fat = f->lz_fat;
+    p.shed = f->shed == SHED_CLEAN ? SHED_NORMAL : f->shed;
+    if (p.shed == SHED_SHEDDING) p.shed_k = clampf(1 - f->shed_s / (sp->shed_window_s > 0 ? sp->shed_window_s : 1), 0, 1);
+    p.clock = tank_anim(t->clock);
+    const float scale = tank_lizard_scale(f);
+    float x = f->x, fy = f->y + TERRAIN_FEET_DY;
+    if (f->hide >= 0) {                                                /* a look out of its door, the hide's front before it */
+        float yaw;
+        p.peek = TS_PEEK * clampf(fminf(f->pose_s / 0.45f, f->peek_s / 0.35f), 0, 1);
+        if (p.peek < 0.04f) return false;
+        scene_desert_peek_at(&g_ts_d, f->hide, lizard_half_len(&sp->geom, scale), p.peek, &x, &fy, &yaw);
+        p.yaw = p.yaw_tail = yaw; p.pitch = 0;
+    }
+    lz_canvas_t cv; memset(&cv, 0, sizeof cv);
+    cv.fb = c->fb; cv.stride = c->stride; cv.ox = c->ox; cv.oy = c->oy; cv.w = c->w; cv.h = c->h; cv.dim = dim;
+    cv.mark = ts_mark; cv.moon = !lit;
+    cv.glow = lit ? TS_GLOW_K * scene_desert_lamp_at(&g_ts_d, h, x, fy) : 0;
+    if (cover >= 0 && cover < HABITAT_HIDES_MAX) {
+        cv.cover = g_ts_cover[cover]; cv.cover_x0 = g_ts_cov[cover][0]; cv.cover_y0 = g_ts_cov[cover][1];
+        cv.cover_w = g_ts_cov[cover][2]; cv.cover_h = g_ts_cov[cover][3]; cv.cover_wpr = TS_COVER_WPR;
+    }
+    draw_lizard(&cv, &lk, &p, x, fy, scale);
+    int x0, y0, x1, y1;
+    if (!lizard_last_box(&x0, &y0, &x1, &y1)) return false;
+    box->x0 = (short)x0; box->y0 = (short)y0; box->x1 = (short)x1; box->y1 = (short)y1;
+    return true;
+}
+/* the light a thing stands in, as the scene's (render_scene_desert.h scene_light_rgb): the lamp's pool at its feet x
+   TS_GLOW_K by day, the moon at night */
+static inline uint32_t ts_lit(uint32_t rgb, float glow, bool moon) { return glow > 0 || moon ? scene_light_rgb(rgb, glow, moon) : rgb; }
+static float ts_glow_at(const habitat_t *h, bool lit, float x, float y) { return lit ? TS_GLOW_K * scene_desert_lamp_at(&g_ts_d, h, x, y) : 0; }
+/* a cricket, side on, facing its way: SIT (legs folded) and the rest (a hop, a fall: the hind legs out) */
+static const char *const TS_CK_SIT[6] = { ".aaa......", "a...aa..k.", "...cCCc.kk", "cCCCCCCCkk", ".CCkkCC.l.", ".l.l..l.l." };
+static const char *const TS_CK_HOP[6] = { "..aaa.....", ".a...aa.k.", "...cCCc.kk", ".cCCCCCCkk", "l.kkCC.l..", "l.......l." };
+static void ts_cricket(ctx_t *c, const cricket_t *k, const habitat_t *h, bool lit, ts_rect_t *box) {
+    static const char KEYS[] = "aCckl";
+    static const uint32_t RGB[5] = { 0x5a3a1c, 0xa86f32, 0xd9a35c, 0x6e4420, 0x4a2e16 };
+    const float glow = ts_glow_at(h, lit, k->x, k->y);
+    src_t pal[5]; for (int q = 0; q < 5; q++) pal[q] = src_color(ts_lit(RGB[q], glow, !lit), c->dim);
+    const char *const *fr = k->state == CK_SIT || k->state == CK_CRAWL ? TS_CK_SIT : TS_CK_HOP;
+    const int f = k->facing < 0 ? -1 : 1, ox = (int)floorf(k->x + 0.5f), oy = (int)floorf(k->y + 0.5f) - 6;
+    if (k->state == CK_SIT || k->state == CK_CRAWL) {                  /* its shadow on the ground */
+        src_t sh = src_color(0x000000, 1.0f);
+        span(c, ox - 4, ox + 4, oy + 6, &sh, 70);
+    }
+    for (int y = 0; y < 6; y++)
+        for (int x = 0; x < 10; x++) {
+            const char ch = fr[y][x];
+            if (ch == '.') continue;
+            const char *q = strchr(KEYS, ch);
+            if (!q) continue;
+            px_blend_s(c, ox + f * (x - 5), oy + y, &pal[q - KEYS], 255);
+        }
+    box->x0 = (short)(ox - 6); box->y0 = (short)(oy - 1); box->x1 = (short)(ox + 6); box->y1 = (short)(oy + 7);
+}
+/* the mealworm dish (tank.h THE CRICKETS): a shallow clay dish on the sand, HABITAT_DISH_HW either side of its middle,
+   its worms wriggling in it - as many as it holds */
+static void ts_dish(ctx_t *c, const tank_t *t, const habitat_t *h, bool lit, ts_rect_t *box) {
+    float x, y; tank_dish_point(t, &x, &y);
+    const float hw = HABITAT_DISH_HW, a = tank_anim(t->clock);
+    src_t sh = src_color(0x000000, 1.0f);
+    for (int r = -1; r <= 1; r++) span(c, (int)(x - hw - 2 + 2 * fabsf((float)r)), (int)(x + hw + 2 - 2 * fabsf((float)r)), (int)y + 1 + r, &sh, 60);   /* its shadow */
+    const float glow = ts_glow_at(h, lit, x, y);
+    fill_ellipse(c, x, y - 2.5f, hw, 4.5f, ts_lit(0x7a4026, glow, !lit), 255);   /* the body, the bowl in it, its lit rim */
+    fill_ellipse(c, x, y - 4.0f, hw - 1.5f, 3.0f, ts_lit(0xb06a42, glow, !lit), 255);
+    fill_ellipse(c, x, y - 4.0f, hw - 3.0f, 2.0f, ts_lit(0x4a2618, glow, !lit), 255);
+    const uint32_t worm[2] = { ts_lit(0xf0cc78, glow, !lit), ts_lit(0xd8a850, glow, !lit) };
+    for (int w = 0; w < t->dish_worms && w < DISH_WORMS; w++) {       /* the worms: short, segmented, each its own wriggle */
+        const uint32_t hh = (uint32_t)(w + 1) * 2654435761u;
+        const float wx = x - hw + 5 + (float)(hh % (uint32_t)(2 * hw - 9)), wy = y - 4.4f + 0.8f * (float)((hh >> 8) % 3) - 0.8f;
+        const float ph = a * (2.0f + (float)((hh >> 12) & 3) * 0.4f) + w;
+        for (int s = 0; s < 4; s++) px_blend(c, (int)(wx + (s - 1.5f) * 1.2f), (int)(wy + 0.7f * sinf(ph + s * 1.3f)), worm[s & 1], 255);
+    }
+    box->x0 = (short)(x - hw - 3); box->y0 = (short)(y - 9); box->x1 = (short)(x + hw + 3); box->y1 = (short)(y + 3);
+}
+/* the mister in hand on the glass: a fine spray at the finger, drifting down - while the finger is down (tank_touch_drag
+   each frame it is: a stroke's drag_has_prev outlives the tick, hold_active is never the mister's) */
+static bool ts_misting(const tank_t *t) { return t->tool == TOOL_MISTER && t->drag_has_prev; }
+static void ts_mist(ctx_t *c, const tank_t *t, ts_rect_t *box) {
+    const float mx = t->drag_px, my = t->drag_py, a = tank_anim(t->clock);
+    const src_t s = src_color(0xe6f6ff, c->dim);
+    fill_ellipse(c, mx, my + 7, 9, 6, 0xdcf0ff, 46);                  /* the puff at the nozzle, a soft haze under it */
+    fill_ellipse(c, mx, my + 16, 15, 9, 0xd0ecff, 24);
+    for (int k = 0; k < 44; k++) {                                     /* the droplets: a cone down from the finger, each on its own beat */
+        const uint32_t hh = (uint32_t)(k + 1) * 2654435761u;
+        const float ph = fmodf(a * (1.1f + (float)(hh >> 28) * 0.06f) + (float)(hh & 1023) / 1023.0f, 1.0f);
+        const float ang = ((float)((hh >> 10) & 255) / 255.0f - 0.5f) * 1.5f, r = 3 + 30 * ph;
+        const int x = (int)floorf(mx + sinf(ang) * r + 0.5f), y = (int)floorf(my + 2 + cosf(ang) * r * 0.85f + 7 * ph * ph + 0.5f);
+        const int al = (int)(235 * (1 - ph));
+        px_blend_s(c, x, y, &s, al);
+        if ((hh >> 20 & 3) == 0 && ph < 0.6f) { px_blend_s(c, x + 1, y, &s, al * 3 / 4); px_blend_s(c, x, y + 1, &s, al * 3 / 4); }   /* (a few bigger drops) */
+    }
+    box->x0 = (short)(mx - 34); box->y0 = (short)(my - 2); box->x1 = (short)(mx + 34); box->y1 = (short)(my + 42);
+}
+/* the vignette again on what moved (THE SCENE CACHE's rule: the scene carries it; a drawn pixel takes it once - its mark
+   cleared as it does, so two boxes over one pixel darken it once) */
+static void ts_vignette(ctx_t *c, const ts_rect_t *r, int n) {
+    if (!g_dirty) return;
+    for (int i = 0; i < n; i++) {
+        const int x0 = r[i].x0 < 0 ? 0 : r[i].x0, x1 = r[i].x1 > TANK_W - 1 ? TANK_W - 1 : r[i].x1;
+        const int y0 = r[i].y0 < 0 ? 0 : r[i].y0, y1 = r[i].y1 > TANK_H - 1 ? TANK_H - 1 : r[i].y1;
+        for (int y = y0; y <= y1; y++) {
+            uint32_t *drow = g_dirty + y * DIRTY_WORDS_PER_ROW;
+            for (int x = x0; x <= x1; x++) {
+                const uint32_t w = drow[x >> 5];
+                if (!w) { x |= 31; continue; }
+                if (!((w >> (x & 31)) & 1u)) continue;
+                drow[x >> 5] &= ~(1u << (x & 31));
+                const int a = g_vig && g_vig_filled ? g_vig[y * TANK_W + x] : vig_alpha(x, y);
+                if (a) px_darken(&c->fb[y * c->stride + x], a);
+            }
+        }
+    }
+}
+static double g_ts_clock = -1; static int g_ts_left = 1;   /* the tank clock last drawn, and its builds left (render_terrarium) */
+static void render_terrarium(const tank_t *t, uint16_t *fb, int stride) {
+    const habitat_t *h = tank_habitat(t);
+    g_keep_on = false; g_fbg_on = g_fbg_used = false; g_bedm_on = false;
+    int64_t p0 = PROF_MARK();
+    const bool tick = t->clock != g_ts_clock;                         /* (a new tank tick: the bake's slice and a body build are its) */
+    g_ts_clock = t->clock;
+    const bool cached = g_scene && g_dirty && stride == TANK_W;
+    g_dirty_hold = false;
+    if (cached) memset(g_dirty, 0, TANK_H * DIRTY_WORDS_PER_ROW * sizeof(uint32_t));
+    if (g_touched) memset(g_touched, 0, TANK_H * DIRTY_WORDS_PER_ROW * sizeof(uint32_t));
+    ts_layout(h);
+    bool lit = !t->night;
+    if (cached) {
+        ts_scene(t, h, tick);
+        lit = g_ts_show.lit;                                           /* (the light the glass shows: a switch waits for its bake) */
+        if (!(g_primed_fb == fb && g_primed_epoch == g_scene_epoch)) memcpy(fb, g_scene, (size_t)TANK_W * TANK_H * sizeof(uint16_t));
+        else if (g_ts_patch_n > 0)                                     /* (primed with the scene as it was: the moisture step's box from it) */
+            for (int y = g_ts_patch.y0; y <= g_ts_patch.y1; y++)
+                memcpy(fb + (size_t)y * TANK_W + g_ts_patch.x0, g_scene + (size_t)y * TANK_W + g_ts_patch.x0, (size_t)(g_ts_patch.x1 - g_ts_patch.x0 + 1) * sizeof(uint16_t));
+        if (g_ts_patch_n > 0) g_ts_patch_n--;
+    } else {                                                           /* no cache (the tests' bare path): the scene drawn whole */
+        ts_vig();
+        float m[HABITAT_HIDES_MAX];
+        for (int i = 0; i < HABITAT_HIDES_MAX; i++) m[i] = i < h->n_hides && h->hides[i].kind == HIDE_HUMID ? (float)scene_desert_moist_step(t->moist[i]) / 8.0f : 0;
+        const glass_t g = glass_here();
+        scene_desert_draw(fb, stride, &g, h, lit, m, lit ? 1.0f : 0.45f, g_vig && g_vig_filled ? g_vig : NULL);
+        g_ts_ctx.ok = false;
+    }
+    g_primed_fb = NULL;
+    const float dim = lit ? 1.0f : 0.45f;
+    ctx_t c = ctx_full(fb, stride, dim);
+    PROF_ADD(0, p0);
+    ts_rect_t rects[TS_RECTS]; int nr = 0;
+    /* back to front by the feet's y: the dish, the crickets about, the lizards (a lizard's feet: its middle + TERRAIN_FEET_DY) */
+    uint16_t who[N_FISH_SLOTS + MAX_CRICKETS + 1]; float at[N_FISH_SLOTS + MAX_CRICKETS + 1]; int n = 0;
+    for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) { who[n] = (uint16_t)i; at[n] = t->fish[i].y + TERRAIN_FEET_DY; n++; }
+    for (int k = 0; k < MAX_CRICKETS; k++) {
+        const cricket_t *q = &t->cricket[k];
+        if (q->state == CK_NONE || q->state == CK_HIDE) continue;     /* (in cover: out of sight) */
+        who[n] = (uint16_t)(0x100 | k); at[n] = q->y; n++;
+    }
+    if (tank_dish_here(t)) { float dx; who[n] = 0x200; tank_dish_point(t, &dx, &at[n]); n++; }
+    for (int a = 1; a < n; a++) {                                      /* (an insertion: a dozen at most) */
+        const uint16_t w = who[a]; const float y = at[a]; int b = a;
+        while (b > 0 && at[b - 1] > y) { who[b] = who[b - 1]; at[b] = at[b - 1]; b--; }
+        who[b] = w; at[b] = y;
+    }
+    lizard_frame(tick ? 1 : g_ts_left);                                /* a body built a tank tick at most (render_lizard.h); the same tick drawn
+                                                                          again builds no more, so its lizards fall back alike */
+    for (int q = 0; q < n && nr < TS_RECTS; q++) {
+        if (who[q] == 0x200) { ts_dish(&c, t, h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
+        else if (who[q] & 0x100) { ts_cricket(&c, &t->cricket[who[q] & 0xff], h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
+        else { if (ts_lizard(&c, t, who[q], h, lit, dim, &rects[nr])) nr++; PROF_ADD(7, p0); }
+    }
+    g_ts_left = lizard_frame(-1);
+    if (ts_misting(t) && nr < TS_RECTS) { ts_mist(&c, t, &rects[nr]); nr++; }
+    PROF_ADD(4, p0);
+    if (cached) ts_vignette(&c, rects, nr);
+    PROF_ADD(5, p0);
+    draw_algae(&c, t);                                                 /* the film on the glass (the sponge's), and the snail on it */
+    draw_snail(&c, t, false);
+    PROF_ADD(6, p0);
+}
+/* ==== (THE TERRARIUM ends) ==== */
+#else
+void render_set_scene_spare(uint16_t *buf) { (void)buf; }
+void render_terrarium_bake_stats(int *rows, int *slices, int64_t *us_max) {
+    if (rows) *rows = 0;
+    if (slices) *slices = 0;
+    if (us_max) *us_max = 0;
+}
+void render_terrarium_bake_stats_reset(void) {}
+#endif
+
 void render_tank(const tank_t *t, uint16_t *fb, int stride) {
+#if PT_TERRARIUM
+    render_terrarium(t, fb, stride);
+    return;
+#else
     float dim = t->night ? 0.45f : 1.0f;
     g_keep_on = false; g_fbg_on = g_fbg_used = false; g_bedm_on = false;   /* (SWIM DEPTH: set by the fish below, read through the passes after them) */
     ctx_t c = ctx_full(fb, stride, dim);
@@ -6359,12 +6787,14 @@ void render_tank(const tank_t *t, uint16_t *fb, int stride) {
             const fish_t *f = &t->fish[i];
             if (dep_draw(&c, fb, t, i, dep_fish, g_fbb[i], &g_fbb_ok[i], f->x, f->y, (int)(62 * f->size) + 8, f->gdepth, f->pdepth))
                 DYN_RECT(g_fbb[i][0], g_fbb[i][1], g_fbb[i][2], g_fbb[i][3]);
+#if PT_NET
             if (tank_is_visitor(i) && t->vis_badge[i - N_FISH_MAX] >= 0) {
                 g_bb_on = true; g_bb_x0 = g_bb_y0 = 1 << 20; g_bb_x1 = g_bb_y1 = -1;
                 link_badge_draw(&c, (int)f->x, (int)(f->y - 15 * f->size - 9), 5, t->vis_badge[i - N_FISH_MAX], 220);
                 g_bb_on = false;
                 if (g_bb_x1 >= g_bb_x0) DYN_RECT(g_bb_x0, g_bb_y0, g_bb_x1, g_bb_y1);
             }
+#endif
             PROF_ADD(7, p0); break;                  /* (the split of the stage, 2026-10-23: the fish) */
         }
         case AN_CRAB:   DEP_CRAB(&c, fb, t);   PROF_ADD(8, p0); break;   /* (the snail, the urchin and the crab) */
@@ -6629,6 +7059,7 @@ void render_tank(const tank_t *t, uint16_t *fb, int stride) {
     g_pk_lx = -1; g_pk_under_castle = false; g_pk_shadows = false;   /* the light is this frame's: no page is ever lit by it */
     PROF_ADD(6, p0);
 #undef DYN_RECT
+#endif
 }
 
 /* ---- the battery (2026-09-24 redraw): Strato is color blind and could not
@@ -6982,6 +7413,7 @@ static void urchin_card_draw(ctx_t *c, const tank_t *t) {
     draw_text(c, X + (W - text_w(now, 2)) / 2, Y + 170, 2, 0x9fd8e2, now);
 }
 
+#if PT_NET   /* the networking UI (version.h PT_NET): the passport, the bakes of the GIVE modal and the gift card, the gift card */
 /* a visitor's card (2026-10-05, Strato: "it should be a bit different since
    it's a visiting fish, it should maybe look a little more like a passport"):
    the Pocket Tank Passport - a cover band, its photo, its fields, this tank's
@@ -7115,7 +7547,9 @@ void render_set_modal_cache(uint16_t *give, uint16_t *gift) {
 void render_modal_cache_on(bool on) {   /* (the director's `link bake on|off`: the same build measured both ways) */
     g_bake_gm.buf = on ? g_bake_bufs[0] : NULL; g_bake_gift.buf = on ? g_bake_bufs[1] : NULL; g_bake_gm.ok = g_bake_gift.ok = false;
 }
+#endif
 static uint32_t bake_hash(uint32_t h, uint32_t v) { for (int b = 0; b < 4; b++) { h ^= (v >> (b * 8)) & 255; h *= 16777619u; } return h; }
+#if PT_NET
 static uint32_t bake_hash_s(uint32_t h, const char *s) { while (s && *s) h = bake_hash(h, (uint8_t)*s++); return bake_hash(h, 0); }
 /* the bake's ctx (the card's own frame coordinates), nothing marked while it is painted (the copy marks the frame) */
 static bool bake_stale(bake_t *b, uint32_t key, int h) { return !b->ok || b->key != key || b->h != h; }
@@ -7222,6 +7656,7 @@ int render_passport_hit(float x, float y) {
     }
     return x >= X && x < X + W && y >= Y && y < Y + H ? PASSPORT_HIT_CARD : PASSPORT_HIT_NONE;
 }
+#endif
 
 /* the shrimp school's card (2026-09-29, Strato: "one tap should bring up a
    card to show how much food they've eaten and progress to the next shrimp").
@@ -7390,7 +7825,9 @@ static void crit_nav_draw(ctx_t *c, const tank_t *t, int card) {
 
 static void tools_draw(ctx_t *c, const tank_t *t);   /* the toolbox, below */
 static void next_draw(ctx_t *c, const tank_t *t);    /* the NEXT FISH arrow, below */
+#if PT_NET
 static void give_box_draw(ctx_t *c, const tank_t *t, int fish);   /* GIVE under the toolbox while linked (0.4), below */
+#endif
 void render_stats_card(const tank_t *t, int fish_idx, uint16_t *fb, int stride) {
     if (render_critter_here(t, fish_idx)) {
         ctx_t sc = ctx_full(fb, stride, 1.0f);
@@ -7404,12 +7841,14 @@ void render_stats_card(const tank_t *t, int fish_idx, uint16_t *fb, int stride) 
         crit_nav_draw(&sc, t, fish_idx);
         return;
     }
+#if PT_NET
     if (tank_is_visitor(fish_idx)) {                  /* a visitor: its passport */
         if (!t->vis_used[fish_idx - N_FISH_MAX]) return;
         ctx_t sc = ctx_full(fb, stride, 1.0f);
         passport_card_draw(&sc, fb, stride, t, fish_idx - N_FISH_MAX);
         return;
     }
+#endif
     if (fish_idx == RENDER_CARD_SNAIL || fish_idx == RENDER_CARD_SHRIMP || fish_idx == RENDER_CARD_URCHIN
         || fish_idx == RENDER_CARD_SEAHORSE || fish_idx == RENDER_CARD_CRAB) return;   /* its critter is gone */
     if (fish_idx < 0 || fish_idx >= t->n_fish) return;
@@ -7435,7 +7874,9 @@ void render_stats_card(const tank_t *t, int fish_idx, uint16_t *fb, int stride) 
     } else card_draw(c, t, fish_idx);
     tools_draw(&c, t);
     next_draw(&c, t);
+#if PT_NET
     give_box_draw(&c, t, fish_idx);
+#endif
 }
 
 /* ---- the toolbox (2026-10-01) ----
@@ -7505,6 +7946,7 @@ int render_next_fish(const tank_t *t, int fish_idx) {
     if (fish_idx < 0 || fish_idx >= t->n_fish) return fish_idx;
     return (fish_idx + 1) % t->n_fish;
 }
+#if PT_NET
 #define GIVE_GOLD 0xe8c872
 enum { GV_HIDDEN, GV_GIVE, GV_DIM, GV_ASKING, GV_LEAVING };   /* (the GIVE section below) */
 /* GIVE on the stat card (0.4): the keeper page card's button in a box of its own, its states the same
@@ -7527,6 +7969,7 @@ bool render_give_hit(const tank_t *t, int fish_idx, float x, float y) {
     if (give_look(t, fish_idx) == GV_HIDDEN) return false;
     return x >= RENDER_GIVE_X - 4 && x < RENDER_GIVE_X + RENDER_GIVE_W + 8 && y >= RENDER_GIVE_Y - 4 && y < RENDER_GIVE_Y + RENDER_GIVE_H + 10;
 }
+#endif
 bool render_lock_hit(float x, float y) {
     return y >= RENDER_TOOLS_Y && x >= RENDER_LOCK_X - RENDER_SIDE_GAP / 2 && x < RENDER_LOCK_X + RENDER_LOCK_W + 16;
 }
@@ -7758,15 +8201,61 @@ void render_glyph(uint16_t *fb, int stride, int x, int y, int scale, uint32_t rg
                 for (int yy = 0; yy < scale; yy++)
                     span(&c, x + k * scale, x + k * scale + scale - 1, y + r * scale + yy, &col, 255);
 }
+#if PT_TERRARIUM
+static void lizard_still(ctx_t *c, float x, float y, float size, const fish_t *f, const fish_t *form, double clock, float room);   /* below */
+#endif
 static void draw_still(uint16_t *fb, int stride, float x, float y, float size, fish_t *f, const fish_t *form, double clock, float room) {
     ctx_t c = ctx_page(fb, stride);
+#if PT_TERRARIUM
+    lizard_still(&c, x, y, size, f, form, clock, room);
+#else
     f->heading = 0; f->speed = 40;
     f->hunger = 4; f->stress = 0; f->goal.id = GOAL_W_EXPLORE;
     if (form) { f->shape = form->shape; f->fins = form->fins; f->pattern = form->pattern; }
     if (room > 0) fish_fit(f, x, y, size, room); else { f->x = x; f->y = y; f->size = size; }
     tank_fish_face(f);                           /* side-on, facing right */
     draw_fish_core(&c, f, tank_phase(clock, tank_fish_beat_rate(f)), false, f->size, 1e9f);   /* (a still's pace never changes: the clock's) */
+#endif
 }
+#if PT_TERRARIUM
+/* a lizard's portrait (THE TERRARIUM: a card, the keeper page's rows, the setup's colours): side-on, standing, facing right,
+   blinking and flicking its tongue now and then on the page's clock - its morph by its body colour (f), its stage, its shed
+   and its markings' seed (form, the lizard itself, when there is one). Its whole reach - the tail's tip to the snout's with
+   the tongue out (lizard_reach) - is LZ_STILL_K x the box a classic fish of its stage takes at that size (fish_box), centred
+   on that box, inside the room's (a classic elder's box x room, as fish_fit's): the keeper page's zones are drawn round the
+   fish's box (ms_anim: the GROW gate's cell is 40 px for a fish of 29) */
+#define LZ_STILL_K 1.15f
+static void lizard_page_mark(void *user, int x0, int x1, int y) {   /* (the page's own coordinates: its box - the keeper page's moving things - and the frame's touched mask) */
+    const ctx_t *c = (const ctx_t *)user;
+    bb_add(x0, x1, y); touch_span_f(x0 - c->ox, x1 - c->ox, y - c->oy);
+}
+static void lizard_still(ctx_t *c, float x, float y, float size, const fish_t *f, const fish_t *form, double clock, float room) {
+    const species_t *sp = species_get(SPECIES_DEFAULT);
+    if (!sp || sp->plan != PLAN_LIZARD) return;
+    const fish_t *who = form ? form : f;
+    lizard_look_t lk = { &sp->geom, lizard_morph_of(sp, f), sp->pattern[f->stage & 3], (uint8_t)f->stage, who->uid ? who->uid : f->color };
+    float r[4], e[4]; fish_box(SHAPE_CLASSIC, FINS_CLASSIC, (stage_t)f->stage, r); fish_box(SHAPE_CLASSIC, FINS_CLASSIC, STAGE_ELDER, e);
+    float w = LZ_STILL_K * (r[1] - r[0]) * size;
+    if (room > 0 && w > room * (e[1] - e[0]) * size) w = room * (e[1] - e[0]) * size;
+    float scale = w / sp->geom.length_px, back, ahead;
+    for (int i = 0; i < 4; i++) { lizard_reach(&sp->geom, scale, &back, &ahead); scale *= w / (back + ahead); }   /* (the reach's ends do not
+                                                                                                  scale with it: a few steps settle it) */
+    lizard_reach(&sp->geom, scale, &back, &ahead);
+    const float len = sp->geom.length_px * scale, mid = x + 0.5f * (r[0] + r[1]) * size + 0.5f * (back - ahead);
+    lizard_pose_t p = lizard_pose(LZ_POSE_STAND, 1);
+    const float a = (float)fmod(clock, 60.0);
+    const float bt = fmodf(a, 4.3f), tt = fmodf(a + 1.7f, 6.1f);
+    p.blink = bt < 0.18f ? 1 - fabsf(bt / 0.09f - 1) : 0;
+    p.tongue = tt < 0.26f ? sinf(3.14159265f * tt / 0.26f) : 0;
+    p.fat = who->lz_fat > 0 ? who->lz_fat : 0.6f; p.clock = a;
+    p.shed = who->shed == SHED_CLEAN ? SHED_NORMAL : who->shed;
+    if (p.shed == SHED_SHEDDING) p.shed_k = clampf(1 - who->shed_s / (sp->shed_window_s > 0 ? sp->shed_window_s : 1), 0, 1);
+    lz_canvas_t cv; memset(&cv, 0, sizeof cv);
+    cv.fb = c->fb; cv.stride = c->stride; cv.ox = c->ox; cv.oy = c->oy; cv.w = c->w; cv.h = c->h; cv.dim = 1.0f;
+    cv.mark = lizard_page_mark; cv.user = c;
+    draw_lizard(&cv, &lk, &p, mid, y + 0.07f * len, scale);          /* (its feet a little under the portrait's middle) */
+}
+#endif
 void render_fish_preview(uint16_t *fb, int stride, float x, float y, float size,
                          uint32_t body, uint32_t fin, uint32_t accent, const fish_t *form, float room, double clock) {
     fish_t f; memset(&f, 0, sizeof f);
@@ -7911,20 +8400,22 @@ void render_battery_info(uint16_t *fb, int stride, const bat_info_t *bi, double 
 #define MSP_TEAL      0x9fd8e2
 
 typedef struct { uint32_t bit; const icon_t *icon; } badge_t;
+/* the badges a world draws its own way (WORLD_ICON: the terrarium's geckos, crickets, hides and rocks, P3b); the
+   bought things' badges (school, reef, seahorse, crab) stay the shop's own pictures for as long as the shop sells them */
 static const badge_t FISH_BADGES[6] = {
-    { MS_FIRST_MEAL_FROM_YOU, &icon_ms_first_meal },  { MS_FIRST_HOLD_APPROACH, &icon_ms_first_hold_approach },
-    { MS_FIRST_GRASS, &icon_ms_first_seagrass },      { MS_FIRST_BUBBLES, &icon_ms_first_bubbles },   /* (the third was "first reef" until 0.3.0) */
-    { MS_FIRST_FOLLOW, &icon_ms_first_follow },       { MS_FIRST_DART, &icon_ms_first_dart },
+    { MS_FIRST_MEAL_FROM_YOU, WORLD_ICON(icon_ms_first_meal) },  { MS_FIRST_HOLD_APPROACH, WORLD_ICON(icon_ms_first_hold_approach) },
+    { MS_FIRST_GRASS, WORLD_ICON(icon_ms_first_seagrass) },      { MS_FIRST_BUBBLES, WORLD_ICON(icon_ms_first_bubbles) },   /* (the third was "first reef" until 0.3.0); a hide and a bask in the terrarium */
+    { MS_FIRST_FOLLOW, WORLD_ICON(icon_ms_first_follow) },       { MS_FIRST_DART, WORLD_ICON(icon_ms_first_dart) },           /* the terrarium's dart: a dig */
 };
 #define TANK_BADGE_N 12                         /* (11 lost the crab's badge off the row: 0.4's FIRST_MUTATION met 0.3.9's CRAB_FIND at the merge) */
 static const badge_t TANK_BADGES[TANK_BADGE_N] = {
-    { TMS_FIRST_FEEDING, &icon_ms_first_feeding },    { TMS_FIRST_TRIM, &icon_ms_first_trimming },
-    { TMS_FIRST_CLEANING, &icon_ms_first_glass_cleaning }, { TMS_FIRST_FULL_NIGHT, &icon_ms_first_quiet_night },
-    { TMS_FIRST_PLAY_SESSION, &icon_ms_first_play_session }, { TMS_CHANGED_SOMEONE, &icon_ms_tank_changed_someone },
+    { TMS_FIRST_FEEDING, WORLD_ICON(icon_ms_first_feeding) },    { TMS_FIRST_TRIM, &icon_ms_first_trimming },
+    { TMS_FIRST_CLEANING, WORLD_ICON(icon_ms_first_glass_cleaning) }, { TMS_FIRST_FULL_NIGHT, WORLD_ICON(icon_ms_first_quiet_night) },
+    { TMS_FIRST_PLAY_SESSION, WORLD_ICON(icon_ms_first_play_session) }, { TMS_CHANGED_SOMEONE, WORLD_ICON(icon_ms_tank_changed_someone) },
     { TMS_FULL_SCHOOL, &icon_ms_full_school },        /* 2026-09-30: only once the shrimp are bought (tank_badge_shown) */
     { TMS_FIRST_REEF, &icon_ms_first_reef },          /* 2026-10-02: only once the reef cluster is bought */
     { TMS_FIRST_MUTATION, &icon_ms_first_mutation },  /* 0.4 (Strato's helix): only once the tank has bred - a trio */
-    { TMS_FIRST_SALE, &icon_ms_first_sale },          /* 0.3.5: a fish sold - the shop's fry */
+    { TMS_FIRST_SALE, WORLD_ICON(icon_ms_first_sale) },          /* 0.3.5: a fish sold - the shop's fry */
     { TMS_SEAHORSE_FED, &icon_ms_seahorse_fed },      /* 0.3.6: only once the seahorse is bought (Strato: "visible and gray once purchased") */
     { TMS_CRAB_FIND, &icon_ms_crab_find },            /* 0.3.9: only once the crab is bought - its first sand dollar, taken */
 };
@@ -7999,6 +8490,7 @@ static double g_ms_sell_clock;       /* the tank clock when SELL was armed */
    fish card between RENAME and SELL, ONLY while a door is open. A tap opens the GIVE modal (below; it
    replaced SURE? on 11-02), the card's line says ASKING / GIVEN TO and the answer a while. */
 static uint32_t g_ms_given_uid;      /* the fish whose card says GIVEN: the card closes once it has left (rows shift then) */
+#if PT_NET   /* the GIVE modal and the keeper card's GIVE (version.h PT_NET) */
 static const char *const BADGE_WORDS[LINK_BADGES];   /* (the passport's, below) */
 static void gm_open(const tank_t *t, int fish);      /* the GIVE modal, below */
 static int give_look(const tank_t *t, int fish) {
@@ -8293,6 +8785,7 @@ int render_give_modal_tap(const tank_t *t, float x, float y) {
     g_gm.edge = (int8_t)e; g_gm.asked = t->clock; g_gm.step = RENDER_GM_ASKING; g_gm.step_t = t->clock;
     return hit;
 }
+#endif
 
 /* the TANK tally's picture (2026-10-02, Strato: the modal "feels bare"): the
  * school itself across the top of the box - every fish in its own colours,
@@ -8362,11 +8855,11 @@ static int bit_index(uint32_t bit) { int i = 0; while (bit > 1u) { bit >>= 1; i+
 static const icon_t *fry_req_icon(int kind) {
     switch (kind) {
     case FRY_REQ_TRUST:  return &icon_trust;
-    case FRY_REQ_FEED:   return &icon_ms_first_feeding;
-    case FRY_REQ_HOLD:   return &icon_ms_first_hold_approach;
-    case FRY_REQ_CHANGE: return &icon_ms_tank_changed_someone;
+    case FRY_REQ_FEED:   return WORLD_ICON(icon_ms_first_feeding);
+    case FRY_REQ_HOLD:   return WORLD_ICON(icon_ms_first_hold_approach);
+    case FRY_REQ_CHANGE: return WORLD_ICON(icon_ms_tank_changed_someone);
     case FRY_REQ_GRASS:  return &icon_ms_first_trimming;
-    case FRY_REQ_GLASS:  return &icon_ms_first_glass_cleaning;
+    case FRY_REQ_GLASS:  return WORLD_ICON(icon_ms_first_glass_cleaning);
     default:             return NULL;
     }
 }
@@ -8502,7 +8995,10 @@ static uint32_t ms_key(const tank_t *t, const fry_req_t *req, int nreq, bool sta
     h = bake_hash(h, (uint32_t)nreq); h = bake_hash(h, staged);
     for (int k = 0; k < nreq; k++) { h = bake_hash(h, (uint32_t)req[k].kind); h = bake_hash(h, req[k].met); h = bake_hash(h, (uint32_t)(int)(MSP_ICON * req[k].frac + 0.5f)); }
     h = bake_hash(h, t->sd_unlocks); h = bake_hash(h, t->tank_ms_bits); h = bake_hash(h, t->tank_ms_seen); h = bake_hash(h, (uint32_t)g_ms_tpage);
-    h = bake_hash(h, g_ms_caption[0] != 0); h = bake_hash(h, g_gm.on); h = bake_hash(h, render_gift_up(t));
+    h = bake_hash(h, g_ms_caption[0] != 0);
+#if PT_NET
+    h = bake_hash(h, g_gm.on); h = bake_hash(h, render_gift_up(t));
+#endif
     if (g_ms_caption[0]) { h = bake_hash(h, g_ms_tip); h = bake_hash(h, (uint32_t)ms_modal_y(t)); h = bake_hash(h, (uint32_t)ms_modal_h(t)); }
     return h;
 }
@@ -8735,9 +9231,12 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
             snprintf(g_ms_title, sizeof g_ms_title, "%s", f->name);
             snprintf(g_ms_caption, sizeof g_ms_caption, "%s", STAGE_WORDS[f->stage & 3]);
             ms_genes_line(f);                    /* its form under its stage (0.4) */
+#if PT_NET
             char gl[sizeof g_ms_sub];
             if (give_line(t, g_ms_row, gl, sizeof gl)) memcpy(g_ms_sub, gl, sizeof g_ms_sub);   /* GIVE has the line (0.4) */
-            else if (g_ms_sell_armed) snprintf(g_ms_sub, sizeof g_ms_sub, "TAP AGAIN TO SELL");
+            else
+#endif
+            if (g_ms_sell_armed) snprintf(g_ms_sub, sizeof g_ms_sub, "TAP AGAIN TO SELL");
             else if (can) snprintf(g_ms_sub, sizeof g_ms_sub, "WORTH %d SAND DOLLARS", worth);
             else if (g_ms_sell_asked) snprintf(g_ms_sub, sizeof g_ms_sub, f->away ? "VISITING NEXT DOOR" : !progression_keeps_two(t, g_ms_row) ? "KEEP AT LEAST TWO FISH" : "NAME THE NEW FRY FIRST");
             else g_ms_sub[0] = 0;                  /* (the line's room stays: the buttons never move) */
@@ -8747,6 +9246,7 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
         if (g_ms_kind >= 0)                        /* the way further in: HOW?, centred at the foot (Strato: bottom
                                                       right sat too close to CLOSE for comfort) */
             button(&c, X + (W - MSP_HOW_W) / 2, Y + H - 10 - MSP_HOW_H, MSP_HOW_W, MSP_HOW_H, 0x1c2f36, MSP_TEAL, "HOW?", 2);
+#if PT_NET
         if (card && give_look(t, g_ms_row) == GV_LEAVING) {   /* accepted next door (Strato 11-01: RENAME still live "felt weird"): the
                                                                 buttons give way to a GIVEN stamp in the passport's gold - nothing to tap
                                                                 now - and the card closes by itself once the fish has gone */
@@ -8769,7 +9269,9 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
                 char ok[16]; snprintf(ok, sizeof ok, "+%d OK?", progression_fish_value(t, g_ms_row));
                 button(&c, sx, by, MSP_CARD_BTN3_W, MSP_HOW_H, 0x155e58, 0x38dcc7, ok, 2);
             } else button(&c, sx, by, MSP_CARD_BTN3_W, MSP_HOW_H, 0x1c2f36, MSP_TEAL, "SELL", 2);
-        } else if (card) {
+        } else
+#endif
+        if (card) {
             const int by = ms_card_btn_y(t);
             button(&c, ms_card_btn_x(0), by, MSP_CARD_BTN_W, MSP_HOW_H, 0x1c2f36, MSP_TEAL, "RENAME", 2);
             if (!progression_fish_sellable(t, g_ms_row)) {           /* not for sale: the button in the page's dim ink, the words too */
@@ -8808,14 +9310,18 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
             }
         }
     }
+#if PT_NET
     if (g_gm.on) gm_draw(t, fb, stride);             /* the GIVE modal over the page, whole every frame (ms_key: up or not) */
     if (render_gift_up(t)) render_gift(t, fb, stride);   /* a gift offered to us over both (the 11-02 sweep; ms_key: up or not) */
+#endif
     g_ms_in = false;
     kp->frame = g_rframe; kp->other = g_ctx_other;   /* what this buffer holds now (anything drawn after: CTX_MADE) */
 }
 
 int render_milestones_tap(const tank_t *t, float x, float y) {
+#if PT_NET
     if (gm_eval(t) != RENDER_GM_OFF) { render_give_modal_tap(t, x, y); return MS_TAP_KEPT; }   /* the GIVE modal over the page has every tap */
+#endif
     x -= PAGE_X; y -= PAGE_Y;                    /* the page's own coordinates */
     if (g_ms_caption[0]) {                       /* a modal is up */
         if (!g_ms_tip) {                         /* the arrows at its top corners: the previous / next of the group */
@@ -8831,13 +9337,16 @@ int render_milestones_tap(const tank_t *t, float x, float y) {
                                                     the panel, the HOW? button's depth (a miss costs the modal) */
             const int by = ms_card_btn_y(t), fish = g_ms_row;
             if (x >= MSP_MODAL_X && x < MSP_MODAL_X + MSP_MODAL_W && y >= by - MSP_HOW_SLOP_UP && y < by + MSP_HOW_H + MSP_HOW_SLOP_DN) {
+#if PT_NET
                 if (give_look(t, fish) == GV_LEAVING) return MS_TAP_KEPT;   /* GIVEN: the stamp is no button */
                 if (give_look(t, fish) != GV_HIDDEN) {   /* linked: three buttons, each its third of the panel */
                     if (x < ms_card_btn3_x(1) - MSP_CARD_BTN3_GAP / 2) {
                         if (give_look(t, fish) == GV_ASKING) return MS_TAP_KEPT;   /* (RENAME rests while the gift is asked) */
                         ms_close(); return MS_TAP_RENAME + fish; }
                     if (x < ms_card_btn3_x(2) - MSP_CARD_BTN3_GAP / 2) { give_tap(t, fish); return MS_TAP_KEPT; }
-                } else if (x < MSP_MODAL_X + MSP_MODAL_W / 2) { ms_close(); return MS_TAP_RENAME + fish; }   /* the platform opens the wheel */
+                } else
+#endif
+                if (x < MSP_MODAL_X + MSP_MODAL_W / 2) { ms_close(); return MS_TAP_RENAME + fish; }   /* the platform opens the wheel */
                 if (!progression_fish_sellable(t, fish)) { g_ms_sell_asked = true; return MS_TAP_KEPT; }   /* the line says why, from now on */
                 if (!g_ms_sell_armed) { g_ms_sell_armed = true; g_ms_sell_clock = t->clock; return MS_TAP_KEPT; }
                 if (t->clock - g_ms_sell_clock < MSP_SELL_WAIT_S) { g_ms_sell_clock = t->clock; return MS_TAP_KEPT; }   /* a doubled tap (or a mash:
@@ -8962,6 +9471,7 @@ static void ms_close(void) { g_ms_given_uid = 0; g_ms_sell_armed = false; g_ms_s
                                      g_ms_row = -1; g_ms_k = -1; g_ms_tankrow = false; g_ms_fryrow = false; }
 void render_milestones_leave(void) { ms_close(); g_ms_tpage = 0; }
 
+#if PT_NET   /* the VISITOR COLLECTION page (version.h PT_NET) */
 /* ---- the VISITOR COLLECTION (2026-10-06, Strato: "a grid of friends made and
    if you tap one it shows their passport and whatever additional info you
    think would be nice") ---- */
@@ -8998,6 +9508,7 @@ static void fmt_dur(char *out, size_t n, uint32_t s) {
     else if (s < 3600) snprintf(out, n, "%u MIN", (unsigned)(s / 60));
     else snprintf(out, n, "%u H %u MIN", (unsigned)(s / 3600), (unsigned)(s % 3600 / 60));
 }
+#endif
 /* a fish left and the slots shifted (progression: a sale, a gift): the keeper page's card and its armed SELL follow their
    fish; the card of the one that left closes (the 11-02 sweep: SELL armed by row sold the fish that slid into it) */
 void render_fish_removed(int idx) {
@@ -9007,6 +9518,7 @@ void render_fish_removed(int idx) {
     }
     if (g_ms_fish == idx) g_ms_fish = -1; else if (g_ms_fish > idx) g_ms_fish--;
 }
+#if PT_NET
 static void fmt_met(char *out, size_t n, uint32_t met) {
     int64_t now = clock_port_now_unix();
     if (!met || now <= 0 || now < met) { snprintf(out, n, "ON THIS GLASS"); return; }   /* (a board without a clock) */
@@ -9137,25 +9649,32 @@ int render_collection_tap(const tank_t *t, float x, float y) {
     }
     return COLL_TAP_NONE;
 }
+#endif
 void render_milestones_show_fish(const tank_t *t, int fish) {
     if (fish >= 0 && fish < t->n_fish) ms_open(t, fish, false, false, -1, NULL, 0, false);
 }
 bool render_milestones_card(const tank_t *t, int *fish, int *rename_x, int *sell_x, int *btn_y) {
     if (!ms_card(t)) return false;
     if (fish) *fish = g_ms_row;
-    bool three = give_look(t, g_ms_row) != GV_HIDDEN;
+#if PT_NET
+    bool three = give_look(t, g_ms_row) != GV_HIDDEN;   /* linked: RENAME | GIVE | SELL */
+#else
+    const bool three = false;
+#endif
     if (rename_x) *rename_x = PAGE_X + (three ? ms_card_btn3_x(0) + MSP_CARD_BTN3_W / 2 : ms_card_btn_x(0) + MSP_CARD_BTN_W / 2);
     if (sell_x)   *sell_x   = PAGE_X + (three ? ms_card_btn3_x(2) + MSP_CARD_BTN3_W / 2 : ms_card_btn_x(1) + MSP_CARD_BTN_W / 2);
     if (btn_y)    *btn_y    = PAGE_Y + ms_card_btn_y(t) + MSP_HOW_H / 2;
     return true;
 }
 const char *render_milestones_line(void) { return g_ms_sub; }
+#if PT_NET
 bool render_milestones_give(const tank_t *t, int *x, int *y) {
     if (!ms_card(t) || give_look(t, g_ms_row) == GV_HIDDEN) return false;
     if (x) *x = PAGE_X + ms_card_btn3_x(1) + MSP_CARD_BTN3_W / 2;
     if (y) *y = PAGE_Y + ms_card_btn_y(t) + MSP_HOW_H / 2;
     return true;
 }
+#endif
 bool render_milestones_arrow(const tank_t *t, bool right, int *x, int *y) {
     if (!g_ms_caption[0] || g_ms_tip) return false;
     if (x) *x = PAGE_X + (right ? MSP_MODAL_X + MSP_MODAL_W - MSP_ARROW_IN - MSP_ARROW_W / 2 : MSP_MODAL_X + MSP_ARROW_IN + MSP_ARROW_W / 2);
@@ -9648,7 +10167,9 @@ static const char *const SET_FEED[2]   = { "ON", "OFF" };          /* the defaul
 static const char *const SET_SCREEN[2] = { "NORMAL", "TURNED" };   /* the default first */
 #endif
 
+#if PT_NET
 static void link_glyph(ctx_t *c, int x, int y, uint32_t rgb);   /* the link mode section, at the end */
+#endif
 static void set_row(ctx_t *c, int row_y, const char *label, const char *const names[], int n, int chosen) {
     draw_text(c, SET_LABEL_X, row_y, 2, MSP_TEAL, label);
     for (int i = 0; i < n; i++) {
@@ -9850,6 +10371,7 @@ int render_settings_touch(tank_t *t, float x, float y, bool down, int *value) {
     return r;
 }
 
+#if PT_NET   /* link mode, its badges and the DRIFTED notice (version.h PT_NET) */
 /* ---- link mode (0.4, the tank link: render.h, docs/tank-link-0.4.md) ---- */
 /* the badges: a shape AND a color (Strato is color blind: the shape is the
    identity, the color a second cue) - circle, triangle, square, diamond */
@@ -10109,6 +10631,7 @@ bool render_link_drift_hit(const link_view_t *v, float x, float y) {
     x -= PAGE_X; y -= PAGE_Y;
     return x >= LINK_DISC_X - 10 && x < LINK_DISC_X + LINK_DISC_W + 10 && y >= LINK_DISC_Y - 8 && y < LINK_DISC_Y + MSP_CLOSE_H + 12;
 }
+#endif
 /* ---- THE ADVANCED PAGE (0.3.9.2) ---------------------------------------
  * Hidden behind a BOOT chord (common/advanced.c). Two rows on the settings
  * page's grid: TOUCH (one wide CALIBRATE button) and BATTERY (the size

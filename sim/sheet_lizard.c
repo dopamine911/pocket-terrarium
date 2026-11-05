@@ -57,7 +57,7 @@ static void sh_begin(int w, int h) {
 static void sh_label(int x, int y, uint32_t rgb, const char *s) {   /* at sheet (x, y): a page origin there */
     render_text(g_sheet + (size_t)y * SH_W + x, SH_W, -PAGE_X, -PAGE_Y, 1, rgb, s);
 }
-static lz_canvas_t sh_canvas(void) { lz_canvas_t c = { g_sheet, SH_W, 0, 0, g_sw, g_sh, 1.0f, NULL, NULL }; return c; }
+static lz_canvas_t sh_canvas(void) { lz_canvas_t c = { .fb = g_sheet, .stride = SH_W, .w = g_sw, .h = g_sh, .dim = 1.0f }; return c; }
 
 /* the cells' backdrop: the desert's wall and sand without its hides or its ground's rocks (the lamp off-glass), lit */
 static uint16_t g_strip[TANK_W * TANK_H];
@@ -237,7 +237,7 @@ static void scene_with_geckos(const glass_t *b, bool lit, const float *moist, fl
     vig_fill(b);
     scene_desert_draw(g_frame, b->w, b, h, lit, moist, lit ? 1.0f : 0.45f, g_vig);
     scene_desert_t d; scene_desert_layout(b, h, &d);
-    lz_canvas_t cv = { g_frame, b->w, 0, 0, b->w, b->h, lit ? 1.0f : 0.45f, NULL, NULL };
+    lz_canvas_t cv = { .fb = g_frame, .stride = b->w, .w = b->w, .h = b->h, .dim = lit ? 1.0f : 0.45f, .moon = !lit };
     int other = 0, low = 0;                                                     /* a shelf (else a second rock), and another rock: off the basking one */
     for (int k = 0; k < d.n_rocks; k++) if (d.rock[k].shelf && d.rock[k].path != d.tr.bask_path) other = d.rock[k].path;
     for (int s = 1; s <= d.tr.n_rocks; s++) if (s != d.tr.bask_path && s != other) { if (!low) low = s; else if (!other) other = s; }
@@ -388,7 +388,7 @@ static double urchin_old_us(void) {
 
 static uint16_t g_bench[TANK_W * TANK_H];
 static double bench_draw(const lizard_look_t *lk, lizard_pose_t p, float scale, int n, bool advance, int *builds) {
-    lz_canvas_t cv = { g_bench, TANK_W, 0, 0, TANK_W, TANK_H, 1.0f, NULL, NULL };
+    lz_canvas_t cv = { .fb = g_bench, .stride = TANK_W, .w = TANK_W, .h = TANK_H, .dim = 1.0f };
     int b0 = lizard_cache_builds();
     int64_t t0 = sl_now_us();
     for (int i = 0; i < n; i++) {
@@ -405,7 +405,7 @@ static double bench_draw(const lizard_look_t *lk, lizard_pose_t p, float scale, 
 static int cmp_i64(const void *a, const void *b) { int64_t x = *(const int64_t *)a, y = *(const int64_t *)b; return x < y ? -1 : x > y; }
 static double bench_life(int budget, int *builds, int *frames, double *p99) {
     static int64_t ft[1500];
-    lz_canvas_t cv = { g_bench, TANK_W, 0, 0, TANK_W, TANK_H, 1.0f, NULL, NULL };
+    lz_canvas_t cv = { .fb = g_bench, .stride = TANK_W, .w = TANK_W, .h = TANK_H, .dim = 1.0f };
     lizard_look_t A = sl_look(0, STAGE_ADULT, 11), B = sl_look(1, STAGE_JUV, 22), C = sl_look(4, STAGE_ELDER, 33);
     const int N = 1500; int b0 = lizard_cache_builds();
     int64_t total = 0;
@@ -436,6 +436,12 @@ static double bench_life(int budget, int *builds, int *frames, double *p99) {
     *p99 = (double)ft[N * 99 / 100];
     *builds = lizard_cache_builds() - b0; *frames = N;
     return (double)total / N;
+}
+/* the board's factor (the --bench convention above): its microseconds per this machine's, from the old urchin's spines
+   (shot_terrarium.c's --terr-bench reads it too) */
+double lizard_board_k(void) {
+    urchin_old_us();                                                            /* (a warm-up) */
+    return 1800.0 / urchin_old_us();
 }
 
 static void cost(const char *prefix) {
@@ -474,14 +480,17 @@ static void cost(const char *prefix) {
         SAY("                                    mean %6.2f us  ~%5.0f us on the board; 99th pct frame %5.0f us ~%5.0f us   (%d builds in %d frames)\n",
             life, life * k, p99, p99 * k, builds, frames);
     }
-    {                                                                           /* the grid fits every body: each pose at 1.3 (an elder well fed), side-on and head-on */
-        lz_canvas_t cv = { g_bench, TANK_W, 0, 0, TANK_W, TANK_H, 1.0f, NULL, NULL };
+    {                                                                           /* the grid fits every body: each pose at 1.3 (an elder well fed), side-on and head-on,
+                                                                                   level and pitched on the steepest ground a lizard walks, either way */
+        lz_canvas_t cv = { .fb = g_bench, .stride = TANK_W, .w = TANK_W, .h = TANK_H, .dim = 1.0f };
         lizard_look_t big = sl_look(0, STAGE_ELDER, 0x77u);
         for (int p = 0; p < LZ_POSES; p++)
-            for (int y = 0; y < 3; y++) {
-                lizard_pose_t q = lizard_pose(p, y == 0 ? 1.0f : y == 1 ? 0.05f : 0.5f); q.fat = 1; q.phase = 1; q.yaw_tail = y == 2 ? -0.6f : q.yaw;
-                draw_lizard(&cv, &big, &q, 220, 300, 1.3f);
-            }
+            for (int y = 0; y < 3; y++)
+                for (int s = -1; s <= 1; s++) {
+                    lizard_pose_t q = lizard_pose(p, y == 0 ? 1.0f : y == 1 ? 0.05f : 0.5f); q.fat = 1; q.phase = 1; q.yaw_tail = y == 2 ? -0.6f : q.yaw;
+                    q.pitch = s * TERRAIN_SLOPE_MAX * 3.14159265f / 180.0f;
+                    draw_lizard(&cv, &big, &q, 220, 300, 1.3f);
+                }
     }
     SAY("  the worst build (%s) on a frame that builds:     ~%5.0f us on the board\n", wname, worst * k);
     SAY("  scratch (cached bodies + the build's): %u bytes (PSRAM on the board: lizard_set_scratch); bodies cut to the grid: %d\n",

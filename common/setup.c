@@ -75,8 +75,10 @@ static parent_t parent_of(const tank_t *t, const fish_t *f, int w) {
     const fish_t *q = slot >= 0 && slot < t->n_fish ? &t->fish[slot] : NULL;
     if (!q && uid) for (int i = 0; i < t->n_fish && !q; i++) if (t->fish[i].uid == uid) q = &t->fish[i];
     if (q) { p.name = q->name; p.color = q->color; p.bold = q->bold; p.sociable = q->sociable; p.known = true; return p; }
+#if PT_NET   /* (a fish of another tank: only with the network, version.h PT_NET) */
     const kin_t *k = kin_find(uid);
     if (k) { p.name = k->name; p.color = k->color; p.bold = k->bold; p.sociable = k->sociable; p.known = true; }
+#endif
     return p;
 }
 /* a mutation in words for the announcement (0.4): "SOMETHING NEW: SAIL FINS";

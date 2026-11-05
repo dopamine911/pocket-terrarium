@@ -6,7 +6,13 @@
 const char *const LZ_GOAL_NAMES[LZ_GOALS] = { "hunt", "bask", "hide", "explore", "investigate", "dig", "rest" };
 const char *const PHASE_NAMES[PHASE_N] = { "active", "settle", "sleep" };
 
-static const species_t *const PACKS[] = { &SPECIES_PACK_GECKO, &SPECIES_PACK_TEST_WARM, &SPECIES_PACK_FISH };   /* both worlds' (a tank holds its build's: tank_set_packs) */
+#if PT_ALL_PACKS
+static const species_t *const PACKS[] = { &SPECIES_PACK_GECKO, &SPECIES_PACK_TEST_WARM, &SPECIES_PACK_FISH };
+#elif PT_TERRARIUM
+static const species_t *const PACKS[] = { &SPECIES_PACK_GECKO, &SPECIES_PACK_TEST_WARM };
+#else
+static const species_t *const PACKS[] = { &SPECIES_PACK_FISH };
+#endif
 #define N_PACKS ((int)(sizeof PACKS / sizeof PACKS[0]))
 
 int species_count(void) { return N_PACKS; }
@@ -22,6 +28,11 @@ float species_heat_of(const species_t *p, float c) {
     if (c < p->t_hi)    return 5.0f + 2.0f * (c - p->t_lo) / (p->t_hi - p->t_lo);
     if (c < p->t_hot)   return 7.0f + 3.0f * (c - p->t_hi) / (p->t_hot - p->t_hi);
     return 10.0f;
+}
+
+float lizard_stage_scale(int stage) {
+    static const float K[4] = { 0.42f, 0.68f, 1.0f, 1.08f };   /* a hatchling ~8 cm of an adult's ~20 */
+    return K[stage < 0 ? 0 : stage > 3 ? 3 : stage];
 }
 
 /* SCHED_DAY (every v1 pack, PLAN.md D2): active while the light is on, settle
@@ -67,6 +78,11 @@ bool species_check(const species_t *p, char *why, size_t n) {
         if (!(p->bout_s[0] > 0 && p->bout_s[0] <= p->bout_s[1])) REFUSE("bout_s %.2f..%.2f is no span of seconds", p->bout_s[0], p->bout_s[1]);
         if (!(p->pause_s[0] > 0 && p->pause_s[0] <= p->pause_s[1])) REFUSE("pause_s %.2f..%.2f is no span of seconds", p->pause_s[0], p->pause_s[1]);
         if (!(p->turn_s > 0)) REFUSE("turn_s is %g, not > 0", p->turn_s);
+        if (p->plan == PLAN_LIZARD) {                     /* its body drawn stays inside the glass, and its middle still reaches every ramp's end */
+            const float most = lizard_half_len(&p->geom, lizard_stage_scale(STAGE_ELDER) * 1.05f);   /* (tank.c tank_lizard_scale's largest) */
+            if (!(p->geom.length_px > 0) || most > TERRAIN_LINK_IN_PX)
+                REFUSE("geom.length_px %g: its biggest elder's half length %.1f px passes TERRAIN_LINK_IN_PX %.0f (a ramp's end out of its reach)", p->geom.length_px, most, TERRAIN_LINK_IN_PX);
+        }
     }
     if (!(p->stage_s[0] < p->stage_s[1] && p->stage_s[1] < p->stage_s[2]))
         REFUSE("stage_s is not strictly increasing (%.0f / %.0f / %.0f)", p->stage_s[0], p->stage_s[1], p->stage_s[2]);

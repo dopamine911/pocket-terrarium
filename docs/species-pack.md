@@ -18,7 +18,7 @@ no retrain.
   `docs/habitat-pack.md` "Worlds"). A new tank holds its world's default pair: the gecko in the desert, or the fish in
   freshwater (`SPECIES_DEFAULT`, `HABITAT_DEFAULT`).
 - The save stores the pack **id** (a byte) per tank beside the habitat's, and each animal's heat and shed (the
-  tail at 1956..2095). A tank holds one species; mixed terrariums are out of scope (real keepers don't mix either).
+  tail at 1956..2095; the habitat's mealworm dish at 2096, P2c). A tank holds one species; mixed terrariums are out of scope (real keepers don't mix either).
   A save whose pair this bin cannot hold (an id it lacks, a pair that does not fit, another world's) loads as the
   defaults, and its animals start fresh: the tail's heat and sheds are that pack's.
 - `--selftest-packs` (sim, both worlds) checks every pack against the rules in "Validation".

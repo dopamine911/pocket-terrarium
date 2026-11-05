@@ -68,6 +68,10 @@ typedef struct {
     /* a humid hide's moisture (docs/shed.md "Moisture"): in a new terrarium, and how much it dries a tended second */
     float       moist_start, moist_dry_per_s;
     float       humidity;               /* the air's baseline 0..1 (the desert ~0.2): data - the shed reads the humid hide's moisture only */
+    /* the mealworm dish (P2c, tank.h THE CRICKETS): a fixed place on the floor at dish_u (the places' u), the keeper's feed
+       gesture over it fills it; false: none (an aquarium's) */
+    bool        dish;
+    float       dish_u;
 } habitat_t;
 
 #define HABITAT_DESERT     1            /* common/habitat/desert.c (the terrarium) */
@@ -77,6 +81,8 @@ typedef struct {
 #else
 #define HABITAT_DEFAULT HABITAT_FRESHWATER
 #endif
+/* the dish's half-width on the sand (the rules keep it clear of the hides; render.c draws it this wide) */
+#define HABITAT_DISH_HW 14.0f
 extern const habitat_t HABITAT_PACK_DESERT, HABITAT_PACK_FRESHWATER;
 
 const habitat_t *habitat_get(uint8_t id);      /* NULL: no such habitat */

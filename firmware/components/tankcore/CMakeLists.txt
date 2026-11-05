@@ -3,12 +3,29 @@
 # progression ports (NVS + wall clock). The ports live here, not in main, so
 # the static-archive link order resolves (tankcore -> nvs_flash).
 set(COMMON ${CMAKE_CURRENT_LIST_DIR}/../../../common)
+# THE NETWORK (common/version.h PT_NET, read as firmware/main/CMakeLists.txt reads it): 0 = updates, the passport, the
+# tank link, the visitor collection and GIVE's notes stay out of the build. (main/CMakeLists.txt alone lists version.h as a
+# configure dependency - an edit re-runs the whole configure; a second listing here made ninja's build.ninja name it as an
+# output twice and the configure fail)
+file(STRINGS "${COMMON}/version.h" PT_NET_LINE REGEX "^#define[ \t]+PT_NET[ \t]+[01]")
+string(REGEX REPLACE "^#define[ \t]+PT_NET[ \t]+([01]).*$" "\\1" PT_NET "${PT_NET_LINE}")
+set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
+         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c"
+         "${COMMON}/species.c" "${COMMON}/habitat.c" "${COMMON}/terrain.c"
+         "persist_port_esp.c" "rtc_port_pcf85063.c")
+# THE WORLD's owned const packs and renderer art. The simulator deliberately carries both packs for cross-world tests;
+# a release image carries only its own. render.c preprocessor-excludes the other live renderer before link resolution.
+if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
+    list(APPEND SRCS "${COMMON}/species/fish.c" "${COMMON}/habitat/freshwater.c")
+else()
+    list(APPEND SRCS "${COMMON}/species/gecko.c" "${COMMON}/habitat/desert.c"
+                     "${COMMON}/render_lizard.c" "${COMMON}/render_scene_desert.c")
+endif()
+if(PT_NET STREQUAL "1")
+    list(APPEND SRCS "${COMMON}/update.c" "${COMMON}/passport.c" "${COMMON}/link.c" "${COMMON}/tank_link.c" "${COMMON}/collection.c" "${COMMON}/gift.c")
+endif()
 idf_component_register(
-    SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
-         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/update.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c" "${COMMON}/passport.c" "${COMMON}/link.c" "${COMMON}/tank_link.c" "${COMMON}/collection.c" "${COMMON}/gift.c"
-         "${COMMON}/species.c" "${COMMON}/species/gecko.c" "${COMMON}/species/fish.c" "${COMMON}/habitat.c" "${COMMON}/habitat/desert.c" "${COMMON}/habitat/freshwater.c" "${COMMON}/terrain.c"
-         "${COMMON}/render_lizard.c" "${COMMON}/render_scene_desert.c"
-         "persist_port_esp.c" "rtc_port_pcf85063.c"
+    SRCS ${SRCS}
     INCLUDE_DIRS "${COMMON}" "."
     PRIV_REQUIRES nvs_flash esp_driver_i2c esp_partition
 )

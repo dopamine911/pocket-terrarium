@@ -169,6 +169,13 @@ was before.
   counts, against a paid ledger in the save - nothing pays twice, and a
   tank saved before the shop is back-paid once for the stages, the trust
   and the hundreds it already had (meals are adopted, not back-paid).
+- **In the terrarium** (pocket-terrarium P2c, `--selftest-terr-pay`): a KEEPER MEAL pays SD_MEAL (1) per lizard, once
+  per SD_MEAL_GAP_S (300 s) of its awake time - the fish's rule - when it catches a cricket the keeper's feed gesture
+  dropped, or takes a worm from the mealworm dish the keeper filled; the tank's own AUTO CRICKETS pay nothing. A CLEAN
+  SHED pays SD_SHED_CLEAN (5) when it comes off clean without ever having stuck (the keeper kept the humid hide damp in
+  time); a stuck shed cleared by a damp stay or the mister's soak counts as a clean shed but pays nothing. A growth shed
+  that comes off clean pays SD_SHED_CLEAN and its new stage's SD_STAGE_* on top. Stages and full trust pay as a fish's.
+  The shop, its items and the HOW TO EARN lines for the terrarium are P5's.
 - **A colony** is a connected patch of film whose last cell went under the
   keeper's wipe; the grass counts px of frond actually cut, 24 px to the
   tank's inch (PX_PER_CM = 24 / 2.54). The shop's line reads "+25  250 CM OF

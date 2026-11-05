@@ -5,6 +5,7 @@
 #include "gift.h"
 #include "passport.h"
 #include "pt_util.h"
+#include "version.h"   /* PT_NET */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,7 +57,9 @@ static uint32_t slot_off(int k) { return (uint32_t)k * SHELF_SLOT_SIZE; }
 static const char *const TANK_BLOBS[3] = { COLL_NVS_KEY, KIN_NVS_KEY, GIFT_NVS_KEY };
 _Static_assert(EXTRA_HDR + 3 * 10 + COLL_BLOB_MAX + KIN_BLOB_MAX + GIFT_BLOB_MAX <= SHELF_EXTRA_MAX, "a tank's own blobs, all full, must fit its slot");
 static size_t extras_gather(uint8_t *x) {         /* the glass's, for its slot */
+#if PT_NET
     collection_flush();                           /* (the time its visitors spent here since the last save) */
+#endif
     size_t off = EXTRA_HDR; int n = 0;
     for (int k = 0; k < 3; k++) {
         size_t got = 0;
@@ -443,11 +446,13 @@ bool shelf_take_carry(void *buf, size_t len) {
     return ok;
 }
 float shelf_lived_h(void) { return s_lived_h; }
+#if PT_NET   /* (the name on its fish's passports: the networked bin's, version.h PT_NET) */
 void shelf_keeper_name(char *out) {
     unsigned n; char more;
     if (!s_now.name[0] || !strcmp(s_now.name, "MY TANK") || sscanf(s_now.name, "TANK %u%c", &n, &more) == 1) { out[0] = 0; return; }
     passport_clean_tank_name(out, s_now.name);
 }
+#endif
 
 /* ---- THE VISITOR BOOK (shelf.h) ---- */
 static uint32_t book_crc(const uint8_t *sec, size_t len) { return ~crc_run(crc_run(0xffffffffu, sec, 28), sec + SHELF_BOOK_HDR, len); }

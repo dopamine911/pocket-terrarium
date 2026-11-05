@@ -98,14 +98,19 @@
 #include "collection.h"
 #include "gift.h"
 #include "touch_gate.h"
+#include "sim_tmp.h"   /* the run's scratch directory: every save, shelf and frame of a selftest is in it (P2c) */
+#if PT_NET   /* the networked bin's (version.h PT_NET; sim/Makefile NET=1): selftest_link.c, selftest_coll.c, net_port_sim.c */
 int selftest_link(void);   /* selftest_link.c: the tank link engine under a hostile radio */
 int selftest_doors(void);  /* selftest_link.c: two real tanks, fish through the doors */
 int selftest_fry_cap(void);   /* selftest_link.c: a cross-tank fry never takes a tank past POP_CAP (the home holds its place) */
+#endif
 #include "boot_show.h"
 #include "advanced.h"
+#if PT_NET
 int selftest_give(void);   /* selftest_link.c: fish handed over for good (phase 6), crashes anywhere */
 int selftest_coll_pages(void);          /* selftest_coll.c: the visitor collection's pages (0.4) */
 int coll_shot(const char *prefix);      /* selftest_coll.c: --coll-shot, the paged look */
+#endif
 int selftest_packs(void);               /* selftest_packs.c (pocket-terrarium P2a): every species and habitat pack, and the pairs a tank can hold */
 int selftest_heat(void);                /* ... the heat field and the body's heat */
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
@@ -115,10 +120,18 @@ int selftest_walk(void);                /* selftest_walk.c (P2b, P2c): the lizar
                                            board; a path changed only at a ramp's end; the ramps climbed, the slope's pace and pitch; turns, stops, paces */
 int selftest_goals(void);               /* ... each of the seven goals reaches its place on the ground (bask up on the high rock, the hide by its need
                                            down from any rock), every place from every path, the night */
+int selftest_crickets(void);            /* ... live prey: the feed gesture, landing on the first top under the drop (every 3 px, all boards), off
+                                           a rock, the hop, the flight, cover, uneaten and the night; AUTO CRICKETS lit only; the strike's
+                                           misses; a starving lizard's moving hunt in a bound; one meal a catch; the mealworm dish */
+int selftest_gestures(void);            /* ... THE HAND (resting on the ground nearest the finger, the approach, trust), THE RAP (stress,
+                                           trust, the dash for cover and out), a tap on a lizard along its body, the tools own the glass */
+int selftest_terr_pay(void);            /* ... the terrarium's sand dollars: keeper meals (crickets, the dish) and clean sheds */
 int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper; the
                                            share above the floor and the zone rows */
+#if PT_NET
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
+#endif
 
 static tank_t tank;
 
@@ -407,8 +420,8 @@ static int selftest_pop(void) {
     setenv("POCKET_TANK_SAVE", "/dev/null/pocket-tank-selftest.sav", 1);
     tank_init(&tank, 98);
     if (progression_save(&tank)) { printf("FAIL: an unwritable save reported success\n"); return 1; }
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest/nested/tank.sav", 1);   /* also checks parent creation */
-    char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f /tmp/pocket-tank-selftest/nested/tank.sav"); (void)system(cmd);
+    const char *cmd = sim_tmp("pocket-tank-selftest/nested/tank.sav");   /* also checks parent creation */
+    setenv("POCKET_TANK_SAVE", cmd, 1); remove(cmd);
     tank_init(&tank, 99);
     progression_boot(&tank);                      /* no save -> new random pair */
     print_roster(&tank);
@@ -879,7 +892,7 @@ static int selftest_pop(void) {
         printf("  notices wait for the welcome: %d held through it, up %d frames after DONE; a covered one steps aside and returns quietly; a tap in the first %.0f s is spent\n", held, up_at, (double)NOTICE_HOLD_S);
     }
     if (selftest_spawn()) return 1;
-    (void)system(cmd);                            /* leave no test save behind */
+    remove(cmd);                                  /* leave no test save behind */
     return 0;
 }
 
@@ -958,7 +971,7 @@ static bool away_finite(const tank_t *t) {
     return isfinite(t->coral_growth) && isfinite(t->cluster_growth) && isfinite(t->clock);
 }
 static void away_stage(void) {
-    (void)system("rm -f /tmp/pocket-tank-shelf-away.sav");   /* a fresh tank each run, not the last run's save */
+    remove(sim_tmp("pocket-tank-shelf-away.sav"));   /* a fresh tank each run, not the last run's save */
     tank_init(&tank, 777);
     progression_boot(&tank);
     while (tank.n_fish < 5) tank_add_fish(&tank, 0, 1);
@@ -993,8 +1006,8 @@ static int away_check(const char *when, int n0) {
     return 0;
 }
 static int selftest_shelf_away(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-shelf-away.sav", 1);
-    (void)system("rm -f /tmp/pocket-tank-shelf-away.sav");
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-shelf-away.sav"), 1);
+    remove(sim_tmp("pocket-tank-shelf-away.sav"));
     static const struct { const char *name; double h; } SPAN[] = { { "1 day", 24 }, { "1 week", 168 }, { "3 months", 91 * 24 }, { "1 year", 365 * 24 } };
     int fails = 0;
     for (int uncapped = 0; uncapped < 2; uncapped++) {
@@ -1039,8 +1052,8 @@ static int selftest_shelf_away(void) {
 #include "shelf.h"
 int  shelf_port_sim_cut(int writes);
 void sim_clock_shift(int64_t s);
-/* the shelf selftests' scratch board: $PT_SHELF_DIR (two jobs on one Mac never share one), else /tmp/pt-shelf */
-const char *sim_shelf_dir(void) { const char *d = getenv("PT_SHELF_DIR"); return d && d[0] ? d : "/tmp/pt-shelf"; }
+/* the shelf selftests' scratch board: $PT_SHELF_DIR, else pt-shelf in the run's own directory (sim_tmp.h: two jobs at once never share one) */
+const char *sim_shelf_dir(void) { const char *d = getenv("PT_SHELF_DIR"); return d && d[0] ? d : sim_tmp("pt-shelf"); }
 static void sim_shelf_board(void) {
     char cmd[700], p[600]; const char *d = sim_shelf_dir();
     snprintf(cmd, sizeof cmd, "rm -rf '%s' && mkdir -p '%s/frame'", d, d); (void)system(cmd);
@@ -1309,7 +1322,7 @@ static int selftest_shelf_safe(void) {
  * three SELLs (the fish card's, the shop's on a shelved piece, the placement page's): nothing bought, sold or acted on,
  * since a spent tap restarts the wait (99a7c70: tap 4, 600 ms after the opening tap, bought). */
 static int selftest_double_tap(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-dtap.sav", 1); remove("/tmp/pocket-tank-selftest-dtap.sav");
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-dtap.sav"), 1); remove(sim_tmp("pocket-tank-selftest-dtap.sav"));
     tank_init(&tank, 4242); progression_boot(&tank); progression_setup_done(&tank);
     tank.trickle_off = true;
     uint32_t every = 0; for (int i = 0; i < SD_ITEM_COUNT; i++) every |= SD_ITEMS[i].bit;
@@ -1574,13 +1587,17 @@ static int selftest_shelf(void) {
     tank.sd_balance = 900; tank_light_choice_set(&tank, 3); tank_screen_set(&tank, true);
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_SNAIL;   /* (pieces for REMOVE to value below - the snail is no piece) */
     progression_save(&tank);
+#if PT_NET
     collection_reset(); kin_learn(0xc0ffeeu, "kelp", 0xffd166, 0.3f, 0.6f);   /* (a visitor's name in tank 1's KIN book) */
+#endif
     int b = shelf_new(0, clock_port_now_unix());
     if (b != 0 || strcmp(shelf_get(0)->name, "TANK 2") || shelf_get(0)->pos != 1 || shelf_get(0)->save_len) SFAIL("new tank: index %d '%s' at %d, %u bytes", b, shelf_get(0)->name, shelf_get(0)->pos, shelf_get(0)->save_len);
     if (!shelf_put_up(0)) SFAIL("swap to the new tank");
     int lived = shelf_reboot();
     if (lived >= 0) SFAIL("the new tank was not fresh (lived %d h)", lived);
+#if PT_NET
     if (kin_find(0xc0ffeeu)) SFAIL("the new tank knew tank 1's visitor kelp (the KIN book stayed with the board)");
+#endif
     if (shelf_now()->id != 2 || shelf_now()->pos != 1) SFAIL("tank 2 not on the glass at its place");
     if (tank.sd_balance != 900 || !tank.light_auto || (TANK_WORN && !tank.screen_turned)) SFAIL("carry: %d SD, auto %d, turned %d", (int)tank.sd_balance, tank.light_auto, tank.screen_turned);   /* (SCREEN is the watch's alone) */
     int a = shelf_index_of(1);
@@ -1602,12 +1619,14 @@ static int selftest_shelf(void) {
     if (!shelf_rename(a, " NIGHT \n REEF ") || strcmp(shelf_get(a)->name, "NIGHT\nREEF")) SFAIL("two lines: '%s'", shelf_get(a)->name);
     if (!shelf_rename(a, "\nREEF") || strcmp(shelf_get(a)->name, "REEF")) SFAIL("line 2 alone: '%s'", shelf_get(a)->name);
     shelf_rename(a, "MY TANK"); shelf_rename(-1, "TANK 2");
+#if PT_NET
     {   /* the name a tank's fish carry next door (passport v2): a keeper's name on one line, never a default one */
         char kn[PASSPORT_TANK_NAME];
         shelf_rename(-1, "MY TANK"); shelf_keeper_name(kn); if (kn[0]) SFAIL("MY TANK travels as '%s'", kn);
         shelf_rename(-1, "  "); shelf_keeper_name(kn); if (kn[0]) SFAIL("a default %s travels as '%s'", shelf_now()->name, kn);
         shelf_rename(-1, "NIGHT\nREEF"); shelf_keeper_name(kn); if (strcmp(kn, "NIGHT REEF")) SFAIL("NIGHT/REEF travels as '%s'", kn);
         shelf_rename(-1, "TANK 2"); }
+#endif
     printf("selftest-shelf: RENAME - shelved and on the glass, trimmed, kept over a restart, an empty name its place's, the snapshot kept\n");
     /* 2. the wallet spent here is the wallet there; time on the shelf */
     tank.sd_balance = 600; while (tank.n_fish < 3) tank_add_fish(&tank, 0, 1); progression_save(&tank);
@@ -1617,7 +1636,9 @@ static int selftest_shelf(void) {
     lived = shelf_reboot();
     if (lived > 0) SFAIL("PAUSED 3 days lived %d h, want 0", lived);   /* (-1: the wake had no time to live - the save loaded, see the fish below) */
     if (tank.n_fish != 5 || tank.sd_balance != 600) SFAIL("tank 1 back with %d fish, %d SD (want 5, 600)", tank.n_fish, (int)tank.sd_balance);
+#if PT_NET
     { const kin_t *k = kin_find(0xc0ffeeu); if (!k || strcmp(k->name, "kelp")) SFAIL("tank 1 came back without its KIN book (kelp %s)", k ? k->name : "missing"); }
+#endif
     sim_clock_shift(2 * 86400);                      /* tank 2 has been DORMANT (the default) 2 days */
     if (!shelf_put_up(shelf_index_of(2))) SFAIL("swap to 2");
     lived = shelf_reboot();
@@ -1740,8 +1761,8 @@ static int selftest_shelf(void) {
 }
 
 static int selftest_sleep(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest.sav", 1);
-    char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f /tmp/pocket-tank-selftest.sav"); (void)system(cmd);
+    const char *cmd = sim_tmp("pocket-tank-selftest.sav");
+    setenv("POCKET_TANK_SAVE", cmd, 1); remove(cmd);
     tank_init(&tank, 4242);
     progression_boot(&tank);
     for (int i = 0; i < 600; i++) { tank_tick(&tank, 1.0f / 60.0f, advisor_rules); progression_tick(&tank, 1.0f / 60.0f); }
@@ -2098,7 +2119,7 @@ static int selftest_sleep(void) {
     printf("selftest-sleep: dash %.0f px/s at the drop; fed and calmed %.1f s after pellets\n",
            dash_speed, fed_at / 60.0f);
     if (dash_speed < 80) { printf("FAIL: no feeding-frenzy dash (%.0f px/s)\n", dash_speed); return 1; }
-    (void)system(cmd);
+    remove(cmd);
     return night_shift_check();
 }
 
@@ -2143,14 +2164,14 @@ static int selftest_genes(void) {
       if (k->uid != kid || k->parent_uid[0] != mom) GFAIL("the sale lost the fry's IDs (%08x/%08x)", k->uid, k->parent_uid[0]); }
     /* a pre-0.4 save: the secrets and IDs made up at its load are saved at the
        next window (30 s), so a reboot after that finds the same ones */
-    { const char *sav = "/tmp/pocket-tank-selftest-genes.sav";
+    { const char *sav = sim_tmp("pocket-tank-selftest-genes.sav");
       setenv("POCKET_TANK_SAVE", sav, 1);
       FILE *in = fopen("testdata/saves/2026-10-02-1688-urchin.sav", "rb"); if (!in) in = fopen("sim/testdata/saves/2026-10-02-1688-urchin.sav", "rb");
       if (!in) GFAIL("no 1688 fixture");
       static uint8_t buf[4096]; size_t len = fread(buf, 1, sizeof buf, in); fclose(in);
-      setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-genes-scratch.sav", 1);
+      setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-genes-scratch.sav"), 1);
       progression_save(&tank);                         /* the save clock back to 0, as a freshly booted device's */
-      remove("/tmp/pocket-tank-selftest-genes-scratch.sav");
+      remove(sim_tmp("pocket-tank-selftest-genes-scratch.sav"));
       setenv("POCKET_TANK_SAVE", sav, 1);
       FILE *out = fopen(sav, "wb"); fwrite(buf, 1, len, out); fclose(out);
       tank_init(&tank, 21); progression_wake(&tank, 0);
@@ -2171,14 +2192,14 @@ static int selftest_genes(void) {
       }
       if (r[0] != r[1]) GFAIL("the genes moved the tank's rng (%08x vs %08x)", r[0], r[1]); }
     /* the badge (0.4): a mutated fry earns the tank its "first mutation" on the next tick */
-    { setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-genes.sav", 1);   /* never the real save */
-      remove("/tmp/pocket-tank-selftest-genes.sav");
+    { setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-genes.sav"), 1);   /* never the real save */
+      remove(sim_tmp("pocket-tank-selftest-genes.sav"));
       tank_init(&tank, 3); progression_boot(&tank);   /* no save: a new pair (the tick needs a booted progression) */
       progression_tick(&tank, 0.1f);
       if (tank.tank_ms_bits & TMS_FIRST_MUTATION) GFAIL("the mutation badge with no mutation");
       tank.fish[1].mutated = GENE_FINS + 1; progression_tick(&tank, 0.1f);
       if (!(tank.tank_ms_bits & TMS_FIRST_MUTATION)) GFAIL("a mutated fry did not earn the badge");
-      remove("/tmp/pocket-tank-selftest-genes.sav"); }
+      remove(sim_tmp("pocket-tank-selftest-genes.sav")); }
     /* the director's `arrive mutant` (0.4): the flag makes the next fry a
        mutation whatever the odds, and is spent on it */
     { tank_init(&tank, 5); tank_new_population(&tank);
@@ -2245,9 +2266,9 @@ static int selftest_genes(void) {
  * tail reading as the defaults - and again after a save and a reload. */
 #ifndef _MSC_VER
 #include <dirent.h>
-static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096 };
-#define SAVE_NOW 2096                    /* today's sizeof(save_t): the packs, pocket-terrarium P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
-#define SAVE_FIELDS 2096                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
+static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096, 2104 };
+#define SAVE_NOW 2104                    /* today's sizeof(save_t): the mealworm dish, pocket-terrarium P2c (2096; 2097..2103 padding); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
+#define SAVE_FIELDS 2097                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
 #define SAVE_032 1688                    /* 0.3.2's save: an older build's head */
 static uint32_t sv_u32(const uint8_t *e, size_t off) { uint32_t v; memcpy(&v, e + off, 4); return v; }
 static float    sv_f32(const uint8_t *e, size_t off) { float v; memcpy(&v, e + off, 4); return v; }
@@ -2432,7 +2453,7 @@ static int saves_load(const char *what, const uint8_t *bytes, size_t len, const 
 }
 
 static int selftest_saves(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-saves.sav", 1);   /* never touch the real save */
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-saves.sav"), 1);   /* never touch the real save */
     if (strcmp(SAVE_NVS_NS, "terr") || strcmp(SAVE_NVS_KEY, "save")) {   /* (pocket-terrarium: never pocket-tank's "tank") */
         printf("FAIL: the device's save moved to %s/%s - every keeper's terrarium stays behind in terr/save\n", SAVE_NVS_NS, SAVE_NVS_KEY); return 1; }
     const char *dir = "testdata/saves";
@@ -2553,6 +2574,7 @@ static int selftest_saves(void) {
         tank_init(&tank, 8); progression_wake(&tank, 0);
         if (!progression_setup_pending() || tank.n_fish != 2) { printf("FAIL: a save with another magic loaded\n"); return 1; }
     }
+#if PT_NET
     /* the tank link (0.4): a fish next door when the tank was saved - after the
        reboot it is away (not drawn), and comes home from bubbles 10 s in */
     {
@@ -2571,6 +2593,7 @@ static int selftest_saves(void) {
         if (tank.fish[i].away) { printf("FAIL: home again, it was saved as away\n"); return 1; }
         printf("selftest-saves: a fish next door at the save: away after the reboot, home from bubbles 10 s in, saved home\n");
     }
+#endif
     /* the packs tail (pocket-terrarium P2a): the pair, each animal's heat and shed and the hides' moisture come back as saved -
        by print, like the genes (a fish sold under an older build moved the rest down: theirs follow them); a pair that does not
        fit, or an id this build lacks, loads as the default pair - and so does another world's (P2b: a terrarium's save in the
@@ -2635,6 +2658,35 @@ static int selftest_saves(void) {
         printf("selftest-saves: the packs tail: %s in the %s, three animals' heat and shed%s come back as saved, by print after a sale; an unknown pair loads as the defaults, "
                "and another world's (%s in the %s) too, its animals fresh\n", species_get(own_p)->name, habitat_get(own_h)->name, humid >= 0 ? " and the humid hide's moisture" : "",
                species_get(other_p)->name, habitat_get(other_h)->name);
+    }
+    /* the dish (pocket-terrarium P2c, save_t.dish_worms at 2096, appended past P2a's tail): the terrarium's worms come back as
+       saved, more than a full dish loads full, P2a's own 2096-byte save (no dish byte) loads an empty dish, and a pair this bin
+       does not hold loads none (the defaults, as the hides' moisture); a habitat without a dish (the aquarium's freshwater)
+       writes 0 there whatever the tank holds */
+    {
+        const uint8_t other_h = PT_TERRARIUM ? HABITAT_FRESHWATER : HABITAT_DESERT, other_p = PT_TERRARIUM ? SPECIES_FISH : SPECIES_GECKO;
+        remove(getenv("POCKET_TANK_SAVE"));
+        tank_init(&tank, 28); progression_wake(&tank, 0);
+        const bool dish = tank_dish_here(&tank);
+        if (dish != PT_TERRARIUM) { printf("FAIL: the %s's %s %s a mealworm dish\n", PT_WORLD_NAME, tank_habitat(&tank)->name, dish ? "has" : "lacks"); return 1; }
+        const int want = dish ? 4 : 0;
+        tank.dish_worms = 4; progression_save(&tank);
+        static uint8_t dk[4096]; long l = saves_read(dk, sizeof dk);
+        if (l != SAVE_NOW || dk[2096] != want) { printf("FAIL: the dish: %ld bytes saved, byte 2096 is %d (want %d)\n", l, dk[2096], want); return 1; }
+        tank_init(&tank, 29); progression_wake(&tank, 0);
+        if (tank.dish_worms != want) { printf("FAIL: the dish came back with %d worms, want %d\n", tank.dish_worms, want); return 1; }
+        static const struct { const char *what; uint8_t worms; size_t len; bool other; int want; } DC[3] = {
+            { "more than a full dish", 200, SAVE_NOW, false, DISH_WORMS }, { "P2a's save, before the dish", 3, 2096, false, 0 }, { "another world's pair", 3, SAVE_NOW, true, 0 } };
+        for (int c = 0; c < 3; c++) {
+            dk[2096] = DC[c].worms;
+            if (DC[c].other) { dk[1957] = other_p; dk[1958] = other_h; }
+            FILE *wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(dk, 1, DC[c].len, wf); fclose(wf);
+            tank_init(&tank, 30); progression_wake(&tank, 0);
+            const int w = dish ? DC[c].want : 0;
+            if (tank.n_fish < 2 || tank.dish_worms != w) { printf("FAIL: the dish, %s: %d fish, %d worms (want %d)\n", DC[c].what, tank.n_fish, tank.dish_worms, w); return 1; }
+        }
+        printf("selftest-saves: the dish at 2096: %s\n", dish ? "its worms come back as saved, more than a full dish loads full; P2a's 2096-byte save and another world's pair load an empty dish"
+                                                          : "the freshwater has none - 0 written whatever the tank holds, none loaded");
     }
     remove(getenv("POCKET_TANK_SAVE"));
     for (int k = 0; k < nf; k++) free(names[k]);
@@ -2804,11 +2856,14 @@ static int selftest_advanced(void) {
 }
 
 static int selftest_update(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-update.sav", 1);
-    setenv("POCKET_TANK_WIFI", "/tmp/pocket-tank-selftest-wifi.txt", 1);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-update.sav"), 1);
+#if PT_NET
+    setenv("POCKET_TANK_WIFI", sim_tmp("pocket-tank-selftest-wifi.txt"), 1);
     unsetenv("POCKET_TANK_FAKE_UPDATE"); net_port_creds_forget();
     static uint16_t fb[TANK_W * TANK_H];
+#endif
     tank_init(&tank, 5); progression_reset(&tank, 5);
+#if PT_NET
     char ssid[NET_SSID_MAX + 1], pass[NET_PASS_MAX + 1];
     /* page coordinates in (update.h's layout): a tap, the element under a point, a keyboard cell's center */
     #define TAP(X, Y) (update_touch(PG_X(X), PG_Y(Y), true), update_touch(PG_X(X), PG_Y(Y), false))
@@ -2820,6 +2875,7 @@ static int selftest_update(void) {
     const int lx = PAGE_W / 4, ax = UPD_ARROW_X + 6;                    /* on a network's name; the list's page arrows */
     enum { K_MORE = 14, K_DEL, K_SPACE, K_CAPS, K_MODE, K_BACK, K_JOIN };
     #define ADV(secs) do { net_sim_advance(secs); update_tick(secs); } while (0)
+#endif
     #define EXPECT(cond, ...) do { if (!(cond)) { printf("FAIL: " __VA_ARGS__); printf("\n"); return 1; } } while (0)
     /* the settings page's UPDATES button, and the UPDATES page's taps */
     { int v = 0, r;
@@ -2831,6 +2887,7 @@ static int selftest_update(void) {
       /* LINK (0.4, the tank link): the settings button, and link mode's holds */
       render_settings_touch(&tank, PG_X(SET_LINK_X + SET_LINK_W / 2), PG_Y(SET_LINK_Y + 15), true, &v); r = render_settings_touch(&tank, PG_X(SET_LINK_X + SET_LINK_W / 2), PG_Y(SET_LINK_Y + 15), false, &v);
       EXPECT(r == (PT_NET ? SET_TAP_LINK : SET_TAP_NONE), "settings: the LINK button%s -> %d", PT_NET ? "" : "'s box (none drawn: PT_NET 0)", r);
+#if PT_NET
       { link_view_t lv; memset(&lv, 0, sizeof lv); float lx, ly, dx, dy, wx = TANK_W / 2.0f, wy = TANK_BOT * 0.8f; int got = 0, fired = 0;
         render_link_leave();
         render_link_where(LINK_RIGHT, &lx, &ly);
@@ -2864,7 +2921,10 @@ static int selftest_update(void) {
       EXPECT(updates_page_tap(fx, fy) == UPD_TAP_FORGET, "updates page: FORGET with a network");
       updates_page_touch(fx, fy, true); r = updates_page_touch(fx, fy, false);
       EXPECT(r == UPD_TAP_FORGET && !net_port_creds_get(ssid, pass), "updates page: FORGET did not drop the store");
-      render_updates_page(fb, TANK_W); }
+      render_updates_page(fb, TANK_W);
+#endif
+    }
+#if PT_NET
     /* the wizard, end to end */
     update_begin(50, false);
     EXPECT(update_page() == UPD_PG_BUSY, "no network: not scanning (page %d)", update_page());
@@ -2986,6 +3046,9 @@ static int selftest_update(void) {
     { char all[96]; for (int i = 0; i < 95; i++) all[i] = (char)(32 + i); all[95] = 0;
       update_text(fb, TANK_W, 0, 0, 1, 0xffffff, all);
       EXPECT(update_text_w("abc", 2) == render_text_w("ABC", 2), "font widths differ"); }
+#else
+    printf("selftest-update: no updates or tank link in this build (version.h PT_NET): the settings page's UPDATES and LINK boxes are dead\n");
+#endif
     #undef TAP
     #undef HIT
     #undef KEY
@@ -2996,8 +3059,8 @@ static int selftest_update(void) {
     return 0;
 }
 static int selftest_tend(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest.sav", 1);
-    char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f /tmp/pocket-tank-selftest.sav"); (void)system(cmd);
+    const char *cmd = sim_tmp("pocket-tank-selftest.sav");
+    setenv("POCKET_TANK_SAVE", cmd, 1); remove(cmd);
     tank_init(&tank, 777);
     progression_boot(&tank);
     int film0 = 0;
@@ -3541,7 +3604,7 @@ static int selftest_tend(void) {
     if ((f->ms_bits & MS_FIRST_HOLD_APPROACH) || tank.hold_approaches != holds_before) {
         printf("FAIL: a fish that never approached was credited with a hold-approach\n"); return 1;
     }
-    (void)system(cmd);
+    remove(cmd);
     return 0;
 }
 
@@ -3554,7 +3617,12 @@ static uint16_t canvas_buf[TANK_W * TANK_H];
 static uint16_t scene_buf[TANK_W * TANK_H];
 static uint8_t  vig_buf[TANK_W * TANK_H];     /* vignette LUT, as on the device */
 static uint16_t card_buf[RENDER_CARD_W * RENDER_CARD_H];   /* stats card cache, as on the device */
+#if PT_NET
 static uint16_t give_buf[GIFT_CARD_W * GIFT_CARD_H], gift_buf[GIFT_CARD_W * GIFT_CARD_H];   /* the GIVE modal's and the gift card's bakes, as on the device */
+#define SIM_MODAL_CACHE() render_set_modal_cache(give_buf, gift_buf)
+#else
+#define SIM_MODAL_CACHE() ((void)0)                 /* (no GIVE modal or gift card to bake: version.h PT_NET) */
+#endif
 static uint32_t dirty_buf[RENDER_DIRTY_WORDS];
 static lv_obj_t *canvas;
 static uint32_t last_ms;
@@ -3566,7 +3634,11 @@ static int  selected_fish = -1;      /* click a fish for its stat card */
    prompt has the glass (`page`), nor under a card over the tank - the GIVE modal, a gift offered to us (the 11-02 evening
    sweep: a hold on the modal's buttons opened a piece's page with SELL, called the fish, a swipe wiped) */
 static void sim_tank_gestures(bool down, int x, int y, int px, int py, uint32_t held_ms, bool page, bool *held_page) {
+#if PT_NET
     bool modal = page || render_card_over_tank(&tank);
+#else
+    bool modal = page;
+#endif
     if (down && !modal) tank_touch_drag(&tank, (float)x, (float)y);   /* stroke -> wipe/slash */
     if (down && !modal && !*held_page && tank.tool == TOOL_HAND && held_ms > 700 && abs(x - px) < 24 && abs(y - py) < 24) {
         int it = tank_decor_hit(&tank, (float)px, (float)py);
@@ -3583,7 +3655,9 @@ static bool shop_view = false;       /* the shop (the sand dollar on the milesto
 static bool updates_view = false;    /* the UPDATES page (the settings page's UPDATES button; no radio) */
 static bool update_mode = false;     /* update mode (2026-09-30): what the device runs at boot, before the tank - here the
                                         tank pauses and the pages run over a pretend radio (net_port_sim.c); E enters it */
+#if PT_NET
 static float update_clock;
+#endif
 /* a worn tank (TANK_WORN, the watch, 2026-10-02): the pretend wearer. T puts
  * the watch on the other way around (buttons toward the elbow instead of the
  * hand); the window then shows the glass as that wearer sees it - upside down
@@ -3729,6 +3803,7 @@ static void frame_cb(lv_timer_t *timer) {
     float dt = (now - last_ms) / 1000.0f;
     last_ms = now;
     if (dt > 0.1f) dt = 0.1f;                     /* window drag pause */
+#if PT_NET
     if (update_mode) {                            /* the tank is "rebooting": only the update pages run */
         update_clock += dt;
         net_sim_advance(dt); update_tick(dt);
@@ -3742,6 +3817,7 @@ static void frame_cb(lv_timer_t *timer) {
         lv_obj_invalidate(canvas);
         return;
     }
+#endif
     tank.hold_light = setup_active() || confirm_view;   /* no lights-out mid-name */
     tank.ui_cover = tank.hold_light || milestones_view || settings_view || shop_view || battery_view || updates_view || adv_up();   /* a fry's spawning waits */
     adv_tick(dt);
@@ -3768,7 +3844,9 @@ static void frame_cb(lv_timer_t *timer) {
     if (adv_up()) adv_render(canvas_buf, TANK_W);              /* the ADVANCED page (0.3.9.2) */
     else if (milestones_view) render_milestones(&tank, canvas_buf, TANK_W);
     else if (settings_view) render_settings(&tank, canvas_buf, TANK_W, sim_bright, audio_volume());
+#if PT_NET
     else if (updates_view) render_updates_page(canvas_buf, TANK_W);
+#endif
     else if (shop_view) render_shop(&tank, canvas_buf, TANK_W);
     else {
         render_tank(&tank, canvas_buf, TANK_W);
@@ -3792,7 +3870,9 @@ static void frame_cb(lv_timer_t *timer) {
         } else if (sim_pill_up()) render_battery(canvas_buf, TANK_W, sim_bat_gauge() / 100.0f, sim_bat_state, tank.clock);
         const notice_t *nt = notice_current();
         if (nt) render_notice(&tank, canvas_buf, TANK_W, nt->kind, nt->fish, nt->bit, 1.0f - nt->age / NOTICE_UP_S);
+#if PT_NET
         render_give_modal(&tank, canvas_buf, TANK_W);   /* the GIVE modal (0.4), as the boards draw it */
+#endif
     }
     if (setup_active()) render_setup(&tank, canvas_buf, TANK_W, tank.clock);
     if (confirm_view) render_confirm_reset(canvas_buf, TANK_W, 1.0f - (SDL_GetTicks() - confirm_ms) / (float)CONFIRM_MS);
@@ -3863,7 +3943,7 @@ static int selftest_drift(void) {
         printf("FAIL: model.bin/tokenizer.bin not found under ../model/out/\n");
         return 1;
     }
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-drift.sav", 1);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-drift.sav"), 1);
     tank_init(&tank, 2910);
     progression_fresh(&tank);
     while (tank.n_fish < 5) tank_add_fish(&tank, 0, 1);
@@ -4093,7 +4173,7 @@ static uint16_t *hero_stage(void) {               /* the hero tank staged and dr
     static uint16_t fb[TANK_W * TANK_H], scene[TANK_W * TANK_H];
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     for (int k = 0; k < 90; k++) {                       /* the pose held for the frames the scene draws */
         for (int i = 0; i < n; i++) {
@@ -4158,7 +4238,7 @@ static int fresh_shot(const char *prefix) {
     static uint16_t fb[TANK_W * TANK_H], scene[TANK_W * TANK_H];
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     const float px[2] = { TANK_W * 0.40f, TANK_W * 0.62f }, py[2] = { TANK_H * 0.42f, TANK_H * 0.58f };
     const float ph[2] = { 0.0f, 3.14159f };
@@ -4189,7 +4269,7 @@ extern int g_sim_blob_saves;
 static int selftest_under_card(void) {
     int fails = 0;
     #define UC_FAIL(...) do { printf("FAIL: under-card: " __VA_ARGS__); printf("\n"); fails++; } while (0)
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-under-card/tank.sav", 1);   /* (never the real save) */
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-under-card/tank.sav"), 1);   /* (never the real save) */
     /* a. HOLD TO SELL under the card (2 s held on the button = sold), 60 polls a second */
     {   const float HOLD = 2.0f, DT = 1.0f / 60;
         for (int sc = 0; sc < 3; sc++) {                      /* 0: the card up all along; 1: up at 0.5 s, gone at 1.5 s, held to 3 s; 2: no card */
@@ -4233,6 +4313,7 @@ static int selftest_under_card(void) {
             if (sc == 2 && (presses != 1 || lifts_at < 800 || lifts_at > 800 + 200)) UC_FAIL("b. a chip silent for good: the press lifted at %d ms (silent from 800)", lifts_at);
         }
     }
+#if PT_NET
     /* c. the GIVE modal and a gift card over the live tank: the plant under the finger, a hold 1 s, a swipe */
     static gift_book_t ugb;
     tank_init(&tank, 77); tank_new_population(&tank);
@@ -4321,8 +4402,13 @@ static int selftest_under_card(void) {
     collection_load();                                        /* (the book read back from the flash) */
     if (!kin_find(0xB0000002u) || !kin_find(0xB0000001u)) UC_FAIL("f. the flushed names were not on the flash");
     collection_reset();
+#endif
     if (fails) return 1;
+#if PT_NET
     printf("selftest-under-card: PASS (a press under the gift card never reaches MY TANKS's holds; the watch's rest bridged once; no hold or swipe under the GIVE modal or the card; START OVER closes the modal; keep-two's reason with a gift out; KIN written once a minute and on a save)\n");
+#else
+    printf("selftest-under-card: PASS (a press under a card never reaches MY TANKS's holds; the watch's rest bridged once - the GIVE modal, the gift card and the KIN book are the networked bin's: version.h PT_NET)\n");
+#endif
     return 0;
 }
 /* --selftest-keeper (THE PAGE KEPT, 0.4; Strato 11-01: the keeper page "pretty slow" with four or five fish): the
@@ -4354,17 +4440,17 @@ static int kp_frame(tank_t *t, int what, const char *scene) {
     for (int y = 0; y < TANK_H; y++) for (int x = 0; x < TANK_W; x++)
         if (fb[y * TANK_W + x] != kp_ref[y * TANK_W + x]) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
     if (n) {
-        write_ppm("/tmp/pocket-tank-keeper-kept.ppm", fb); write_ppm("/tmp/pocket-tank-keeper-whole.ppm", kp_ref);
-        KEEP_FAIL("%s, frame %d: %d px differ from the page drawn whole, in x %d..%d y %d..%d (/tmp/pocket-tank-keeper-{kept,whole}.ppm)", scene, kp_frames, n, x0, x1, y0, y1);
+        write_ppm(sim_tmp_keep("keeper-kept.ppm"), fb); write_ppm(sim_tmp_keep("keeper-whole.ppm"), kp_ref);
+        KEEP_FAIL("%s, frame %d: %d px differ from the page drawn whole, in x %d..%d y %d..%d (%s, %s)", scene, kp_frames, n, x0, x1, y0, y1, sim_tmp_keep("keeper-kept.ppm"), sim_tmp_keep("keeper-whole.ppm"));
     }
     return 0;
 }
 static int kp_run(tank_t *t, int n, int what, const char *scene) { for (int i = 0; i < n; i++) if (kp_frame(t, what, scene)) return 1; return 0; }
 static int selftest_keeper(void) {
     static uint16_t scene[TANK_W * TANK_H];
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-keeper.sav", 1);
-    (void)system("rm -f /tmp/pocket-tank-selftest-keeper.sav");
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-keeper.sav"), 1);
+    remove(sim_tmp("pocket-tank-selftest-keeper.sav"));
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     int kept0, whole0, kept, whole, total_kept = 0, total = 0;
     for (int nf = 2; nf <= POP_CAP; nf++) {             /* (every count a keeper's tank can have: it ran to N_FISH_MAX, 6 - one past the cap) */
         tank_init(&tank, 300 + nf);
@@ -4416,6 +4502,7 @@ static int selftest_keeper(void) {
         if (kp_run(&tank, 80, KP_PAGE, sc)) return 1;
         render_milestones_counts(&kept, &whole, NULL);
         if (kept - kept0 < 60) KEEP_FAIL("%s: only %d of 80 frames kept", sc, kept - kept0);
+#if PT_NET
         {   /* the GIVE modal over the card (0.4, 11-02): part of the page while it is up (kept frames too), the page whole as it goes */
             static gift_book_t kgb; memset(&kgb, 0, sizeof kgb); gift_attach(&tank, &kgb);
             tank.door_open[1] = true; kgb.door_peer[1] = 0xf63b8f6bu; kgb.door_badge[1] = 2;
@@ -4447,6 +4534,7 @@ static int selftest_keeper(void) {
             if (kp_run(&tank, 6, KP_PAGE, sc)) return 1;
             tank.door_open[1] = false; gift_attach(&tank, NULL);
         }
+#endif
         render_milestones_leave();
         if (kp_run(&tank, 4, KP_PAGE, sc)) return 1;
         snprintf(sc, sizeof sc, "%d fish, a badge's modal", nf);
@@ -4476,7 +4564,7 @@ static int page_shot(const char *prefix) {
     char path[512];
     tank_init(&tank, 2026); tank_new_population(&tank); tank_ensure_ids(&tank);
     for (int i = 0; i < 2 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_tank(&tank, fb, TANK_W); render_settings(&tank, fb, TANK_W, 60, 100);
     snprintf(path, sizeof path, "%s_settings.ppm", prefix); write_ppm(path, fb);
     render_tank(&tank, fb, TANK_W); render_settings(&tank, fb, TANK_W, 60, 60);     /* both sliders at 60 %: one above the other; then VOLUME OFF */
@@ -4486,6 +4574,7 @@ static int page_shot(const char *prefix) {
     tank.sd_balance = 697;                           /* (a keeper's balance, three digits, on the foot's sand dollar) */
     render_tank(&tank, fb, TANK_W); render_milestones(&tank, fb, TANK_W);
     snprintf(path, sizeof path, "%s_keeper.ppm", prefix); write_ppm(path, fb);
+#if PT_NET
     collection_reset();
     bool ok = true;
     static const uint32_t VC[3][3] = { { 0x6db9ff, 0xffd166, 0xffffff }, { 0xf25b65, 0x38dcc7, 0xffd166 }, { 0x78d67d, 0x9b72ff, 0xffffff } };
@@ -4503,6 +4592,10 @@ static int page_shot(const char *prefix) {
     collection_reset();
     printf("page-shot: %s_{settings,keeper,keeper_more}.ppm (visitors collected: %s)\n", prefix, ok ? "yes" : "NO");
     return ok ? 0 : 1;
+#else
+    printf("page-shot: %s_{settings,keeper}.ppm (no visitors to collect: version.h PT_NET)\n", prefix);
+    return 0;
+#endif
 }
 /* --depth-shot <prefix> (EXPLORATION 10-31, Strato: fish and critters choose to swim in front of, behind or through
  * the grass and the pieces; a piece's depth only orders the pieces). Each frame is built the way the board would:
@@ -4560,7 +4653,7 @@ static int urchin_frond_shot(const char *prefix) {
     tank.sd_unlocks |= SD_ITEM_URCHIN; tank.urchin_x = (x0 + x1) / 2; tank.urchin_dy = 0; tank.urchin_rest = 99;
     if (getenv("PT_URCHIN_X")) tank.urchin_x = (float)atoi(getenv("PT_URCHIN_X"));
     static uint16_t scene[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static uint16_t X[TANK_W * TANK_H], U[TANK_W * TANK_H], N[TANK_W * TANK_H], A[TANK_W * TANK_H], E[TANK_W * TANK_H], D[TANK_W * TANK_H];
     static tank_t base; base = tank;
     #define UFR(tk, out) do { for (int q = 0; q < 3; q++) render_tank((tk), (out), TANK_W); } while (0)
@@ -4646,7 +4739,7 @@ static int selftest_depth(void) {
     f->x = (x0 + x1) / 2; f->y = top + (TANK_BOT - 16 - top) * 0.45f; f->heading = 0.1f; tank_fish_face(f);
     f->speed = f->target_speed = 0; f->hesitate = 0;
     static uint16_t scene[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static uint16_t F[TANK_W * TANK_H], A[TANK_W * TANK_H], G[TANK_W * TANK_H], E[TANK_W * TANK_H], X[TANK_W * TANK_H];
     static tank_t base; base = tank;
     int fails = 0;
@@ -4979,7 +5072,7 @@ static int pumpkin_grass(void) {
     tank_veg_set(&tank, 0, 0.7f); tank_veg_set(&tank, 1, 0.7f); tank_veg_set(&tank, 2, 0.7f);
     tank.night = false; memset(tank.algae, 0, sizeof tank.algae);
     static uint16_t scene[TANK_W * TANK_H], fb[TANK_W * TANK_H], ng[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_loop(bs_alloc64, free, 3u << 20); render_grass_loop_lock(64); render_grass_loop_on(true);
     float bx0, bx1, top; int nf; tank_veg_bed(&tank, 0, &bx0, &bx1, &top, &nf);
     tank.sd_unlocks |= SD_ITEM_PUMPKIN; tank_pumpkin_place(&tank);
@@ -5058,7 +5151,7 @@ static int pumpkin_show(bool show, int px) {
     tank_decor_set(&tank, 0, 45, DECOR_Z_FRONT); tank_decor_set(&tank, 9, 250, DECOR_Z_BACK);
     tank_decor_set(&tank, 3, 420 * TANK_W / 480, DECOR_Z_FRONT); tank_decor_set(&tank, 8, px, DECOR_Z_FRONT); tank_decor_raise(&tank, 8);
     static uint16_t scene[TANK_W * TANK_H], fb[TANK_W * TANK_H], ng[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_loop(bs_alloc64, free, 3u << 20); render_grass_loop_lock(64); render_grass_loop_on(true);
     bool tried = false; float ts = 0;
     for (int fr = 0; fr < 400; fr++) {                 /* the start, as main.c's loading path */
@@ -5119,7 +5212,7 @@ static int selftest_cave(const char *prefix) {
         /* the crab roosting in the shelter, as the stack matrix stages it */
         tank.cr_x = X; tank.cr_y = 0; tank.cr_tilt = 0; tank.cr_facing = 1; tank.cr_timer = 999; tank.cr_find = 0; tank.cr_hide = 0; tank.cr_back = 0; tank.cr_poke = 0; tank.cr_startle_cool = 999;
         tank.cr_mode = CR_ROOST; tank.cr_cave = (int8_t)item; tank.cr_lane_front = false; tank.cr_fidget_kind = CR_FID_NONE;
-        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         render_set_grass_loop(bs_alloc64, free, 8u << 20); render_grass_loop_lock(0); render_grass_loop_on(true);
         for (int k = 0; k < 400 && (!render_grass_loop_n() || render_grass_loop_ready() < render_grass_loop_n()); k++) { render_grass_loop_bake_more(&tank, 4); render_tank(&tank, A, TANK_W); }
         if (render_grass_loop_ready() < render_grass_loop_n()) { printf("FAIL: cave: the loop never came whole\n"); fails++; }
@@ -5263,7 +5356,7 @@ static int selftest_roost(const char *prefix) {
         tank.cr_timer = 1e5f; tank.cr_fidget_kind = CR_FID_NONE; tank.cr_fidget = 0; tank.cr_next_fidget = 1e5f; tank.cr_poke = 0; tank.cr_hide = 0; tank.cr_back = 0; tank.cr_mode_s = 30;
         const int cave = tank.cr_cave, other = cave == 2 ? 9 : 2;
         if (cave < 0) { RFAIL("the frame: no roost"); continue; }
-        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         keep = tank;
         tank = keep; tank.sd_unlocks &= ~SD_ITEM_CRAB; tank.cr_x = -1; render_tank(&tank, B, TANK_W); render_tank(&tank, B, TANK_W);
         tank = keep; tank.sd_shelved |= other == 2 ? SD_ITEM_CASTLE : SD_ITEM_VOLCANO; render_tank(&tank, C, TANK_W); render_tank(&tank, C, TANK_W);
@@ -5296,7 +5389,7 @@ static int selftest_roost(const char *prefix) {
         char what[120]; snprintf(what, sizeof what, "the crab in the %s %s, the %s %s it", sh == 2 ? "castle" : "volcano", z ? "IN FRONT" : "BEHIND", PN[pi], above ? "before" : "behind");
         if (!roost_until(sh, 200)) { printf("FAIL: roost: %s: never roosted\n", what); fails++; continue; }
         tank.cr_timer = 1e5f; tank.cr_fidget_kind = CR_FID_NONE; tank.cr_fidget = 0; tank.cr_next_fidget = 1e5f; tank.cr_poke = 0; tank.cr_hide = 0; tank.cr_back = 0; tank.cr_mode_s = 30;
-        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         keep = tank;
         tank = keep; tank.sd_unlocks &= ~SD_ITEM_CRAB; tank.cr_x = -1; render_tank(&tank, B, TANK_W); render_tank(&tank, B, TANK_W);
         tank = keep; tank.sd_shelved |= PB[pi]; render_tank(&tank, C, TANK_W); render_tank(&tank, C, TANK_W);
@@ -5349,7 +5442,7 @@ static int selftest_front_keep(const char *prefix) {
             else if (item == 9) tank_volcano_place(&tank); else tank_castle_place(&tank);
             const float X = TANK_FLOOR_X(224.0f);
             tank_decor_set(&tank, item, X, DECOR_Z_FRONT);
-            render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+            render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
             g = tank; g.fish[0].x = g.fish[1].x = -400;
             render_tank(&g, N, TANK_W); render_tank(&g, N, TANK_W);
             static uint8_t cov[TANK_W * TANK_H]; int n = 0;                       /* the piece's body: where most of it lies under a fish */
@@ -5427,7 +5520,7 @@ static int shs_stage(int ci, int bed, float ph, float xo, int *frond, uint16_t *
     else tank_decor_set(&tank, 0, TANK_FX1 - 30, DECOR_Z_BACK);                      /* (the plant out of the way) */
     tank.decor_rank[tank_decor_slot(0)] = SHS_C[ci].plant_over ? 2 : 1; tank.decor_rank[tank_decor_slot(item)] = SHS_C[ci].plant_over ? 1 : 2;
     tank_seahorse_place(&tank);
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     tank.sh_hidden = true; render_tank(&tank, fb, TANK_W); render_tank(&tank, fb, TANK_W);
     int n = 0; for (int y = 0; y < TANK_H; y++) for (int x = 0; x < TANK_W; x++) n += render_decor_covers(item, x, y);
     if (n < 400) return -1;
@@ -5524,7 +5617,7 @@ static int square_boot(const char *prefix) {
     tank_decor_set(&tank, 0, px, DECOR_Z_FRONT); tank_decor_set(&tank, 3, cx, DECOR_Z_FRONT); tank_decor_set(&tank, 8, kx, DECOR_Z_FRONT); tank_decor_set(&tank, 9, vx, DECOR_Z_FRONT);
     tank.decor_rank[tank_decor_slot(3)] = 1; tank.decor_rank[tank_decor_slot(0)] = 2; tank.decor_rank[tank_decor_slot(8)] = 3; tank.decor_rank[tank_decor_slot(9)] = 4;
     static uint16_t scene[TANK_W * TANK_H], fb[TANK_W * TANK_H], ng[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_loop(bs_alloc64, free, 3u << 20); render_grass_loop_lock(64); render_grass_loop_on(true);
     bool tried = false; float ts = 0; int frames = 0;
     for (int fr = 0; fr < 600; fr++) {                 /* the start, as main.c's loading path */
@@ -5785,7 +5878,7 @@ static int plant_order(void) {
 static int selftest_bake_order(const char *prefix) {
     static uint16_t S1[TANK_W * TANK_H], S2[TANK_W * TANK_H], fb[TANK_W * TANK_H];
     int fails = 0, checked = 0;
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     for (int up = 3; up <= 4; up++) for (int pz = 0; pz <= 2; pz += 2) for (int uz = pz; uz <= 2; uz += 2) {
         tank_init(&tank, 5); tank_new_population(&tank); tank.n_fish = 0;
         for (int i = 0; i < MAX_FOOD; i++) tank.food[i].alive = false;
@@ -5843,7 +5936,7 @@ static int selftest_footprint(const char *prefix) {
     static uint16_t scene[TANK_W * TANK_H], A[TANK_W * TANK_H], B[NF][TANK_W * TANK_H], Q[TANK_W * TANK_H];
     static uint8_t rim[TANK_W * TANK_H];                                                            /* 1 body, 2 the near rim, 3 the far rim */
     int fails = 0;
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     for (int it = 0; it < 5; it++) {
         const int item = ITEMS[it];
         const uint32_t bit = item == 2 ? SD_ITEM_CASTLE : item == 3 ? SD_ITEM_CORAL : item == 4 ? SD_ITEM_CLUSTER : item == 8 ? SD_ITEM_PUMPKIN : SD_ITEM_VOLCANO;
@@ -5968,7 +6061,7 @@ static int selftest_place(const char *prefix) {
     tank_decor_set(&tank, 3, cox, DECOR_Z_BACK); tank_decor_set(&tank, 9, vox, DECOR_Z_FRONT);
     if (tank_decor_z(&tank, 0) != DECOR_Z_BACK) PL_FAIL("the plant is not BEHIND (its one depth)");
     tank.decor_rank[tank_decor_slot(3)] = 1; tank.decor_rank[tank_decor_slot(0)] = 2; tank.decor_rank[tank_decor_slot(8)] = 3; tank.decor_rank[tank_decor_slot(9)] = 4;
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_loop(bs_alloc64, free, 8u << 20); render_grass_loop_lock(64); render_grass_loop_on(true);
     for (int k = 0; k < 400 && (!render_grass_loop_n() || render_grass_loop_ready() < render_grass_loop_n()); k++) { render_grass_loop_bake_more(&tank, 4); render_tank(&tank, fb, TANK_W); }
     const int nloop = render_grass_loop_n();
@@ -6178,7 +6271,7 @@ static void shelf_stage(int seed, int fish, int seconds) {
 static int shelf_shot(const char *prefix, const char *jelly_ppm) {
     static uint16_t fb[TANK_W * TANK_H], scene[TANK_W * TANK_H], th[5][200 * 200];
     int tw, thh; render_shelf_thumb_size(&tw, &thh);
-    render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     for (int k = 0; k < 4; k++) {
         if (k == 0) shelf_stage(2024, 5, 20);                       /* on the glass: five fish by day */
         if (k == 1) {                                               /* a castle tank */
@@ -6258,7 +6351,9 @@ static int shelf_shot(const char *prefix, const char *jelly_ppm) {
     snprintf(path, sizeof path, "%s_settings.ppm", prefix); write_ppm(path, fb);
     for (int k = 0; k < 3; k++) { render_loading(fb, TANK_W, "SAM'S\nTANK", k * 0.1f, NULL); snprintf(path, sizeof path, "%s_loading_%d.ppm", prefix, k); write_ppm(path, fb); }   /* LOADING (0.3.9.3 ART) */
     render_loading(fb, TANK_W, "SAM'S\nTANK", 0, "WAKING THE TANK"); snprintf(path, sizeof path, "%s_loading_wake.ppm", prefix); write_ppm(path, fb);   /* ... any start but a SWAP IN */
+#if PT_NET
     render_clock_sync(fb, TANK_W, 0); snprintf(path, sizeof path, "%s_loading_clock.ppm", prefix); write_ppm(path, fb);    /* ... and the time check before it */
+#endif
     printf("shelf-shot: %s_{shelf,shelf_full,card,card_paused,library}.ppm (%dx%d, little tanks %dx%d)\n", prefix, TANK_W, TANK_H, tw, thh);
     return 0;
 }
@@ -6300,7 +6395,7 @@ static int clip(const char *prefix, int seconds) {
     static uint16_t fb[TANK_W * TANK_H], scene[TANK_W * TANK_H];
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     char path[512]; int shot = 0;
     for (int k = 0; k < seconds * 60; k++) {
@@ -6346,7 +6441,7 @@ static int fluid(const char *prefix) {
             tank_fish_face(f);
             tank.night = false;
             render_set_scene_cache(scene); render_set_vignette_cache(vig_buf);
-            render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+            render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
             float rate = f->turn_rate * tank_form_turn(f);
             int shot = 0;
             for (int k = 0; (float)k * DT < T_END && shot < frames; k++) {
@@ -6478,7 +6573,7 @@ static int genes_shot(const char *prefix) {
     tank.night = false;
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     int shot = 0;
     for (int k = 0; k < 12 * 60; k++) {
@@ -6725,7 +6820,7 @@ static int pumpkin_fish_shot(const char *prefix) {
     tank_pumpkin_place(&tank);
     for (int i = 0; i < 5 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
     for (int i = 0; i < MAX_FOOD; i++) tank.food[i].alive = false;
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     const float px = TANK_FLOOR_X(90.0f);
     static tank_t base; base = tank;
     static uint16_t fb[TANK_W * TANK_H];
@@ -6790,7 +6885,7 @@ static int pumpkin_fish_hunt(const char *prefix) {
     const float px = getenv("PF_X") ? TANK_FLOOR_X((float)atof(getenv("PF_X"))) : (b0x0 + b0x1) * 0.5f;
     tank_decor_set(&tank, 8, px, getenv("PF_Z") ? atoi(getenv("PF_Z")) : DECOR_Z_FRONT);
     tank_decor_set(&tank, 3, px + 70, DECOR_Z_FRONT);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static uint16_t fb[TANK_W * TANK_H];
     static tank_t snap;
     int frames = 0, checked = 0, mixed = 0, wrote = 0, worst = 0, n_front = 0, n_behind = 0, n_none = 0;
@@ -6880,7 +6975,7 @@ static int dp_run(const char *prefix, float secs, int seed, int vz, bool verbose
     tank_castle_place(&tank); tank_coral_place(&tank); tank_cluster_place(&tank); tank_volcano_place(&tank);
     tank_shrimp_place(&tank, 8);
     if (vz >= 0) tank_decor_set(&tank, 9, tank_decor_x(&tank, 9), vz);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static uint16_t fb[TANK_W * TANK_H];
     static tank_t snap, prev;
     int frames = 0, changes = 0, pops = 0, wrote = 0, worst = 0;
@@ -7018,7 +7113,7 @@ static int selftest_fish_pair(const char *prefix) {
         f->gdepth = f->gdepth_want = f->pdepth = f->pdepth_want = FISH_DEPTH_FRONT;
     }
     static uint16_t scene[TANK_W * TANK_H], X[TANK_W * TANK_H];
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static tank_t base, pb; base = tank;
     int fails = 0, ran = 0; bool sk; g_fp_worst = 0;
     static const int GP[6][2] = { { FISH_DEPTH_FRONT, FISH_DEPTH_FRONT }, { FISH_DEPTH_FRONT, FISH_DEPTH_BEHIND }, { FISH_DEPTH_BEHIND, FISH_DEPTH_FRONT },
@@ -7116,7 +7211,7 @@ static int castle_shot(const char *prefix) {
     const int z = getenv("CS_Z") ? atoi(getenv("CS_Z")) : DECOR_Z_FRONT;
     tank_decor_set(&tank, 2, tank_decor_x(&tank, 2), z);
     for (int b = 0; b < tank_veg_beds(&tank); b++) tank_veg_set(&tank, b, getenv("CS_G") ? (float)atof(getenv("CS_G")) : 0.9f);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     const int cx = (int)tank_decor_x(&tank, 2), fy = (int)DECOR_FY(z);
     const float fx = cx + 39 + (getenv("CS_DX") ? (float)atof(getenv("CS_DX")) : 0), fyy = fy - 118 + (getenv("CS_DY") ? (float)atof(getenv("CS_DY")) : 0);
     static uint16_t fb[TANK_W * TANK_H];
@@ -7170,7 +7265,7 @@ static int selftest_castle_keep(const char *prefix) {
     tank_castle_place(&tank);
     tank_decor_set(&tank, 2, tank_decor_x(&tank, 2), DECOR_Z_FRONT);
     for (int b = 0; b < tank_veg_beds(&tank); b++) tank_veg_set(&tank, b, 0.9f);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     base = tank;
     const int cx = (int)tank_decor_x(&tank, 2), fy = (int)DECOR_FY(DECOR_Z_FRONT);
     static const uint8_t G[3] = { FISH_DEPTH_FRONT, FISH_DEPTH_THROUGH, FISH_DEPTH_BEHIND }, P[2] = { FISH_DEPTH_FRONT, FISH_DEPTH_BEHIND };
@@ -7262,7 +7357,7 @@ static int castle_keep_hunt(const char *prefix) {
     if (getenv("CK_SEAHORSE")) tank_seahorse_place(&tank);
     tank_decor_set(&tank, 2, tank_decor_x(&tank, 2), DECOR_Z_FRONT);
     for (int b = 0; b < tank_veg_beds(&tank); b++) tank_veg_set(&tank, b, 0.9f);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     static uint16_t fb[TANK_W * TANK_H];
     if (!getenv("CK_NOLOOP")) {
         render_set_grass_loop(bs_alloc64, free, 3u << 20); render_grass_loop_lock(0); render_grass_loop_on(true);
@@ -7366,7 +7461,7 @@ static int selftest_hold_emerge(const char *prefix) {
         tank_volcano_place(&tank);
         tank_decor_set(&tank, 9, tank_decor_x(&tank, 9), VZ[v]);
         for (int b = 0; b < tank_veg_beds(&tank); b++) tank_veg_set(&tank, b, 0.7f);
-        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         const float vx = tank_decor_x(&tank, 9), vy = TANK_BOT - 16 - 90;
         const uint8_t hg = VZ[v] == DECOR_Z_FRONT ? FISH_DEPTH_FRONT : FISH_DEPTH_BEHIND;
         for (int i = 0; i < 4; i++) {
@@ -7471,7 +7566,7 @@ static int selftest_seahorse_post(const char *prefix) {
         tank_decor_set(&tank, 2, vx + C[ci].dx, C[ci].cz);
         tank.decor_rank[tank_decor_slot(2)] = C[ci].castle_over ? 2 : 1; tank.decor_rank[tank_decor_slot(9)] = C[ci].castle_over ? 1 : 2;
         tank_seahorse_place(&tank);
-        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         tank.sh_hidden = true; for (int k = 0; k < 2; k++) render_tank(&tank, R0, TANK_W);
         if (!tank_seahorse_post(&tank, C[ci].hold, C[ci].post)) { printf("FAIL: seahorse-post %s: no post\n", C[ci].name); fails++; continue; }
         if (off && C[ci].hold == 2 && C[ci].post == 0) tank.sh_front = tank.sh_front_want = false;   /* (the control: the rear tower's old lane, the back) */
@@ -7536,7 +7631,7 @@ static int pumpkin_shot(const char *prefix) {
     static uint16_t fb[TANK_W * TANK_H];
     render_set_scene_cache(scene_buf);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     char path[512];
     /* the cost first: the same frames with and without, day and night, both depths */
@@ -7678,7 +7773,7 @@ static int volcano_shot(const char *prefix) {
     static uint16_t fb[TANK_W * TANK_H];
     render_set_scene_cache(scene_buf);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     render_set_volcano_style(getenv("PT_VOLCANO_SMOOTH") ? 1 : 0);   /* the smooth rock, for a look (Strato picked the boulders 10-23) */
     const float vx = tank_decor_x(&tank, 9);
@@ -7834,7 +7929,7 @@ static int selftest_grassloop(void) {
     veg_ragged(&tank, 0, 0.7f); veg_ragged(&tank, 1, 0.6f); veg_ragged(&tank, 2, 0.75f);
     tank_seahorse_place(&tank); tank_shrimp_place(&tank, 6);
     for (int i = 0; i < 3 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_loop(gl_alloc64, free, 3u << 20); render_grass_loop_on(true);
     int checked = 0;
     for (int night = 0; night < 2; night++) {
@@ -8134,7 +8229,7 @@ static int selftest_grasspatch(void) {
     for (int i = 0; i < tank.n_fish; i++) { tank.fish[i].x = TANK_FLOOR_X(60 + 70 * i); tank.fish[i].y = TANK_BOT - 70 - 20 * i; tank_fish_face(&tank.fish[i]); }
     for (int i = 0; i < 60; i++) tank_tick(&tank, 1.0f / 12.0f, advisor_rules);
     tank.night = false;
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_clock_us = bench_clock_us;
     static const char *const CASE[] = { "the pumpkin hidden", "the pumpkin shown", "the pumpkin moved", "the volcano sent BEHIND", "the volcano moved BEHIND",
                                         "the coral grown", "the pumpkin and the coral moved, two frames apart", "the sword plant moved", "the sword plant moved again",
@@ -8278,7 +8373,7 @@ static int selftest_grasscache(void) {
     veg_ragged(&tank, 0, 0.7f); veg_ragged(&tank, 1, 0.6f); veg_ragged(&tank, 2, 0.75f);
     tank_seahorse_place(&tank); tank_shrimp_place(&tank, 6);
     for (int i = 0; i < 3 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_set_grass_cache(sg, bgm);
     for (int night = 0; night < 2; night++) {
         tank.night = night;
@@ -8678,7 +8773,7 @@ static int selftest_floor(const char *prefix) {
     for (int i = 0; i < 2 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
     memset(tank.algae, 0, sizeof tank.algae);
     for (int i = 0; i < MAX_FOOD; i++) tank.food[i].alive = false;
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     int shots = 0;
     for (int v = 0; v < 8; v++) {
         bool night = v & 1, front = v & 2, lifted = v & 4;
@@ -8742,7 +8837,7 @@ static int selftest_restore(void) {
     tank_urchin_place(&tank); tank_shrimp_place(&tank, 6); tank_seahorse_place(&tank);
     for (int i = 0; i < 5 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
     tank.sd_balance = 500;
-    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     int cur = 0; bool pending[2] = { false, false }; unsigned ep[2] = { 0, 0 };
     long restored_words = 0, frames = 0; int worst = 0; const char *worst_ev = "";
     for (int frame = 0; frame < 420; frame++) {
@@ -8844,7 +8939,7 @@ static int selftest_model(const char *prefix) {
     if (!notice_current()) MFAIL("the notice went away by itself (it waits for a tap)");
     if (prefix) {
         static uint16_t fb[TANK_W * TANK_H];
-        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         for (int i = 0; i < 120; i++) tank_tick(&tank, dt, advisor_rules);
         render_tank(&tank, fb, TANK_W); render_notice(&tank, fb, TANK_W, NOTICE_MODEL_DAMAGED, -1, 0, 0);
         char path[300]; snprintf(path, sizeof path, "%s_model_notice.ppm", prefix); write_ppm(path, fb);
@@ -8878,8 +8973,8 @@ static float decor_clamped(int item, float x) {          /* where tank_decor_set
 }
 static int selftest_board(const char *prefix) {
 #define BFAIL(...) do { printf("FAIL: selftest-board: "); printf(__VA_ARGS__); printf("\n"); g_sim_hw = NULL; return 1; } while (0)
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-board.sav", 1);
-    setenv("POCKET_TANK_WIFI", "/tmp/pocket-tank-selftest-board-wifi.txt", 1);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-board.sav"), 1);
+    setenv("POCKET_TANK_WIFI", sim_tmp("pocket-tank-selftest-board-wifi.txt"), 1);
     static uint8_t blob[4096]; size_t got = 0;
     const bool is18 = !strcmp(PT_BOARD, "amoled18");
     /* the other world: the watch's for the 1.8, the 1.8's for every other board */
@@ -8939,7 +9034,7 @@ static int selftest_board(const char *prefix) {
     if (!notice_current()) BFAIL("the card went away by itself (it waits for a tap)");
     static uint16_t fb[TANK_W * TANK_H];
     if (prefix) {
-        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+        render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
         for (int i = 0; i < 120; i++) tank_tick(&tank, dt, advisor_rules);
         render_tank(&tank, fb, TANK_W); render_notice(&tank, fb, TANK_W, NOTICE_WRONG_BOARD, -1, 0, 0);
         char path[300]; snprintf(path, sizeof path, "%s_wrong_board.ppm", prefix); write_ppm(path, fb);
@@ -8947,6 +9042,7 @@ static int selftest_board(const char *prefix) {
     }
     for (int i = 0; i < (int)(NOTICE_HOLD_S * 60); i++) notice_tick(&tank, dt, false);
     if (!notice_dismiss() || notice_current()) BFAIL("a tap did not close the card");
+#if PT_NET
     /* (3) CHECK FOR UPDATES: this board's own version, at the same release */
     #define BADV(secs) do { net_sim_advance(secs); update_tick(secs); } while (0)
     #define BTAP(X, Y) (update_touch(PG_X(X), PG_Y(Y), true), update_touch(PG_X(X), PG_Y(Y), false))
@@ -8972,6 +9068,10 @@ static int selftest_board(const char *prefix) {
     BADV(UPD_UP_TO_DATE_S + 1); net_port_off();
     unsetenv("POCKET_TANK_FAKE_UPDATE"); net_port_creds_forget();
     printf("selftest-board: another world loads in proportion, the card waits for a tap, the update offers this board's own\nselftest-board: OK\n");
+#else
+    g_sim_hw = NULL;
+    printf("selftest-board: another world loads in proportion, the card waits for a tap\nselftest-board: OK\n");
+#endif
     return 0;
     #undef FRESH_BLOB
     #undef RELOAD
@@ -9002,7 +9102,7 @@ static int snapshot(const char *prefix, int seconds) {
     char path[512];
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     render_tank(&tank, fb, TANK_W);
     snprintf(path, sizeof path, "%s_tank.ppm", prefix); write_ppm(path, fb);
@@ -9074,6 +9174,7 @@ static int snapshot(const char *prefix, int seconds) {
     }
     render_settings(&tank, fb, TANK_W, 60, 100);                     /* the defaults: the double-tap, AUTO FEED on, the picture free to turn */
     snprintf(path, sizeof path, "%s_settings.ppm", prefix); write_ppm(path, fb);
+#if PT_NET
     /* link mode (0.4, the tank link): its states, as views - no engine here */
     { link_view_t lv; memset(&lv, 0, sizeof lv); lv.badge = 1;
       struct { const char *name; void (*set)(link_view_t *); float hl, hr; } LS[] = {
@@ -9149,6 +9250,7 @@ static int snapshot(const char *prefix, int seconds) {
           snprintf(path, sizeof path, "%s_gift.ppm", prefix); write_ppm(path, fb); gift_attach(&vt, NULL); }
         render_collection_leave(); collection_reset();
     }
+#endif
     tank_light_choice_set(&tank, 5); tank.autofeed_off = true; tank_orient_lock(&tank, true);
     render_settings(&tank, fb, TANK_W, 5, 100);                      /* AUTO after 3 MIN, AUTO FEED off, the way up locked; the slider at its dim end */
     snprintf(path, sizeof path, "%s_settings_auto.ppm", prefix); write_ppm(path, fb);
@@ -9178,8 +9280,9 @@ static int snapshot(const char *prefix, int seconds) {
         render_touch_check(fb, TANK_W, (int)cx, (int)cy, 11.2f, ADV_CHECK_S);
         snprintf(path, sizeof path, "%s_advanced_touch_check.ppm", prefix); write_ppm(path, fb);
     }
+#if PT_NET
     {   /* the UPDATES page and update mode's pages (2026-09-30), over the pretend radio */
-        setenv("POCKET_TANK_WIFI", "/tmp/pocket-tank-snapshot-wifi.txt", 1); net_port_creds_forget();
+        setenv("POCKET_TANK_WIFI", sim_tmp("pocket-tank-snapshot-wifi.txt"), 1); net_port_creds_forget();
         render_updates_page(fb, TANK_W);
         snprintf(path, sizeof path, "%s_updates_nonet.ppm", prefix); write_ppm(path, fb);
         net_port_creds_set("Strato's Wi-Fi", "hunter2!"); render_updates_page(fb, TANK_W);
@@ -9234,6 +9337,7 @@ static int snapshot(const char *prefix, int seconds) {
         render_notice(&tank, fb, TANK_W, NOTICE_UPDATED, -1, 0, 0.8f);
         snprintf(path, sizeof path, "%s_updated_notice.ppm", prefix); write_ppm(path, fb);
     }
+#endif
     /* the shop (2026-09-15): broke, rich, an item's modal, the HOW TO EARN
        modal, then the tank with both purchases in it and the toast */
     render_shop(&tank, fb, TANK_W);
@@ -9776,8 +9880,8 @@ static int crab_race_cluster(const tank_t *base, float *nearest, int *crab_ate) 
     return shoo_k < 0 ? -1 : tank.shrimp_eaten - after;
 }
 static int selftest_shop(void) {
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest.sav", 1);
-    char cmd[600]; snprintf(cmd, sizeof cmd, "rm -f /tmp/pocket-tank-selftest.sav"); (void)system(cmd);
+    const char *cmd = sim_tmp("pocket-tank-selftest.sav");
+    setenv("POCKET_TANK_SAVE", cmd, 1); remove(cmd);
     tank_init(&tank, 4242);
     progression_boot(&tank);
     progression_setup_done(&tank);
@@ -12011,7 +12115,7 @@ static int selftest_shop(void) {
     }
 #undef SHOP_TICK
 #undef SHOP_WANT
-    (void)system(cmd);
+    remove(cmd);
     printf("selftest-shop ok\n");
     return 0;
 }
@@ -12081,7 +12185,7 @@ static int selftest_hunger(void) {
        fall for it) and go about hungry; a starving fish in a lit tank
        loses trust, slowly, to a floor - none in the dark - and the
        keeper's pellets stop the loss. Back ON, the trickle is back. */
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-hunger.sav", 1); remove(getenv("POCKET_TANK_SAVE"));   /* never the real save */
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-hunger.sav"), 1); remove(getenv("POCKET_TANK_SAVE"));   /* never the real save */
     tank_init(&tank, 99); progression_boot(&tank);                                 /* progression runs the begging and the trust: a fresh pair */
     tank.autofeed_off = true;
     for (int k = 0; k < tank.n_fish; k++) tank.fish[k].trust = 6.0f;
@@ -12173,7 +12277,7 @@ static int bench(void) {
     tank.tank_ms_bits = 0x1a7;
     render_set_scene_cache(scene);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     render_clock_us = bench_clock_us;
     for (int b = 0; b < VEG_BEDS; b++) tank_veg_set(&tank, b, VEG_NUB);
@@ -12228,7 +12332,7 @@ static int bench_place(void) {
     const int px = TANK_W * 116 / 480, cx = TANK_W * 420 / 480, kx = TANK_W * 215 / 480, vx = TANK_W * 320 / 480;
     tank_decor_set(&tank, 0, px, DECOR_Z_FRONT); tank_decor_set(&tank, 3, cx, DECOR_Z_FRONT); tank_decor_set(&tank, 8, kx, DECOR_Z_FRONT); tank_decor_set(&tank, 9, vx, DECOR_Z_FRONT);
     tank.decor_rank[tank_decor_slot(3)] = 1; tank.decor_rank[tank_decor_slot(0)] = 2; tank.decor_rank[tank_decor_slot(8)] = 3; tank.decor_rank[tank_decor_slot(9)] = 4;
-    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf); render_set_dirty_mask(dirty_buf);
+    render_set_scene_cache(scene); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
     render_clock_us = bench_clock_us;
     render_set_grass_loop(bs_alloc64, free, 12u << 20); render_grass_loop_lock(64); render_grass_loop_on(true);   /* (room enough: no replan mid-measure) */
     for (int i = 0; i < 60; i++) tank_tick(&tank, 1.0f / 12.0f, advisor_rules);
@@ -12278,8 +12382,8 @@ static int selftest_card(const char *prefix) {
     const float DT = 1.0f / 60.0f;
     static uint16_t fb[TANK_W * TANK_H];
     char path[300];
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-card.sav", 1);
-    (void)system("rm -f /tmp/pocket-tank-selftest-card.sav");
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-card.sav"), 1);
+    remove(sim_tmp("pocket-tank-selftest-card.sav"));
     tank_init(&tank, 77);
     progression_boot(&tank);                                  /* no save: the founding pair */
     progression_setup_done(&tank);
@@ -12503,7 +12607,9 @@ static int selftest_card(const char *prefix) {
  * and lives through it a frame at a time, as the boards do (0.04 s): the clock keeps time; the fish card's SELL and the
  * shop's SELL confirm; the GIVE modal's and the gift card's holds pass; the tail beat runs on unbroken through speed
  * changes; the grass sways; the snail rests and walks; a door visit ends on its own; an ARRIVING note lets go. */
+#if PT_NET
 int selftest_clock_doors(double day0);   /* selftest_link.c: a visit through a door, two tanks at that clock */
+#endif
 #define CK_FAIL(...) do { printf("FAIL (day %d): ", days); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 #define CK_CHECK(...) do { printf("FAIL (day %d): ", days); printf(__VA_ARGS__); printf("\n"); fails++; } while (0)   /* (a failed promise: the rest still run) */
 static void ck_live(float seconds) { for (int n = (int)(seconds / 0.04f + 0.5f); n > 0; n--) tank_tick(&tank, 0.04f, advisor_rules); }
@@ -12511,10 +12617,10 @@ static int selftest_clock(void) {
     static uint16_t fb[TANK_W * TANK_H];
     static const int DAYS[4] = { 3, 6, 12, 30 };
     int fails = 0;
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-clock.sav", 1);
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-clock.sav"), 1);
     for (int d = 0; d < 4; d++) {
         const int days = DAYS[d];
-        (void)system("rm -f /tmp/pocket-tank-selftest-clock.sav");
+        remove(sim_tmp("pocket-tank-selftest-clock.sav"));
         tank_init(&tank, 91 + d); progression_boot(&tank); progression_setup_done(&tank);
         progression_force_arrival(&tank); progression_newborn_done(&tank);
         progression_force_arrival(&tank); progression_newborn_done(&tank);
@@ -12552,6 +12658,7 @@ static int selftest_clock(void) {
         if (r != SHOP_TAP_SELL + 2) CK_CHECK("the shop's SELL never confirmed (tap %d, 0.8 s after arming)", r);
         render_shop_leave();
 
+#if PT_NET
         /* the GIVE modal (one door: CONFIRM) - its hold passes, frame by frame on the glass */
         static gift_book_t G; memset(&G, 0, sizeof G); gift_attach(&tank, &G);
         tank.door_open[LINK_LEFT] = true; G.door_peer[LINK_LEFT] = 0x49439648u; G.door_badge[LINK_LEFT] = 1;
@@ -12584,6 +12691,7 @@ static int selftest_clock(void) {
           for (int n = 0; n < 125 && G.n_arr; n++) { tank_tick(&tank, 0.04f, advisor_rules); tank_link_tick(&tank, NULL); }
           if (G.n_arr) CK_CHECK("an ARRIVING note 2 s from its time still held after 5 s (held %.2f)", G.arriving[0].held); }
         gift_attach(&tank, NULL); tank.door_open[LINK_LEFT] = false;
+#endif
 
         /* the tail beat runs on through speed changes (a fish braking and bursting): no frame jumps it */
         { fish_t *f = &tank.fish[0]; float worst = 0, prev = render_fish_beat(&tank, 0), sp = f->speed;
@@ -12624,10 +12732,12 @@ static int selftest_clock(void) {
           static tank_t back; tank_init(&back, 5); progression_boot(&back);
           if (!(back.sd_unlocks & SD_ITEM_SEAHORSE) || fabs((double)back.sh_s - sh) > 1.0) CK_CHECK("the seahorse's saved time came back %.1f s off", (double)back.sh_s - sh); }
 
+#if PT_NET
         /* a door visit, at this clock, ends on its own (the aquarium's: a lizard never takes a door - tank.h THE WALK) */
         if (!PT_TERRARIUM && selftest_clock_doors(days * 86400.0)) CK_CHECK("a door visit did not end on its own");
-        if (!fails) printf("selftest-clock: day %d - the clock keeps time; SELL (card, shop), GIVE and the gift card's holds pass; ARRIVING lets go; the tail beat is unbroken; the grass sways; the snail rests and walks; wander runs; the seahorse's days count and save%s\n",
-                           days, PT_TERRARIUM ? "" : "; a visit ends");
+#endif
+        if (!fails) printf("selftest-clock: day %d - the clock keeps time; SELL (card, shop)%s pass; %sthe tail beat is unbroken; the grass sways; the snail rests and walks; wander runs; the seahorse's days count and save%s\n",
+                           days, PT_NET ? ", GIVE and the gift card's holds" : " holds", PT_NET ? "ARRIVING lets go; " : "", PT_NET && !PT_TERRARIUM ? "; a visit ends" : "");
     }
     printf("selftest-clock: %s\n", fails ? "FAILED" : "OK");
     return fails ? 1 : 0;
@@ -12638,6 +12748,7 @@ static uint32_t sim_entropy(void) {                    /* the interactive sim's 
     if (f) { if (fread(&v, sizeof v, 1, f) != 1) v = 0; fclose(f); }
     return v ? v : (uint32_t)time(NULL) ^ (uint32_t)getpid() * 2654435761u;
 }
+#if PT_NET
 /* the passport (0.4, the tank link - docs/tank-link-0.4.md, common/passport.h):
  * fish IDs, a round trip that is byte-stable, every damaged byte refused, a
  * later version read by its prefix, hostile values clamped, and 300k fuzzed
@@ -12805,7 +12916,7 @@ static int selftest_passport(void) {
         PCHECK(longest <= 15 && !strcmp(w, "FAR WATERS"), "home waters: the longest %d characters (15 fit beside the badge), none '%s'", longest, w);
         printf("selftest-passport: v2 carries its home tank's name (a v1 has none, a strange one is cleaned); home waters steady, at most %d characters\n", longest); }
     {   /* 7. the collection's record grew (64 -> 76 bytes, the home's name): a keeper's collection saved before still loads */
-        setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-passport.sav", 1);
+        setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-passport.sav"), 1);
         uint8_t blob[6 + 2 * 64]; memset(blob, 0, sizeof blob);
         blob[0] = 0x56; blob[1] = 0x43; blob[2] = 1; blob[3] = 2; blob[4] = 64; blob[5] = 0;   /* "VC", v1, two 64-byte records */
         for (int r = 0; r < 2; r++) { uint8_t *e = blob + 6 + r * 64; e[0] = (uint8_t)(0x11 + r); e[4] = 0x22; memcpy(e + 16, r ? "roly" : "kelp", 4); e[37] = 2; e[41] = 1; e[54] = 3; }
@@ -12821,11 +12932,12 @@ static int selftest_passport(void) {
         int ci = collection_find(0x5151);
         PCHECK(collection_count() == 3 && ci >= 0 && !strcmp(collection_get(ci)->home_name, "SAM'S REEF") && !strcmp(collection_get(0)->name, "kelp"),
                "the collection after a save and a load: %d entries, its home '%s'", collection_count(), ci >= 0 ? collection_get(ci)->home_name : "-");
-        collection_reset(); remove("/tmp/pocket-tank-selftest-passport.sav.visitors");
+        collection_reset(); remove(sim_tmp("pocket-tank-selftest-passport.sav.visitors"));
         printf("selftest-passport: a collection of 64-byte records loads (kelp, roly); a collected fish keeps its home's name over a reload\n"); }
     printf("selftest-passport: %s\n", fails ? "FAILED" : "OK");
     return fails ? 1 : 0;
 }
+#endif
 
 /* --selftest-fry [prefix] (0.3.5): FRY FOR SALE. Nothing before a sale;
  * the first sale earns its badge and puts three fry in the shop's first
@@ -12841,8 +12953,8 @@ static int selftest_fry(const char *prefix) {
     const float DT = 1.0f / 60.0f;
     static uint16_t fb[TANK_W * TANK_H];
     char path[300];
-    setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-selftest-fry.sav", 1);
-    (void)system("rm -f /tmp/pocket-tank-selftest-fry.sav");
+    setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-selftest-fry.sav"), 1);
+    remove(sim_tmp("pocket-tank-selftest-fry.sav"));
     tank_init(&tank, 81); progression_boot(&tank); progression_setup_done(&tank);
     progression_force_arrival(&tank); progression_newborn_done(&tank);
     if (tank.n_fish != 3) FRY_FAIL("the staged tank has %d fish, want 3", tank.n_fish);
@@ -13080,7 +13192,7 @@ static int crab_shot(const char *prefix) {
     static uint16_t fb[TANK_W * TANK_H];
     render_set_scene_cache(scene_buf);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
     char path[512];
     double us[2];
@@ -13179,7 +13291,13 @@ int main(int argc, char **argv) {
     render_set_depth_buf(malloc(render_depth_buf_bytes()));   /* SWIM DEPTH (0.3.9.4): as the boards do */
     progression_cap_hook = cap_breach;
     for (int a = 1; a < argc; a++) if (!strncmp(argv[a], "--selftest", 10) || !strcmp(argv[a], "--square-boot")) g_cap_fatal = true;
+    if (g_cap_fatal) {                           /* a selftest never touches the sim's own tank, shelf or wifi: what it does not name is the run's (sim_tmp.h) */
+        static const char *const ENV[4][2] = { { "POCKET_TANK_SAVE", "tank.sav" }, { "POCKET_TANK_STORAGE", "storage.bin" }, { "POCKET_TANK_FRAME", "frame" }, { "POCKET_TANK_WIFI", "wifi.txt" } };
+        for (int k = 0; k < 4; k++) if (!getenv(ENV[k][0])) setenv(ENV[k][0], sim_tmp(ENV[k][1]), 1);
+    }
+#if PT_NET
     collection_set_more(calloc(1, collection_more_size()));   /* the visitor pages 2..10 (0.4): the boards' PSRAM block */
+#endif
     for (int a = 1; a + 1 < argc; a++) if (strcmp(argv[a], "--hw") == 0) g_sim_hw = argv[a + 1];   /* the board it pretends to be (0.3.9.3) */
     if (getenv("PT_VEG_STEP")) render_set_veg_step(atoi(getenv("PT_VEG_STEP")));   /* the grass in row pairs (2026-10-24) */
     if (getenv("PT_GRASS_CACHE")) { static uint16_t sg[TANK_W * TANK_H]; static uint32_t bgm[RENDER_DIRTY_WORDS];   /* the grass cache (2026-10-24): its period in ms */
@@ -13190,8 +13308,10 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--hero") == 0 && a + 1 < argc) return hero_shot(argv[a + 1]);
         if (strcmp(argv[a], "--fresh-shot") == 0 && a + 1 < argc) return fresh_shot(argv[a + 1]);
         if (strcmp(argv[a], "--page-shot") == 0 && a + 1 < argc) return page_shot(argv[a + 1]);
+#if PT_NET
         if (strcmp(argv[a], "--coll-shot") == 0 && a + 1 < argc) return coll_shot(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-coll-pages") == 0) return selftest_coll_pages();
+#endif
         if (strcmp(argv[a], "--selftest-packs") == 0) return selftest_packs();
         if (strcmp(argv[a], "--selftest-heat") == 0) return selftest_heat();
         if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
@@ -13199,6 +13319,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-l1-encode") == 0) return selftest_l1_encode();
         if (strcmp(argv[a], "--selftest-walk") == 0) return selftest_walk();
         if (strcmp(argv[a], "--selftest-goals") == 0) return selftest_goals();
+        if (strcmp(argv[a], "--selftest-crickets") == 0) return selftest_crickets();
+        if (strcmp(argv[a], "--selftest-gestures") == 0) return selftest_gestures();
+        if (strcmp(argv[a], "--selftest-terr-pay") == 0) return selftest_terr_pay();
         if (strcmp(argv[a], "--selftest-terrarium") == 0) return selftest_terrarium();
         if (strcmp(argv[a], "--genes") == 0 && a + 1 < argc) return genes_shot(argv[a + 1]);
         if (strcmp(argv[a], "--plant-order") == 0) return plant_order();
@@ -13247,14 +13370,19 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-shelf-rename") == 0) return selftest_shelf_rename();
         if (strcmp(argv[a], "--volcano") == 0 && a + 1 < argc) return volcano_shot(argv[a + 1]);
         if (strcmp(argv[a], "--crab") == 0 && a + 1 < argc) return crab_shot(argv[a + 1]);
+#if PT_TERRARIUM
         if (strcmp(argv[a], "--lizard-sheet") == 0 && a + 1 < argc) { int lizard_sheet(const char *prefix); return lizard_sheet(argv[a + 1]); }   /* sheet_lizard.c (P3a) */
+        if (strcmp(argv[a], "--terr-shot") == 0 && a + 1 < argc) { int terr_shot(const char *prefix); return terr_shot(argv[a + 1]); }   /* shot_terrarium.c (P3b) */
+        if (strcmp(argv[a], "--terr-bench") == 0) { int terr_bench(void); return terr_bench(); }                                      /* ... the terrarium's frame cost */
+        if (strcmp(argv[a], "--selftest-terr-render") == 0) { int selftest_terr_render(void); return selftest_terr_render(); }         /* ... its scenes and stack */
+#endif
         if (strcmp(argv[a], "--critter-cards") == 0 && a + 1 < argc) return critter_cards(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-critter-nav") == 0) return selftest_critter_nav();
         if (strcmp(argv[a], "--fluid") == 0 && a + 1 < argc) return fluid(argv[a + 1]);
         if (strcmp(argv[a], "--clip") == 0 && a + 1 < argc)
             return clip(argv[a + 1], a + 2 < argc ? atoi(argv[a + 2]) : 6);
         if (strcmp(argv[a], "--snapshot") == 0 && a + 1 < argc) {
-            if (!getenv("POCKET_TANK_SAVE")) setenv("POCKET_TANK_SAVE", "/tmp/pocket-tank-snapshot.sav", 1);   /* the pictures never write the sim's own tank (2026-10-06) */
+            if (!getenv("POCKET_TANK_SAVE")) setenv("POCKET_TANK_SAVE", sim_tmp("pocket-tank-snapshot.sav"), 1);   /* the pictures never write the sim's own tank (2026-10-06) */
             return snapshot(argv[a + 1], a + 2 < argc ? atoi(argv[a + 2]) : 20); }
         if (strcmp(argv[a], "--selftest") == 0) return selftest();
         if (strcmp(argv[a], "--bench") == 0) return bench();
@@ -13279,16 +13407,20 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-shelf-away") == 0) return selftest_shelf_away();
         if (strcmp(argv[a], "--selftest-tend") == 0) return selftest_tend();
         if (strcmp(argv[a], "--selftest-update") == 0) return selftest_update();
+#if PT_NET
         if (strcmp(argv[a], "--selftest-passport") == 0) return selftest_passport();
         if (strcmp(argv[a], "--selftest-link") == 0) return selftest_link();
         if (strcmp(argv[a], "--selftest-doors") == 0) return selftest_doors();
         if (strcmp(argv[a], "--selftest-fry-cap") == 0) return selftest_fry_cap();
+#endif
         if (strcmp(argv[a], "--selftest-advanced") == 0) return selftest_advanced();
         if (strcmp(argv[a], "--selftest-model") == 0)
             return selftest_model(a + 1 < argc && argv[a + 1][0] != '-' ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-board") == 0)
             return selftest_board(a + 1 < argc && argv[a + 1][0] != '-' ? argv[a + 1] : NULL);
+#if PT_NET
         if (strcmp(argv[a], "--selftest-give") == 0) return selftest_give();
+#endif
         if (strcmp(argv[a], "--selftest-llm") == 0)
             return selftest_llm(a + 1 < argc ? atoi(argv[a + 1]) : 0);
         if (strcmp(argv[a], "--selftest-drift") == 0) return selftest_drift();
@@ -13380,7 +13512,7 @@ int main(int argc, char **argv) {
     lv_obj_center(canvas);
     render_set_scene_cache(scene_buf);
     render_set_vignette_cache(vig_buf);
-    render_set_card_cache(card_buf); render_set_modal_cache(give_buf, gift_buf);
+    render_set_card_cache(card_buf); SIM_MODAL_CACHE();
     render_set_dirty_mask(dirty_buf);
 
     last_ms = SDL_GetTicks();
@@ -13442,6 +13574,7 @@ int main(int argc, char **argv) {
             for (int i = 0; i < tank.n_fish; i++) { press_fx[i] = tank.fish[i].x; press_fy[i] = tank.fish[i].y; }
         }
         bool setup_up = setup_active();          /* before the touch: BEGIN's release must not become a tank tap */
+#if PT_NET
         if (update_mode) {                       /* update mode owns the glass; nothing else sees the finger */
             update_touch((float)mx, (float)my, mpress);
             mdown = mpress;
@@ -13449,6 +13582,7 @@ int main(int argc, char **argv) {
             SDL_Delay(wait);
             continue;
         }
+#endif
         if (setup_up) {
             bool birth = setup_is_birth(), rename = setup_is_rename(); int who = setup_fish(), place = setup_item();
             setup_touch(&tank, (float)mx, (float)my, mpress);   /* taps and the letter wheel, classified in setup.c */
@@ -13468,7 +13602,9 @@ int main(int argc, char **argv) {
         } else if (settings_view && !confirm_view) {             /* the settings page: segments, LIGHTS OUT's arrows, CLOSE */
             int v = 0, r = render_settings_touch(&tank, (float)mx, (float)my, mpress, &v);
             if (r == SET_TAP_CLOSE) { settings_view = false; milestones_view = true; ms_back = true; }   /* back to the milestones page */
+#if PT_NET
             else if (r == SET_TAP_UPDATES) { settings_view = false; updates_view = true; ms_back = true; printf("updates page\n"); }
+#endif
             else if (r == SET_TAP_BRIGHT || r == SET_TAP_BRIGHT_LIVE) sim_bright = v;
             else if (r == SET_TAP_VOLUME || r == SET_TAP_VOLUME_LIVE) {   /* the slider: heard as it moves (a tick a step), the lift keeps it */
                 if (s_adev) { SDL_LockAudioDevice(s_adev); audio_set_volume(v); SDL_UnlockAudioDevice(s_adev); } else audio_set_volume(v);
@@ -13479,7 +13615,9 @@ int main(int argc, char **argv) {
             else if (r == SET_TAP_IDLE) printf("lights out after %d s still\n", v);
             else if (r == SET_TAP_FEED) printf("auto feed: %s\n", v ? "ON" : "OFF");
             else if (r == SET_TAP_ROTATE) printf("rotation: %s\n", v ? "LOCKED" : "unlocked");
-        } else if (updates_view && !confirm_view) {              /* the UPDATES page: CHECK, FORGET, CLOSE */
+        }
+#if PT_NET
+        else if (updates_view && !confirm_view) {              /* the UPDATES page: CHECK, FORGET, CLOSE */
             int r = updates_page_touch((float)mx, (float)my, mpress);
             if (r == UPD_TAP_CLOSE) { updates_view = false; settings_view = true; ms_back = true; }   /* back to the settings page */
             else if (r == UPD_TAP_FORGET) printf("updates: network forgotten\n");
@@ -13489,6 +13627,7 @@ int main(int argc, char **argv) {
                 printf("update mode: the tank would save and restart now (pretend radio; POCKET_TANK_FAKE_UPDATE steers the check)\n");
             }
         }
+#endif
         bool modal = confirm_view || setup_up || settings_view || shop_view || battery_view || updates_view || adv_up();
         sim_tank_gestures(mpress, mx, my, press_x, press_y, now_ms - press_ms, modal, &held_page);
         if (!mpress && mdown) {
@@ -13564,13 +13703,12 @@ int main(int argc, char **argv) {
                 /* MS_TAP_KEPT: a badge / name opened the detail modal, or the modal closed; anything else: nothing */
             }
             else if (now_ms - press_ms < 350 && dx * dx + dy * dy < 24 * 24) {
-                /* same hit test as the device: 38 px against the press-time
-                   fish snapshot AND the current position, whichever is closer */
-                int best = -1; float bd = 38 * 38;
+                /* same hit test as the device: TANK_TAP_R against the press-time
+                   fish snapshot AND the current position, whichever is closer (a lizard: along its body, tank_tap_d2) */
+                int best = -1; float bd = TANK_TAP_R * TANK_TAP_R;
                 for (int i = 0; i < tank.n_fish; i++) {
-                    float ax = press_fx[i] - press_x, ay = press_fy[i] - press_y;
-                    float bx = tank.fish[i].x - press_x, by = tank.fish[i].y - press_y;
-                    float d2a = ax * ax + ay * ay, d2b = bx * bx + by * by;
+                    float d2a = tank_tap_d2(&tank, i, press_fx[i], press_fy[i], (float)press_x, (float)press_y);
+                    float d2b = tank_tap_d2(&tank, i, tank.fish[i].x, tank.fish[i].y, (float)press_x, (float)press_y);
                     float d2 = d2a < d2b ? d2a : d2b;
                     if (d2 < bd) { bd = d2; best = i; }
                 }
@@ -13585,6 +13723,7 @@ int main(int argc, char **argv) {
                     battery_view = true; battery_view_ms = now_ms; selected_fish = -1;
                     printf("battery page: %d%%, %s\n", sim_bat_gauge(), sim_bat_state == BAT_CHARGING ? "charging" : sim_bat_state == BAT_FULL ? "full" : "on battery");
                 }
+#if PT_NET
                 else if (render_give_modal_step(&tank) != RENDER_GM_OFF) {   /* the GIVE modal takes every click while it is up */
                     int r = render_give_modal_tap(&tank, (float)press_x, (float)press_y);
                     printf("give modal: tap -> %d (RENDER_GM_TAP_*)\n", r);
@@ -13593,6 +13732,7 @@ int main(int argc, char **argv) {
                     render_give_tap(&tank, selected_fish);       /* GIVE on the stat card while linked (0.4) */
                     printf("give box: tapped (%s)\n", tank.fish[selected_fish].name);
                 }
+#endif
                 else if (selected_fish >= 0 && selected_fish < tank.n_fish && render_tools_hit((float)press_x, (float)press_y) >= 0) {
                     /* the toolbox under the card (2026-10-01): pick a tool up (or put the one in hand back), the card goes */
                     int tl = render_tools_hit((float)press_x, (float)press_y);
@@ -13671,11 +13811,13 @@ int main(int argc, char **argv) {
             printf("reset prompt: click YES or NO (it gives up after %d s)\n", CONFIRM_MS / 1000);
         }
         xdown = k[SDL_SCANCODE_X];
+#if PT_NET
         { static bool edown; if (k[SDL_SCANCODE_E] && !edown && !update_mode) {   /* E: update mode, as CHECK FOR UPDATES enters it */
             progression_save(&tank); milestones_view = settings_view = updates_view = shop_view = false; selected_fish = -1;
             update_mode = true; update_clock = 0; update_begin(sim_bat_gauge(), sim_bat_state != BAT_ON_BATTERY);
             printf("update mode (E): the pages over a pretend radio; POCKET_TANK_FAKE_UPDATE=none|cable|fail|downloadfail|otherboard|boardimage|<x.y.z> steers the check\n"); }
           edown = k[SDL_SCANCODE_E]; }
+#endif
         if (k[SDL_SCANCODE_S] && !sdown) {                    /* the first-run flow, on cue */
             if (setup_active()) { setup_cancel(&tank); printf("setup: closed (still owed if it was pending)\n"); }
             else { setup_begin(&tank); selected_fish = -1; milestones_view = false; printf("setup: welcome page (click through; BEGIN saves)\n"); }

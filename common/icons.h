@@ -3,6 +3,7 @@
 #ifndef POCKET_TANK_ICONS_H
 #define POCKET_TANK_ICONS_H
 #include <stdint.h>
+#include "world.h"
 
 typedef struct { uint8_t w, h; const uint16_t *rgb; const uint8_t *a; } icon_t;
 
@@ -26,23 +27,35 @@ extern const icon_t icon_unknown_16;
 extern const icon_t icon_unknown_24;
 extern const icon_t icon_ms_crab_find;
 extern const icon_t icon_ms_first_bubbles;
+extern const icon_t icon_ms_first_bubbles_terr;
 extern const icon_t icon_ms_first_dart;
+extern const icon_t icon_ms_first_dart_terr;
 extern const icon_t icon_ms_first_feeding;
+extern const icon_t icon_ms_first_feeding_terr;
 extern const icon_t icon_ms_first_follow;
+extern const icon_t icon_ms_first_follow_terr;
 extern const icon_t icon_ms_first_glass_cleaning;
+extern const icon_t icon_ms_first_glass_cleaning_terr;
 extern const icon_t icon_ms_first_hold_approach;
+extern const icon_t icon_ms_first_hold_approach_terr;
 extern const icon_t icon_ms_first_meal;
+extern const icon_t icon_ms_first_meal_terr;
 extern const icon_t icon_ms_first_mutation;
 extern const icon_t icon_ms_first_play_session;
+extern const icon_t icon_ms_first_play_session_terr;
 extern const icon_t icon_ms_first_quiet_night;
+extern const icon_t icon_ms_first_quiet_night_terr;
 extern const icon_t icon_ms_first_reef;
 extern const icon_t icon_ms_first_sale;
+extern const icon_t icon_ms_first_sale_terr;
 extern const icon_t icon_ms_first_seagrass;
+extern const icon_t icon_ms_first_seagrass_terr;
 extern const icon_t icon_ms_first_trimming;
 extern const icon_t icon_ms_full_school;
 extern const icon_t icon_ms_sand_dollar;
 extern const icon_t icon_ms_seahorse_fed;
 extern const icon_t icon_ms_tank_changed_someone;
+extern const icon_t icon_ms_tank_changed_someone_terr;
 extern const icon_t icon_shop_castle;
 extern const icon_t icon_shop_cluster;
 extern const icon_t icon_shop_coral;
@@ -63,5 +76,13 @@ extern const icon_t icon_tool_lock_open;
 extern const icon_t icon_tool_mister;
 extern const icon_t icon_tool_scissors;
 extern const icon_t icon_tool_sponge;
+
+/* the per-world art: icon_<name>_terr in the terrarium's bin, icon_<name> in the aquarium's. Each bin defines
+ * only its own of the pair (icons.c), so name one only through WORLD_ICON (a constant choice, folded away):
+ *   icon_ms_first_bubbles icon_ms_first_dart icon_ms_first_feeding icon_ms_first_follow
+ *   icon_ms_first_glass_cleaning icon_ms_first_hold_approach icon_ms_first_meal icon_ms_first_play_session
+ *   icon_ms_first_quiet_night icon_ms_first_sale icon_ms_first_seagrass icon_ms_tank_changed_someone
+ */
+#define WORLD_ICON(name) (PT_TERRARIUM ? &name##_terr : &name)
 
 #endif

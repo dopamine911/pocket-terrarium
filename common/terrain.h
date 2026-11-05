@@ -60,7 +60,9 @@ float   glass_floor_x(const glass_t *g, float u);   /* a floor fraction's x: tan
 #define TERRAIN_LIFT_PX       40.0f     /* a rock stands at least this high over the floor's line, all of it: a raised rock, the floor open */
 #define TERRAIN_HEADROOM_PX   32.0f     /* two paths over one x: at least this far apart (a lizard under a ledge fits) ... */
 #define TERRAIN_JUNCTION_PX   48.0f     /* ... but within this of a point both pass through (a switchback's corner) */
-#define TERRAIN_LINK_IN_PX    40.0f     /* a ramp's ends keep this far inside the glass: every lizard's middle reaches them (tank.c walk_span) */
+#define TERRAIN_LINK_IN_PX    48.0f     /* a ramp's ends keep this far inside the glass: every lizard's middle reaches them - the biggest
+                                           body drawn, an elder gecko's half length ~47.6 px, is the walk's margin (tank.c walk_span;
+                                           species_check refuses a pack whose body is longer) */
 #define TERRAIN_HEAD_PX       24.0f     /* a walking line keeps this far under the glass above it (a lizard's head) */
 #define TERRAIN_LAMP_PX      100.0f     /* the basking spot keeps this much glass over it: the lamp and its cone */
 #define TERRAIN_HIDE_HW       36.0f     /* a hide's width either side of its point (the widest, the warm cave, is 35 px) ... */

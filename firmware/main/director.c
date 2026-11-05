@@ -13,11 +13,15 @@
 #include "progression.h"
 #include "setup.h"
 #include "director.h"
+#include "version.h"          /* PT_NET, before its first test below */
+#if PT_NET
 #include "update.h"
-#include "version.h"
+#endif
 #include "esp_ota_ops.h"
+#if PT_NET
 const char *net_port_manifest_url(void);
 bool net_port_set_manifest_url(const char *url);
+#endif
 #include "touch_port.h"
 #include "advanced.h"
 #include "battery_port.h"
@@ -29,20 +33,26 @@ bool net_port_set_manifest_url(const char *url);
 #include "codec_port.h"
 #include "audio_port.h"
 #include "imu_port.h"
+#if PT_NET
 #include "link_spike.h"
 #include "link_dev.h"
 #include "update_mode.h"
+#endif
 #include "audio.h"
 #include "notice.h"
 #include "esp_timer.h"
 #include "esp_attr.h"
 #include "esp_system.h"
 #include "nvs.h"
+#if PT_NET
 #include "collection.h"
+#endif
 #include "shelf.h"
 #include "render.h"
 #include "esp_random.h"
+#if PT_NET
 #include "gift.h"
+#endif
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
 #include "driver/usb_serial_jtag.h"
 #endif
@@ -77,6 +87,7 @@ static void nvs_drop(const char *key) {
     if (e != ESP_OK) ESP_LOGW(TAG, "drop %s failed: %s", key, esp_err_to_name(e));
     else if (nvs_has(key)) ESP_LOGW(TAG, "drop %s: still there after the erase", key);
 }
+#if PT_NET   /* the visitors, KIN and gift books (version.h PT_NET) */
 /* the tank's own BOOKS beside its save (0.4): the visitor collection, the KIN book, the gift notes - blobs of their
  * own, so a stash of the save alone left them live and a staged tank's visitors, kin and gifts landed in the real
  * tank's books (2026-11-02, the travel tests). `stash` parks them with the save, `restore` brings them back;
@@ -124,11 +135,14 @@ static bool books_back(void) {                    /* (before the save they belon
     ESP_LOGI(TAG, "books back: the real tank's visitors, kin, gift notes and visitor book");
     return true;
 }
+#endif
 static bool stash(tank_t *t) {
     progression_save(t);
     bool ok = nvs_copy("save", "bk");
     ESP_LOGI(TAG, "%s", ok ? "real tank stashed (restore brings it back)" : "STASH FAILED - not touching the tank");
+#if PT_NET
     if (ok) books_park(t);
+#endif
     return ok;
 }
 /* a staged tank replaces the live one: park the real save first unless a
@@ -287,12 +301,18 @@ static void help(void) {
     ESP_LOGI(TAG, "help | state | ids (the tank's and each fish's ID, parents by ID, genes shown / carried) | hungry [N] [level=9] (N fish starving, water cleared, trickle held)");
     ESP_LOGI(TAG, "fed [level=1] (everyone full, trickle back on) | set <hunger|energy|stress|curiosity|trust> <0-10> [fish name|idx]");
     ESP_LOGI(TAG, "feed [n=3] [x] (keeper drops pellets; trickle back on) | trickle on|off | pellets clear");
+#if PT_NET
     ESP_LOGI(TAG, "link on|off | arm left|right | close left|right | ghost left|right | stay <s> | drift on|off|imu | status | spike on|rate|off (the tank link, ghost fish)");
+#endif
     ESP_LOGI(TAG, "algae <steps|clear> | veg <bed 0-2|all> <0.03-1> | light (toggle) | auto | sleep <hours> | save");
     ESP_LOGI(TAG, "rim on|off (a piece's shadow on the fronds over its rim: the look's A/B, 0.3.9.4)");
     ESP_LOGI(TAG, "shot <x0> <y0> <w> <h> (the last frame's pixels in the box, hex rows; tools/shot.py makes a picture)");
     ESP_LOGI(TAG, "STAGED TANKS (the real one is parked first): fresh (new tank, two fry) | stages (fry juv adult elder) | stage <fish|all> <fry|juv|adult|elder>");
+#if PT_NET
     ESP_LOGI(TAG, "stash (park the real tank and its books now) | restore (bring them back) | books park|back|show | coll fill <0-120>|page <n>|close|show (the visitor pages) | age <fish> <hours> | form <fish|all> <shape> <fins> [pattern] (its look: classic|slender|bulbous, classic|veil|sail, bars|mask|eyeband|solid)");
+#else
+    ESP_LOGI(TAG, "stash (park the real tank now) | restore (bring it back) | age <fish> <hours> | form <fish|all> <shape> <fins> [pattern] (its look: classic|slender|bulbous, classic|veil|sail, bars|mask|eyeband|solid)");
+#endif
     ESP_LOGI(TAG, "trail on|off (0.4: long fish trail their tails and fins; off = the rigid fish of 0.3, the A/B for the eye and the frame cost)");
     ESP_LOGI(TAG, "milestones [off] (the page, on cue; on the device: tap the open stats card)");
     ESP_LOGI(TAG, "crab [x <px> | roost [castle|volcano] | tap | scare | find | shoo [gap [n]]] (the strawberry crab, 0.3.9: where it is and what it is doing; set it down; send it to roost now; claws up; three taps - it runs for cover; find = it digs up a sand dollar within seconds; shoo = a pellet gap px off (45; n = a cluster of 1..4), the shrimp on it, the crab going for it - near enough it shoos them, from far off they win)");
@@ -308,9 +328,12 @@ static void help(void) {
     ESP_LOGI(TAG, "bright <0-255> (panel now; not saved) | level 5..100 by 5 (the keeper's setting, saved)");
     ESP_LOGI(TAG, "batlog [clear] (the tank's own battery log: SoC/VBAT every 5 min awake, 30 min asleep, mA derived - read it after a night on battery) | codec (ES8311 registers) | clock (the clock: RTC chip or the internet's time, and whether tonight is a power-off) | sleepcfg [mask] (the round board's deep-sleep savings: 1 touch, 2 panel, 4 IMU, 8 QSPI held; 15 = all, the default) | deepsleep [N] (N: 5 s grace then deep sleep with an N s timer wake - one batlog window per N, BOOT wakes it; no N: the keeper's sleep, grace then power-off) | poweroff (save + PMIC cut now) | keytime [N] (N s of timing every PWR press - is a tap under the PMIC's 128 ms power-on hold?)");
     ESP_LOGI(TAG, "overgrown (grass to the ceiling + fouled glass; fish stress climbs) | court (stage the fry: in ~10-20 s the pair courts in the grass, then it is born) | arrive [mutant] (the fry, now; mutant = a guaranteed mutation, 0.4)");
+#if PT_NET
     ESP_LOGI(TAG, "wifi (the saved network) | wifi set ssid=<name> pass=<secret> | wifi forget | ota (slots, channel) | ota check (save + restart into update mode, as CHECK FOR UPDATES) | ota url <manifest url>|default (the test channel)");
+#endif
 }
 
+#if PT_NET
 /* `wifi set ssid=<name> pass=<secret>`: the raw line, since a name or a
  * passphrase may hold spaces (everything after "pass=" is the passphrase) */
 static void wifi_set_raw(const char *args) {
@@ -325,9 +348,12 @@ static void wifi_set_raw(const char *args) {
     net_port_creds_set(ssid, pass);
 }
 static void imp_dump(void);
+#endif
 static void run(tank_t *t, char *line) {
-    if (!PT_NET && (!strncmp(line, "wifi", 4) || !strncmp(line, "ota", 3) || !strncmp(line, "link", 4))) {
+#if !PT_NET   /* (compiled out: say so, never "unknown") */
+    if (!strncmp(line, "wifi", 4) || !strncmp(line, "ota", 3) || !strncmp(line, "link", 4) || !strcmp(line, "improv") || !strncmp(line, "coll", 4) || !strncmp(line, "books", 5)) {
         ESP_LOGW(TAG, "%s: networking is off in this build (version.h PT_NET)", line); return; }
+#else
     if (!strncmp(line, "wifi set ", 9)) { wifi_set_raw(line + 9); return; }
     if (!strcmp(line, "improv")) { imp_dump(); return; }     /* the handshake's flight recorder */
     if (!strncmp(line, "ota tap ", 8)) {                     /* update mode, hands-free: a tap at (x, y) in tank coordinates */
@@ -345,22 +371,28 @@ static void run(tank_t *t, char *line) {
         ESP_LOGI(TAG, "ota url %s: %s", ok ? "set" : "NOT set", net_port_manifest_url());
         return;
     }
+#endif
     char *argv[6]; int argc = 0;
     for (char *tok = strtok(line, " \t"); tok && argc < 6; tok = strtok(NULL, " \t")) argv[argc++] = tok;
     if (!argc) return;
     for (char *p = argv[0]; *p; p++) *p = (char)tolower((unsigned char)*p);
     const char *c = argv[0];
+#if PT_NET
     if (!t && strcmp(c, "wifi") && strcmp(c, "ota") && strcmp(c, "help")) {   /* update mode: no tank to command */
         ESP_LOGW(TAG, "update mode: only wifi / ota / help (ota tap <x> <y>, ota page)"); return; }
+#endif
     if (!strcmp(c, "help")) help();
     else if (!strcmp(c, "state")) show_state(t);
     else if (!strcmp(c, "ids")) show_ids(t);
+#if PT_NET
     else if (!strcmp(c, "wifi")) {                            /* the saved network (docs/OTA.md) */
         char ssid[NET_SSID_MAX + 1], pass[NET_PASS_MAX + 1];
         if (argc > 1 && !strcmp(argv[1], "forget")) { net_port_creds_forget(); return; }
         if (net_port_creds_get(ssid, pass)) ESP_LOGI(TAG, "network: %s (%s)", ssid, pass[0] ? "with a password" : "open");
         else ESP_LOGI(TAG, "no network saved (wifi set ssid=<name> pass=<secret>, or the wizard on the glass)");
-    } else if (!strcmp(c, "shelf")) {                         /* shelf: as BOOT twice; shelf list|new|swap|pause|dormant|name|remove: stage MY TANKS (b-roll) */
+    }
+#endif
+    else if (!strcmp(c, "shelf")) {                         /* shelf: as BOOT twice; shelf list|new|swap|pause|dormant|name|remove: stage MY TANKS (b-roll) */
         if (argc < 2) device_shelf_toggle(); else device_shelf_cmd(argc - 1, argv + 1);
     } else if (!strcmp(c, "depth")) {                        /* SWIM DEPTH (0.3.9.4): `depth` the fish's; `depth <i> front|behind|through [bed]` sets
                                                                  one now (staging: no clear-of-the-grass wait), `bed` puts it in the first bed's middle */
@@ -487,7 +519,9 @@ static void run(tank_t *t, char *line) {
         ESP_LOGI(TAG, "keeptest: %d %s on the castle's rear tower (castle %s) at %.0f,%.0f, %s the grass, the %s castle", i, f->name, z == DECOR_Z_FRONT ? "IN FRONT" : "BEHIND",
                  f->x, f->y, argv[2], argc >= 4 && !strcmp(argv[3], "old") ? "OLD (0.3.9.6)" : "new");
     } else if (!strcmp(c, "touchlock")) { device_touch_lock(argc > 1 ? !strcmp(argv[1], "on") : -1);   /* THE TOUCH LOCK, as MY TANKS's padlock */
-    } else if (!strcmp(c, "ota")) {                           /* update mode and its channel */
+    }
+#if PT_NET
+    else if (!strcmp(c, "ota")) {                           /* update mode and its channel */
         const esp_partition_t *run = esp_ota_get_running_partition(), *boot = esp_ota_get_boot_partition();
         if (argc > 1 && !strcmp(argv[1], "check")) { if (!t) { ESP_LOGW(TAG, "already in update mode"); return; }
                                                       ESP_LOGI(TAG, "ota check: saving, restarting into update mode"); device_update_check(); return; }
@@ -509,6 +543,7 @@ static void run(tank_t *t, char *line) {
             else ESP_LOGI(TAG, "link spike on [hz=2] [bytes] | link spike rate <hz> [bytes] | link spike off  (radio %s)", link_spike_is_on() ? "ON" : "off");
         } else link_dev_cmd(t, argc, argv);
     }
+#endif
     else if (!strcmp(c, "hungry")) {
         int n = argc > 1 ? atoi(argv[1]) : t->n_fish;
         float lvl = argc > 2 ? atof(argv[2]) : 9.0f;
@@ -995,7 +1030,9 @@ static void run(tank_t *t, char *line) {
     } else if (!strcmp(c, "stash")) {
         if (nvs_has("bk")) { ESP_LOGW(TAG, "a stash is already parked - `restore` first (a second stash would overwrite the real tank)"); return; }
         stash(t);
-    } else if (!strcmp(c, "coll")) {              /* coll fill <n> | page <n> | show: the VISITOR COLLECTION's pages (0.4) */
+    }
+#if PT_NET
+    else if (!strcmp(c, "coll")) {              /* coll fill <n> | page <n> | show: the VISITOR COLLECTION's pages (0.4) */
         const char *a = argc > 1 ? argv[1] : "show";
         if (!strcmp(a, "fill") && argc > 2) {       /* n made-up visitors (0..120): the real tank's books parked first, `books back` / restore returns them */
             if (!books_parked() && !books_park(t)) return;
@@ -1015,16 +1052,22 @@ static void run(tank_t *t, char *line) {
         else if (!strcmp(a, "back")) { if (books_back()) { collection_load(); gift_load(gift_of(t)); } else ESP_LOGI(TAG, "books: none parked"); }
         else ESP_LOGI(TAG, "books: %s | live: visitors %s, kin %s, gifts %s", books_parked() ? "PARKED" : "not parked",
                       nvs_has(BOOK_KEY[0]) ? "yes" : "none", nvs_has(BOOK_KEY[1]) ? "yes" : "none", nvs_has(BOOK_KEY[2]) ? "yes" : "none");
-    } else if (!strcmp(c, "restore")) {
+    }
+#endif
+    else if (!strcmp(c, "restore")) {
         if (!nvs_has("bk")) { ESP_LOGW(TAG, "nothing stashed"); return; }
         if (setup_active()) setup_cancel(t);         /* a page left up (the placement page) would outlive the tank it was about */
         touch_port_show_shop(false); touch_port_show_milestones(false); touch_port_show_settings(false);
         if (!nvs_copy("bk", "save")) { ESP_LOGW(TAG, "restore copy failed"); return; }
         nvs_drop("bk");
+#if PT_NET
         books_back();
+#endif
         tank_init(t, (uint32_t)esp_timer_get_time() ^ 0xC0FFEEu);
         progression_boot(t);
+#if PT_NET
         collection_load();
+#endif
         ESP_LOGI(TAG, "real tank restored (%d fish)%s", t->n_fish,
                  t->ravenous ? " - parked over an hour, so it woke ravenous: `fed` if unwanted" : "");
         show_state(t);
@@ -1115,6 +1158,7 @@ static void run(tank_t *t, char *line) {
     }
 }
 
+#if PT_NET   /* Improv and provisioning (version.h PT_NET) */
 /* ---- Improv Wi-Fi over serial (docs/OTA.md, 2026-09-30) ----
  * The web installer (ESP Web Tools) speaks Improv on the same USB port after
  * a flash: it asks the device's state and info, then sends a network and a
@@ -1329,6 +1373,7 @@ static bool improv_feed(uint8_t ch) {
     }
     return false;
 }
+#endif
 
 void director_init(void) {
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -1337,12 +1382,15 @@ void director_init(void) {
     s_ok = usb_serial_jtag_driver_install(&cfg) == ESP_OK;
     ESP_LOGI(TAG, "%s", s_ok ? "console ready (type help)" : "USB serial driver failed: console off");
     if (nvs_has("bk")) ESP_LOGW(TAG, "a STAGED tank is up: the real tank is parked (restore brings it back)");
+#if PT_NET
     improv_state();                                          /* the installer page listens for this after a flash */
+#endif
 #else
     ESP_LOGI(TAG, "no USB serial: console off");
 #endif
 }
 
+#if PT_NET
 /* The installer page gives a board it connects to 1.5 s to answer Improv,
  * and its connect RESETS the board: its first ask dies in the bootloader,
  * its second comes 1.0 s in. The console used to come up ~1.3-1.6 s into
@@ -1376,17 +1424,22 @@ void director_early(void) {
     if (xTaskCreate(early_task, "improv", 3072, NULL, 5, &h) == pdPASS) s_early = h; else s_early_run = false;
 #endif
 }
+#endif
 
 void director_poll(tank_t *t) {
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     if (!s_ok) return;
+#if PT_NET
     if (s_early_run) { s_early_run = false; while (s_early) vTaskDelay(1); imp_ev('H', t != NULL, 0); }   /* the boot's Improv task hands over */
     s_imp_tank = t != NULL;
+#endif
     uint8_t buf[32]; int n;
     while ((n = usb_serial_jtag_read_bytes(buf, sizeof buf, 0)) > 0) {
         for (int i = 0; i < n; i++) {
             char ch = (char)buf[i];
+#if PT_NET
             if (improv_feed(buf[i])) continue;              /* an Improv packet from the installer page */
+#endif
             if (ch == '\n' || ch == '\r') {
                 if (s_len) { s_line[s_len] = 0; run(t, s_line); }
                 s_len = 0;

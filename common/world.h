@@ -6,9 +6,10 @@
  * It picks, for the whole build:
  *   - the brain: the model and its tokenizer (THE BRAIN below - the one place the lizard model's files go),
  *   - the packs a tank may hold and a new tank's pair (species.h SPECIES_DEFAULT, habitat.h HABITAT_DEFAULT;
- *     tank_set_packs refuses another world's - every pack is compiled into both bins, only this world's are held),
+ *     a release bin carries only its world; the simulator defines PT_ALL_PACKS for cross-world pack validation),
  *   - the goal set (tank.h GOAL_FIRST / GOAL_N: the fish's eight or the lizard's seven),
  *   - the locomotion (tank.c: the swim, or THE WALK on the habitat's ground - terrain.h),
+ *   - the renderer and art sources (the aquarium's live water/grass stack or the terrarium's desert/lizards),
  *   - the selftest list (sim/Makefile SELFTESTS_SHARED + SELFTESTS_AQUARIUM / SELFTESTS_TERRARIUM).
  * Values 1 and 2, never 0: an #if on a header that was not included reads 0 and matches neither. */
 #ifndef WORLD_H
@@ -22,8 +23,13 @@
 #if PT_WORLD != PT_WORLD_AQUARIUM && PT_WORLD != PT_WORLD_TERRARIUM
 #error "PT_WORLD is PT_WORLD_AQUARIUM (1) or PT_WORLD_TERRARIUM (2)"
 #endif
-#define PT_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)   /* 1 in the terrarium's bin, 0 in the aquarium's: `if (PT_TERRARIUM)` keeps both paths compiled */
+#define PT_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)   /* 1 in the terrarium's bin, 0 in the aquarium's; use #if for world-owned code */
 #define PT_WORLD_NAME (PT_TERRARIUM ? "terrarium" : "aquarium")
+/* Test/tool builds may carry both worlds' const packs to validate the boundary. Release bins leave this 0 and link
+ * only their own pack sources (firmware/components/tankcore/CMakeLists.txt). */
+#ifndef PT_ALL_PACKS
+#define PT_ALL_PACKS 0
+#endif
 
 /* ---- THE BRAIN, per world: the model and its tokenizer. Paths are from the repo's root: the sim opens "../" + them
  * (it runs in sim/); the firmware embeds PT_FW_TOKENIZER_<WORLD> (from firmware/, a copy kept in the repo, as model/out

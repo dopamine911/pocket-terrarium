@@ -127,8 +127,14 @@ tools it splits in thirds.
 Per lizard: shed state, seconds left in it, damp seconds accrued, whether it is
 a growth shed, clean-shed count. Per terrarium: each humid hide's moisture, the
 clean-run counter. P2a writes all of it but the clean-run counter (a P5 milestone) in the save's packs tail
-(`progression.c`, SAVE LAYOUT LOCK: 1956..2095), with the species' and the habitat's ids and each lizard's
-body temperature; P5's new format keeps the same fields.
+(`progression.c`, SAVE LAYOUT LOCK: 1956..2095; P2c appended the mealworm dish at 2096), with the species' and the
+habitat's ids and each lizard's body temperature; P5's new format keeps the same fields.
+
+## Sand dollars (P2c)
+
+A shed that comes off clean and never stuck pays `SD_SHED_CLEAN` (5); one cleared after it stuck (a damp stay or a
+soak) is counted clean and pays nothing (`fish_t.shed_helped`); a growth shed adds its stage's pay
+(`docs/progression.md` "Sand dollars", `--selftest-terr-pay`).
 
 ## Tests (P2)
 
