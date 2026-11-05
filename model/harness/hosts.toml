@@ -1,0 +1,72 @@
+# Hosts, cards and images for harness.py. No secrets: the llama-swap key is read on the
+# host named in lab_key (a line VAR=value in that file) and only ever sent over ssh stdin.
+#
+# hosts.<name>:   ssh  = ssh destination ("" = this machine, no docker: CPU only)
+#                 root = work directory (remote: relative to $HOME; local: under model/)
+#                 lab_key = where this host's llama-swap API key lives (omit: lab mode unknown)
+# cards.<name>:   host, arch (an [images] key, or "cpu"), pci (the card's PCI address; the
+#                 render node is looked up from /dev/dri/by-path at launch, so renumbering
+#                 after a reboot is harmless), mem ("vram", or "gtt" for unified memory, where
+#                 free = min(GTT free, MemAvailable)), reserve_mib (headroom the guard keeps
+#                 on top of the model's mem_mib), teacher (true: serves chat-teacher, so it
+#                 is skipped in opportunistic mode while chat-teacher is loaded).
+#                 One job per card. CPU cards are used only when the run allows it.
+# images.<arch>:  tag and Dockerfile (relative to model/), built on the host when missing.
+
+[settings]
+training_profile = "training"      # the llama-swap profile local-ai-lab switches on for training mode
+teacher_models = ["chat-teacher"]
+
+[hosts.local]
+ssh = ""
+root = "out/harness/work"
+python = ".venv/bin/python"
+
+[hosts.marvin]
+ssh = "marvin"
+root = "pt-train/harness"
+lab_key = { host = "zaphod", file = "~/homelab/hub/.env", var = "MARVIN_KEY" }
+
+[hosts.zaphod]
+ssh = "zaphod"
+root = "pt-train/harness"
+lab_key = { host = "zaphod", file = "~/homelab/hub/.env", var = "ZAPHOD_KEY" }
+
+[cards.marvin-8060s]
+host = "marvin"
+arch = "gfx1151"
+pci = "0000:c5:00.0"
+mem = "gtt"
+reserve_mib = 8192
+
+[cards.zaphod-card2]
+host = "zaphod"
+arch = "gfx120X"
+pci = "0000:0b:00.0"
+mem = "vram"
+reserve_mib = 1024
+teacher = true
+
+[cards.zaphod-card1]
+host = "zaphod"
+arch = "gfx120X"
+pci = "0000:06:00.0"
+mem = "vram"
+reserve_mib = 1024
+
+[cards.marvin-cpu]
+host = "marvin"
+arch = "cpu"
+image = "gfx1151"
+
+[cards.local-cpu]
+host = "local"
+arch = "cpu"
+
+[images.gfx1151]
+tag = "pt-train-rocm:gfx1151"
+dockerfile = "docker/Dockerfile.rocm-gfx1151"
+
+[images.gfx120X]
+tag = "pt-train-rocm:gfx120X"
+dockerfile = "docker/Dockerfile.rocm-gfx120X"

@@ -1,0 +1,42 @@
+# The 2026-11-05 focused repair, as a harness run (docs/retrain-lizard.md section 6): three
+# seeds of the 14M L1 model on the night + 6,000 focused labels, each probed on two n-400
+# panels; the seed with the widest smallest margin is selected. [validate] holds the harness's
+# own baseline (docs/retrain-lizard.md section 6, "Harness baseline"), so a rerun checks that
+# training still reproduces.
+
+model = "l1-14m"
+dataset = "l1-focus2"
+iters = 5000
+batch = 64
+lr = 6e-4
+seeds = [1337, 1, 2]
+mode = "training"        # "training": every host used must be in the lab's training profile; "opportunistic": share cards with served models
+cpu = false              # CPU cards only when true
+export = true            # q4 (export_q4.py) and fp32 (llama2.c/export.py) next to each checkpoint
+
+[[probes]]
+n = 400
+seed = 11
+
+[[probes]]
+n = 400
+seed = 23
+
+# The harness baseline, 2026-11-05 13:47 (training mode): s1337 on marvin's 8060S, s1 and s2 on
+# zaphod's R9700s (card 2, card 1). Training is deterministic on a card of the same kind running
+# one job: two runs gave identical rows. A seed moved to the other kind of card can differ, hence
+# the tolerance. The original section-6 table (three seeds sharing the 8060S) does not reproduce.
+[validate]
+tolerance = 0.03
+selected = 1337         # all three smallest margins (A12) within 0.001: tied, and s1337 has the lowest val loss
+baseline_wall_s = 2100   # 35 min: the three seeds side by side on marvin's 8060S alone
+
+# row: {seed = [panel 11, panel 23]}
+[validate.rows]
+A2 = { 1337 = [0.932, 0.928], 1 = [0.909, 0.910], 2 = [0.940, 0.937] }
+A8 = { 1337 = [0.942, 0.964], 1 = [0.986, 0.987], 2 = [0.979, 0.984] }
+A10 = { 1337 = [0.759, 0.727], 1 = [0.777, 0.720], 2 = [0.756, 0.733] }
+A11 = { 1337 = [0.565, 0.589], 1 = [0.503, 0.541], 2 = [0.581, 0.600] }
+A12 = { 1337 = [0.002, 0.002], 1 = [0.001, 0.001], 2 = [0.001, 0.001] }
+r7 = { 1337 = [0.985, 0.986], 1 = [0.980, 0.974], 2 = [0.982, 0.977] }
+content = { 1337 = [0.402, 0.379], 1 = [0.377, 0.376], 2 = [0.401, 0.362] }

@@ -49,6 +49,49 @@ python3 model/eval.py --count 60 --teacher               # 7. goal agreement vs 
 The prompt in step 6 is any [schema.md](../model/schema.md) state line with
 ` ->` appended; the model completes it with `<goal> urgency <0-9>` and stops.
 
+## Training harness
+
+`model/harness.py` runs step 4 onwards for declared experiments across the lab's GPU cards:
+fold, train every seed (one job per card), probe, export, select. Config is TOML (stdlib,
+no dependency) in `model/harness/`:
+
+| File | Declares |
+|---|---|
+| `models.toml` | architectures (`l1-14m`: dim 384, 8 layers, 8 heads, seq 64) and the memory one job takes |
+| `datasets.toml` | trace globs folded by `fold_traces.py`; an optional sha256 pins the folded file |
+| `hosts.toml` | hosts, cards (PCI address, arch, memory kind, reserve, teacher card), images per arch |
+| `runs/<run>.toml` | model, dataset, iters/batch/lr, seeds, probe panels, mode, CPU allowed, a validation reference |
+
+```bash
+cd model
+python3 harness.py plan l1-focus2                      # the lab mode per host, every card's verdict, job -> card
+python3 harness.py run l1-focus2                       # train, probe, export; ends with the report
+python3 harness.py run smoke --mode opportunistic      # the whole path in ~5 min (300 iters)
+python3 harness.py status l1-focus2                    # done / running where / queued / failed
+python3 harness.py report l1-focus2                    # rebuild out/harness/l1-focus2/report.md
+python3 harness.py selftest                            # planner, guard, margins, selection, validation
+```
+
+- **Modes.** `training` (the default for real runs) needs every host's llama-swap in the lab's
+  `training` profile, which `local-ai-lab` owns. `opportunistic` places jobs next to the served
+  models. It never evicts one: a card is used only if its free memory covers the model's
+  `mem_mib` plus the card's `reserve_mib`, or a job waits. The teacher's card is skipped while
+  `chat-teacher` is loaded. `plan` prints the mode it found on each host.
+- **Cards.** One job per card. The container gets `/dev/kfd` and that card's render node only,
+  looked up from its PCI address at launch. Measured 2026-11-05: an R9700 (gfx1201,
+  `docker/Dockerfile.rocm-gfx120X`) at 0.06 s/iter, the 8060S at 0.15; peak 1.4–1.6 GB.
+- **Robustness.** A job is finished only when its `exit_code` file exists on the host: a failed
+  ssh is "unknown". A container gone without one crashed, and the job is retried once. Killing
+  the harness (or its ssh) and rerunning `run` adopts running jobs and collects finished ones.
+- **Outputs**, per job in `out/harness/<run>/s<seed>/`: `ckpt.pt`, `model_q4.bin`,
+  `model_fp32.bin`, the probe JSONs, the logs, and `manifest.json`. The manifest records the git
+  SHA, dataset hash, configs, host/card, image ID, torch/HIP, s/iter, peak memory and best val.
+- **Report**, in `out/harness/<run>/report.md`: jobs, every row × seed × panel with its limit,
+  the seed-to-seed sd against the panel-to-panel spread, each seed's smallest margin, the
+  selected seed, and the check against `[validate]` if the run has one. Selection takes the
+  widest smallest margin. Seeds within the binding rows' panel spread of it (at least
+  `tie_floor`, 0.005) are tied and go to the lower val loss.
+
 ## Extra tools
 
 - `model/prompt_check.py` — 7-minute teacher/prompt sanity check. **Run this

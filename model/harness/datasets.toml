@@ -1,0 +1,10 @@
+# Named datasets for harness.py: trace globs (relative to model/, expanded and sorted per
+# pattern, in pattern order) folded by fold_traces.py --schema <schema> into
+# out/harness/data/<name>.jsonl. sha256, when given, pins the folded file: a fold that
+# comes out different stops the run.
+
+["l1-focus2"]
+# the 2026-11-05 focused repair (docs/retrain-lizard.md section 6): the night + 6,000 focused labels
+schema = "L1"
+traces = ["out/l1_traces_*.jsonl", "out/l1_focus2_traces.jsonl"]
+sha256 = "5f87b8eb454e1fee7e60a5f3806984a79166ad4ddb5ef6aac794dda485045651"  # out/l1_clean_focus2.jsonl, 50,968 pairs
