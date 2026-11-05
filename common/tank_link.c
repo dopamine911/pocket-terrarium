@@ -7,8 +7,8 @@
 #include "collection.h"
 #include "gift.h"
 #include "shelf.h"
+#include "pt_util.h"
 
-static float clampf_(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 static float glass_x(int e) { return e == LINK_LEFT ? tank_glass_x0(DOOR_Y) : tank_glass_x1(DOOR_Y); }
 static int home_slot(const tank_t *t, uint32_t uid) {
     for (int i = 0; i < t->n_fish; i++) if (t->fish[i].uid == uid) return i;
@@ -18,9 +18,9 @@ static int vis_slot(const tank_t *t, uint32_t uid) {
     for (int k = 0; k < N_VISIT_MAX; k++) if (t->vis_used[k] && t->fish[N_FISH_MAX + k].uid == uid) return N_FISH_MAX + k;
     return -1;
 }
-static float depth_of(const fish_t *f) { return clampf_(f->y / (float)TANK_BOT, 0, 1); }
+static float depth_of(const fish_t *f) { return clampf(f->y / (float)TANK_BOT, 0, 1); }
 static float y_of(float depth) {                         /* a depth on another glass, inside our door band */
-    return clampf_(depth * TANK_BOT, DOOR_Y - DOOR_BAND_H / 2 + 18, DOOR_Y + DOOR_BAND_H / 2 - 18);
+    return clampf(depth * TANK_BOT, DOOR_Y - DOOR_BAND_H / 2 + 18, DOOR_Y + DOOR_BAND_H / 2 - 18);
 }
 static bool beyond(const fish_t *f) {                    /* through the glass by a body: gone from this side */
     float m = 14 * f->size;
@@ -32,7 +32,7 @@ static void arrive_at(fish_t *f, int e, float depth, float speed) {
     f->y = y_of(depth);
     f->heading = e == LINK_LEFT ? 0 : 3.14159265f;
     tank_fish_face(f);
-    f->speed = f->target_speed = clampf_(speed, 20, 50);
+    f->speed = f->target_speed = clampf(speed, 20, 50);
     f->door = DOOR_ENTERING; f->door_edge = (int8_t)e; f->door_sent = false;
     f->explore_set = false;
 }
@@ -430,7 +430,7 @@ bool tank_link_event(tank_t *t, link_t *L, const link_ev_t *e) {
         if (t->fry_give_k >= 0) { t->vis_pending[t->fry_give_k] = false; t->fry_give_k = -1; t->fry_give_sent = false; }
         return true;
     case LEV_LINKED: {                                   /* something new over there */
-        for (int j = 0; j < t->n_fish; j++) if (!t->fish[j].away) t->fish[j].curiosity = clampf_(t->fish[j].curiosity + TANK_LINK_CURIOUS, 0, 10);
+        for (int j = 0; j < t->n_fish; j++) if (!t->fish[j].away) t->fish[j].curiosity = clampf(t->fish[j].curiosity + TANK_LINK_CURIOUS, 0, 10);
         gift_book_t *g = gift_of(t);                     /* a gift we were in the middle of with that tank */
         if (g && L) {
             for (int k = 0; k < g->n_given; k++) if (g->given[k].peer == e->peer) link_give_resume_out(L, e->peer, g->given[k].uid, g->given[k].nonce, &g->given[k].pp);

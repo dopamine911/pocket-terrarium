@@ -6,6 +6,7 @@
 #include "progression.h"
 #include "passport.h"
 #include "shelf.h"
+#include "pt_util.h"
 
 /* the blob: a 6-byte header (magic, version, count, record size) and the
    records, little-endian. A later build may append fields to a record (a
@@ -63,35 +64,31 @@ static bool s_kin_loaded;
 static bool s_kin_dirty;
 static float s_kin_wait = KIN_SAVE_GAP_S;               /* seconds of running time since the last write */
 static void kin_save(void);
-static void put16(uint8_t *b, int o, uint32_t v) { b[o] = (uint8_t)v; b[o + 1] = (uint8_t)(v >> 8); }
-static void put32(uint8_t *b, int o, uint32_t v) { put16(b, o, v & 0xffff); put16(b, o + 2, v >> 16); }
-static uint32_t get16(const uint8_t *b, int o) { return b[o] | (uint32_t)b[o + 1] << 8; }
-static uint32_t get32(const uint8_t *b, int o) { return get16(b, o) | get16(b, o + 2) << 16; }
 
 static void rec_write(const coll_entry_t *e, uint8_t *b) {
     memset(b, 0, COLL_REC);
-    put32(b, 0, e->uid); put32(b, 4, e->home); put32(b, 8, e->parent[0]); put32(b, 12, e->parent[1]);
+    le_put32(b, 0, e->uid); le_put32(b, 4, e->home); le_put32(b, 8, e->parent[0]); le_put32(b, 12, e->parent[1]);
     memcpy(b + 16, e->name, FISH_NAME_MAX);                            /* 16..23: the name, unterminated */
-    put32(b, 24, e->color & 0xffffff); put32(b, 28, e->fin & 0xffffff); put32(b, 32, e->accent & 0xffffff);
+    le_put32(b, 24, e->color & 0xffffff); le_put32(b, 28, e->fin & 0xffffff); le_put32(b, 32, e->accent & 0xffffff);
     b[36] = e->preset; b[37] = e->stage; b[38] = e->shape; b[39] = e->fins; b[40] = e->pattern; b[41] = (uint8_t)e->badge;
-    put32(b, 42, e->met_unix); put32(b, 46, e->seen_unix); put32(b, 50, e->here_s);
-    put16(b, 54, e->visits); b[56] = e->fry;
+    le_put32(b, 42, e->met_unix); le_put32(b, 46, e->seen_unix); le_put32(b, 50, e->here_s);
+    le_put16(b, 54, e->visits); b[56] = e->fry;
     memcpy(b + 57, e->home_name, 16);
 }
 static void rec_read(coll_entry_t *e, const uint8_t *b, int rec) {
     memset(e, 0, sizeof *e);
-    e->uid = get32(b, 0); e->home = get32(b, 4); e->parent[0] = get32(b, 8); e->parent[1] = get32(b, 12);
+    e->uid = le_get32(b, 0); e->home = le_get32(b, 4); e->parent[0] = le_get32(b, 8); e->parent[1] = le_get32(b, 12);
     memcpy(e->name, b + 16, FISH_NAME_MAX); e->name[FISH_NAME_MAX] = 0;
     for (int i = 0; i < FISH_NAME_MAX && e->name[i]; i++) {           /* a damaged name reads as '?' */
         char c = e->name[i];
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) e->name[i] = '?';
     }
-    e->color = get32(b, 24) & 0xffffff; e->fin = get32(b, 28) & 0xffffff; e->accent = get32(b, 32) & 0xffffff;
+    e->color = le_get32(b, 24) & 0xffffff; e->fin = le_get32(b, 28) & 0xffffff; e->accent = le_get32(b, 32) & 0xffffff;
     e->preset = (uint8_t)(b[36] % tank_roster_count()); e->stage = b[37] & 3;
     e->shape = b[38] < SHAPE_N ? b[38] : 0; e->fins = b[39] < FINS_N ? b[39] : 0; e->pattern = b[40] < PATTERN_N ? b[40] : 0;
     e->badge = (int8_t)b[41]; if (e->badge >= 4) e->badge = -1;
-    e->met_unix = get32(b, 42); e->seen_unix = get32(b, 46); e->here_s = get32(b, 50);
-    e->visits = (uint16_t)get16(b, 54); e->fry = b[56];
+    e->met_unix = le_get32(b, 42); e->seen_unix = le_get32(b, 46); e->here_s = le_get32(b, 50);
+    e->visits = (uint16_t)le_get16(b, 54); e->fry = b[56];
     if (rec >= 73) { char raw[16]; memcpy(raw, b + 57, 16); raw[15] = 0; passport_clean_tank_name(e->home_name, raw); }   /* (a 64-byte record: none) */
 }
 
@@ -105,7 +102,7 @@ static bool save_parts(unsigned parts) {
         uint8_t *blob = s_p1_unread ? NULL : malloc(COLL_BLOB_MAX);   /* (only while saving: the internal RAM is tight) */
         if (!blob) ok = false;                        /* (no RAM, or a page 1 this boot never read: the stored one stands) */
         else {
-            put16(blob, 0, COLL_MAGIC); blob[2] = COLL_VERSION; blob[3] = (uint8_t)n; put16(blob, 4, COLL_REC);
+            le_put16(blob, 0, COLL_MAGIC); blob[2] = COLL_VERSION; blob[3] = (uint8_t)n; le_put16(blob, 4, COLL_REC);
             for (int i = 0; i < n; i++) rec_write(&s_e[i], blob + COLL_HDR + i * COLL_REC);
             if (!persist_port_blob_save(COLL_NVS_KEY, blob, (size_t)(COLL_HDR + n * COLL_REC))) { ok = false; printf("collection: the first page was not saved\n"); }
             free(blob);
@@ -134,8 +131,8 @@ void collection_load(void) {
                                                          was flushed before the swap) */
     s_p1_unread = !blob;                              /* (no room to read it: an empty page now must not be written over the stored one) */
     if (!blob) return;
-    if (persist_port_blob_load(COLL_NVS_KEY, blob, cap, &got) && got >= COLL_HDR && get16(blob, 0) == COLL_MAGIC) {
-        int n = blob[3], rec = (int)get16(blob, 4);
+    if (persist_port_blob_load(COLL_NVS_KEY, blob, cap, &got) && got >= COLL_HDR && le_get16(blob, 0) == COLL_MAGIC) {
+        int n = blob[3], rec = (int)le_get16(blob, 4);
         if (n > COLL_PAGE) n = COLL_PAGE;
         if (rec >= COLL_REC_V1)                       /* (never shorter than the first: its fields would be missing; a 64-byte one has no home name) */
             for (int i = 0; i < n && COLL_HDR + (size_t)(i + 1) * rec <= got && COLL_HDR + (size_t)(i + 1) * rec <= cap; i++) {
@@ -295,10 +292,10 @@ void collection_fry_undo(uint32_t parent_uid) {
 static void kin_save(void) {
     uint8_t *b = malloc(6 + KIN_MAX * KIN_REC);
     if (!b) return;
-    put16(b, 0, KIN_MAGIC); b[2] = 1; b[3] = (uint8_t)s_kin_n; put16(b, 4, KIN_REC);
+    le_put16(b, 0, KIN_MAGIC); b[2] = 1; b[3] = (uint8_t)s_kin_n; le_put16(b, 4, KIN_REC);
     for (int i = 0; i < s_kin_n; i++) {
         uint8_t *r = b + 6 + i * KIN_REC; memset(r, 0, KIN_REC);
-        put32(r, 0, s_kin[i].uid); memcpy(r + 4, s_kin[i].name, FISH_NAME_MAX);
+        le_put32(r, 0, s_kin[i].uid); memcpy(r + 4, s_kin[i].name, FISH_NAME_MAX);
         r[11] = (uint8_t)(s_kin[i].color >> 16); r[12] = (uint8_t)(s_kin[i].color >> 8); r[13] = (uint8_t)s_kin[i].color;
         r[14] = (uint8_t)(s_kin[i].bold * 255 + 0.5f); r[15] = (uint8_t)(s_kin[i].sociable * 255 + 0.5f);
     }
@@ -312,13 +309,13 @@ static void kin_load(void) {
     const size_t cap = 6 + KIN_MAX * 64;
     uint8_t *b = malloc(cap); size_t got = 0;
     if (!b) return;
-    if (persist_port_blob_load(KIN_NVS_KEY, b, cap, &got) && got >= 6 && get16(b, 0) == KIN_MAGIC) {
-        int n = b[3], rec = (int)get16(b, 4);
+    if (persist_port_blob_load(KIN_NVS_KEY, b, cap, &got) && got >= 6 && le_get16(b, 0) == KIN_MAGIC) {
+        int n = b[3], rec = (int)le_get16(b, 4);
         if (n > KIN_MAX) n = KIN_MAX;
         if (rec >= KIN_REC)
             for (int i = 0; i < n && 6 + (size_t)(i + 1) * rec <= got; i++) {
                 const uint8_t *r = b + 6 + i * rec; kin_t *k = &s_kin[s_kin_n];
-                k->uid = get32(r, 0); memcpy(k->name, r + 4, FISH_NAME_MAX); k->name[FISH_NAME_MAX] = 0;
+                k->uid = le_get32(r, 0); memcpy(k->name, r + 4, FISH_NAME_MAX); k->name[FISH_NAME_MAX] = 0;
                 for (int j = 0; k->name[j]; j++) { char c = k->name[j]; if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) k->name[j] = '?'; }
                 k->color = (uint32_t)r[11] << 16 | (uint32_t)r[12] << 8 | r[13];
                 k->bold = r[14] / 255.0f; k->sociable = r[15] / 255.0f;

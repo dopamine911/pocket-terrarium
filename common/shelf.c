@@ -4,6 +4,7 @@
 #include "collection.h"
 #include "gift.h"
 #include "passport.h"
+#include "pt_util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,10 +54,6 @@ static uint32_t slot_off(int k) { return (uint32_t)k * SHELF_SLOT_SIZE; }
 #define EXTRA_MAGIC 0x31585450u                   /* "PTX1" */
 #define EXTRA_HDR   12
 static const char *const TANK_BLOBS[3] = { COLL_NVS_KEY, KIN_NVS_KEY, GIFT_NVS_KEY };
-static void put16(uint8_t *b, uint32_t v) { b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); }
-static void put32(uint8_t *b, uint32_t v) { put16(b, v & 0xffff); put16(b + 2, v >> 16); }
-static uint32_t get16(const uint8_t *b) { return b[0] | (uint32_t)b[1] << 8; }
-static uint32_t get32(const uint8_t *b) { return get16(b) | get16(b + 2) << 16; }
 _Static_assert(EXTRA_HDR + 3 * 10 + COLL_BLOB_MAX + KIN_BLOB_MAX + GIFT_BLOB_MAX <= SHELF_EXTRA_MAX, "a tank's own blobs, all full, must fit its slot");
 static size_t extras_gather(uint8_t *x) {         /* the glass's, for its slot */
     collection_flush();                           /* (the time its visitors spent here since the last save) */
@@ -66,25 +63,25 @@ static size_t extras_gather(uint8_t *x) {         /* the glass's, for its slot *
         if (off + 10 >= SHELF_EXTRA_MAX) break;   /* (the room left: never wraps) */
         if (!persist_port_blob_load(TANK_BLOBS[k], x + off + 10, SHELF_EXTRA_MAX - off - 10, &got) || !got) continue;
         memset(x + off, 0, 8); memcpy(x + off, TANK_BLOBS[k], strlen(TANK_BLOBS[k]) < 8 ? strlen(TANK_BLOBS[k]) : 8);
-        put16(x + off + 8, (uint32_t)got); off += 10 + got; n++;
+        le_put16(x + off + 8, 0, (uint32_t)got); off += 10 + got; n++;
     }
     if (!n) return 0;
-    put32(x, EXTRA_MAGIC); put16(x + 4, (uint32_t)(off - EXTRA_HDR)); put16(x + 6, (uint32_t)n); put32(x + 8, crc32(x + EXTRA_HDR, off - EXTRA_HDR));
+    le_put32(x, 0, EXTRA_MAGIC); le_put16(x + 4, 0, (uint32_t)(off - EXTRA_HDR)); le_put16(x + 6, 0, (uint32_t)n); le_put32(x + 8, 0, crc32(x + EXTRA_HDR, off - EXTRA_HDR));
     return off;
 }
 static size_t extras_read(int k, uint8_t *x) {    /* a slot's (checked), 0 = none */
-    if (!shelf_port_read(slot_off(k) + SHELF_EXTRA_OFF, x, EXTRA_HDR) || get32(x) != EXTRA_MAGIC) return 0;
-    size_t len = get16(x + 4);
+    if (!shelf_port_read(slot_off(k) + SHELF_EXTRA_OFF, x, EXTRA_HDR) || le_get32(x, 0) != EXTRA_MAGIC) return 0;
+    size_t len = le_get16(x + 4, 0);
     if (len > SHELF_EXTRA_MAX - EXTRA_HDR || !shelf_port_read(slot_off(k) + SHELF_EXTRA_OFF + EXTRA_HDR, x + EXTRA_HDR, len)
-        || crc32(x + EXTRA_HDR, len) != get32(x + 8)) return 0;
+        || crc32(x + EXTRA_HDR, len) != le_get32(x + 8, 0)) return 0;
     return EXTRA_HDR + len;
 }
 static bool extras_put(const uint8_t *x, size_t len, bool *touched) {   /* into NVS for the tank coming onto the glass: each of its own, the rest
                                                                           forgotten; false = a write failed (*touched: one went through first) */
     for (int k = 0; k < 3; k++) {
         const uint8_t *p = x + EXTRA_HDR, *end = x + len; bool put = false, ok = true;
-        for (; len && p + 10 <= end && p + 10 + get16(p + 8) <= end; p += 10 + get16(p + 8))
-            if (!strncmp((const char *)p, TANK_BLOBS[k], 8)) { ok = persist_port_blob_save(TANK_BLOBS[k], p + 10, get16(p + 8)); put = true; break; }
+        for (; len && p + 10 <= end && p + 10 + le_get16(p + 8, 0) <= end; p += 10 + le_get16(p + 8, 0))
+            if (!strncmp((const char *)p, TANK_BLOBS[k], 8)) { ok = persist_port_blob_save(TANK_BLOBS[k], p + 10, le_get16(p + 8, 0)); put = true; break; }
         if (!put) ok = persist_port_blob_forget(TANK_BLOBS[k]);
         if (!ok) return false;
         *touched = true;
@@ -457,11 +454,11 @@ static uint32_t book_crc(const uint8_t *sec, size_t len) { return ~crc_run(crc_r
 /* sector s of slot k into s_x->sec, checked: false = not a book's sector */
 static bool book_sector(int k, int s) {
     uint8_t *h = s_x->sec;
-    if (!shelf_port_read(slot_off(k) + (uint32_t)s * 4096, h, SHELF_BOOK_HDR) || get32(h) != SHELF_BOOK_MAGIC) return false;
-    size_t len = (size_t)h[17] * get16(h + 18);
-    if (h[16] != s / 2 || h[17] > SHELF_BOOK_RECS || get16(h + 18) < 64 || len > SHELF_BOOK_PAYLOAD) return false;
+    if (!shelf_port_read(slot_off(k) + (uint32_t)s * 4096, h, SHELF_BOOK_HDR) || le_get32(h, 0) != SHELF_BOOK_MAGIC) return false;
+    size_t len = (size_t)h[17] * le_get16(h + 18, 0);
+    if (h[16] != s / 2 || h[17] > SHELF_BOOK_RECS || le_get16(h + 18, 0) < 64 || len > SHELF_BOOK_PAYLOAD) return false;
     if (len && !shelf_port_read(slot_off(k) + (uint32_t)s * 4096 + SHELF_BOOK_HDR, h + SHELF_BOOK_HDR, len)) return false;
-    return book_crc(h, len) == get32(h + 28);
+    return book_crc(h, len) == le_get32(h + 28, 0);
 }
 static void book_scan(int k) {                     /* a slot that is no tank: a book's? (its group 0, then the other two) */
     if (!s_bk || s_nb >= SHELF_SLOTS_MAX) return;
@@ -471,10 +468,10 @@ static void book_scan(int k) {                     /* a slot that is no tank: a 
     for (int s = 0; s < 2 * SHELF_BOOK_GROUPS; s++) {
         if (s >= 2 && b.cur[0] < 0) return;       /* (no group 0: not a book - a free slot reads two heads, no more) */
         if (!book_sector(k, s)) continue;
-        const uint8_t *h = s_x->sec; uint32_t seq = get32(h + 12); int g = s / 2;
+        const uint8_t *h = s_x->sec; uint32_t seq = le_get32(h + 12, 0); int g = s / 2;
         if (b.cur[g] >= 0 && seq <= best[g]) continue;
-        if (g == 0) { b.owner = get32(h + 4); b.print = get32(h + 8); }
-        else if (get32(h + 8) != b.print) continue;
+        if (g == 0) { b.owner = le_get32(h + 4, 0); b.print = le_get32(h + 8, 0); }
+        else if (le_get32(h + 8, 0) != b.print) continue;
         b.cur[g] = (int8_t)(s & 1); best[g] = seq;
         if (seq > b.seq) b.seq = seq;
     }
@@ -499,7 +496,7 @@ int shelf_book_read(uint32_t owner, uint32_t print, int group, const uint8_t **r
     int b = owner && s_x ? book_find(owner, print) : -1;
     if (b < 0 || group < 0 || group >= SHELF_BOOK_GROUPS || s_bk[b].cur[group] < 0) return 0;
     if (!book_sector(s_bk[b].slot, 2 * group + s_bk[b].cur[group])) return 0;
-    *recs = s_x->sec + SHELF_BOOK_HDR; *rec = (int)get16(s_x->sec + 18);
+    *recs = s_x->sec + SHELF_BOOK_HDR; *rec = (int)le_get16(s_x->sec + 18, 0);
     return s_x->sec[17];
 }
 static int book_stale(uint32_t owner) {            /* a book of this tank's with another first page (a reset under an older build) */
@@ -531,9 +528,9 @@ static bool book_put(int b, int group, uint32_t owner, int count, int rec) {
     int copy = s_bk[b].cur[group] == 0 ? 1 : 0;
     uint32_t off = slot_off(s_bk[b].slot) + (uint32_t)(2 * group + copy) * 4096;
     memset(h, 0, SHELF_BOOK_HDR);
-    put32(h, SHELF_BOOK_MAGIC); put32(h + 4, owner); put32(h + 8, s_bk[b].print); put32(h + 12, s_bk[b].seq + 1);
-    h[16] = (uint8_t)group; h[17] = (uint8_t)count; put16(h + 18, (uint32_t)rec);
-    put32(h + 28, book_crc(h, len));
+    le_put32(h, 0, SHELF_BOOK_MAGIC); le_put32(h + 4, 0, owner); le_put32(h + 8, 0, s_bk[b].print); le_put32(h + 12, 0, s_bk[b].seq + 1);
+    h[16] = (uint8_t)group; h[17] = (uint8_t)count; le_put16(h + 18, 0, (uint32_t)rec);
+    le_put32(h + 28, 0, book_crc(h, len));
     if (!shelf_port_erase(off, 4096)) return false;
     if (len && !shelf_port_write(off + SHELF_BOOK_HDR, h + SHELF_BOOK_HDR, len)) return false;
     if (!shelf_port_write(off, h, SHELF_BOOK_HDR)) return false;
@@ -559,7 +556,7 @@ int shelf_book_rekey(uint32_t from, uint32_t to) {
     for (int b = 0; b < s_nb; b++) {
         if (s_bk[b].owner != from || s_bk[b].cur[0] < 0 || book_find(to, s_bk[b].print) >= 0) continue;
         if (!book_sector(s_bk[b].slot, 2 * 0 + s_bk[b].cur[0])) continue;   /* group 0 read back, written again as the new owner's (it names the book) */
-        if (book_put(b, 0, to, s_x->sec[17], (int)get16(s_x->sec + 18))) { s_bk[b].owner = to; n++; }
+        if (book_put(b, 0, to, s_x->sec[17], (int)le_get16(s_x->sec + 18, 0))) { s_bk[b].owner = to; n++; }
     }
     return n;
 }
