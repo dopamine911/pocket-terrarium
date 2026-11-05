@@ -1,0 +1,11 @@
+# Model training on AMD RDNA4 (Radeon AI PRO R9700, gfx1201; zaphod): AMD's TheRock nightly
+# PyTorch for the gfx120X family, whose wheels bundle ROCm, so the host needs only the amdgpu
+# driver (/dev/kfd, /dev/dri) and docker. Same torch build as Dockerfile.rocm-gfx1151. Pin one
+# card with --device /dev/kfd --device /dev/dri/renderD129 (not all of /dev/dri): the container
+# then sees exactly that GPU, no HIP_VISIBLE_DEVICES needed. Measured 2026-11-05 on zaphod
+# card2: torch 2.10.0+rocm7.13, 0.06 s/iter for the 14M L1 model (batch 64, seq 64, 300 iters),
+# 1432 MiB peak torch allocation, ~2 GiB VRAM in use per run.
+FROM python:3.12-slim
+RUN pip install --no-cache-dir --index-url https://rocm.nightlies.amd.com/v2/gfx120X-all/ torch==2.10.0+rocm7.13.0a20260513 && pip install --no-cache-dir numpy
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libatomic1 libgomp1 > /dev/null && rm -rf /var/lib/apt/lists/*
+WORKDIR /w

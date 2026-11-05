@@ -5,6 +5,7 @@ rule 3/7/8 tendencies: the trained-model side of the gate (prompt_check.py is th
   cd model
   .venv/bin/python probe_l1.py --ckpt out/ckpt_l1.pt              # the table, and out/probe_l1_ckpt_l1.json
   .venv/bin/python probe_l1.py --ckpt out/ckpt_l1.pt --n 200      # five times the states (same builders)
+  python3 probe_l1.py --ckpt ... --device cuda                      # on a GPU (harness.py's jobs): rows agree with the CPU to ~1e-7
   python3 probe_l1.py --selftest                                   # the arithmetic on a fake model (no torch)
 
 The states are prompt_check.py's L1 panel (panel_l1 with its seed 11 and --n 40: the same 464
@@ -38,7 +39,7 @@ BATCH = 256
 class Student:
     """train.py's checkpoint as the device runs it: the goal distribution after `<state> ->`"""
 
-    def __init__(self, ckpt, temp=1.0):
+    def __init__(self, ckpt, temp=1.0, device="cpu"):
         import torch
         sys.path.insert(0, os.path.join(HERE, "llama2.c"))
         from model import ModelArgs, Transformer
@@ -50,7 +51,8 @@ class Student:
         self.model = Transformer(args)
         state = {k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k: v for k, v in d["model"].items()}
         self.model.load_state_dict(state, strict=True)
-        self.model.eval()
+        self.model.to(device).eval()
+        self.device = device
         self.max_seq_len = args.max_seq_len
         self.gid = [tok.encode(g)[0] for g in gt.GOALS_L1]
         self.info = {"iter": d.get("iter"), "val_loss": d.get("val_loss"), "model_args": d["model_args"]}
@@ -69,9 +71,9 @@ class Student:
             for idx in by_len.values():
                 for k in range(0, len(idx), BATCH):
                     chunk = idx[k:k + BATCH]
-                    logits = self.model(torch.tensor([ids[i] for i in chunk], dtype=torch.long))[:, -1, :]
-                    p = torch.softmax(logits[:, self.gid] / self.temp, dim=-1)        # the goals only, as on the device
-                    mass = torch.softmax(logits, dim=-1)[:, self.gid].sum(dim=-1)  # sanity: ~1 for a trained model
+                    logits = self.model(torch.tensor([ids[i] for i in chunk], dtype=torch.long, device=self.device))[:, -1, :]
+                    p = torch.softmax(logits[:, self.gid] / self.temp, dim=-1).cpu()        # the goals only, as on the device
+                    mass = torch.softmax(logits, dim=-1)[:, self.gid].sum(dim=-1).cpu()  # sanity: ~1 for a trained model
                     for j, i in enumerate(chunk):
                         out[i] = ({g: float(p[j, n]) for n, g in enumerate(gt.GOALS_L1)}, float(mass[j]))
         return out
@@ -212,6 +214,7 @@ def main():
     ap.add_argument("--temp", type=float, default=1.0, help="sampling temperature (the device: 1.0)")
     ap.add_argument("--out", default=None, help="the JSON (default out/probe_l1_<checkpoint name>.json)")
     ap.add_argument("--strict", action="store_true", help="exit 1 if a row fails")
+    ap.add_argument("--device", default="cpu", help="cpu|cuda: where the checkpoint runs (the numbers are the same)")
     ap.add_argument("--selftest", action="store_true", help="check the arithmetic on a fake model and stop")
     args = ap.parse_args()
     tok.set_schema("L1")
@@ -222,7 +225,7 @@ def main():
         ap.error("--ckpt is required (or --selftest)")
     if args.temp <= 0:
         ap.error("--temp must be > 0 (the device samples at 1.0)")
-    student = Student(args.ckpt, args.temp)
+    student = Student(args.ckpt, args.temp, args.device)
     rows, by, sweep, masses = probe(student.dists, args.n, args.seed)
     print(f"{args.ckpt}: iter {student.info['iter']}, val_loss {student.info['val_loss']}; "
           f"{sum(len(v) for v in by.values())} states (prompt_check panel, --n {args.n}, seed {args.seed}), "

@@ -1,0 +1,14 @@
+# Named architectures for harness.py (docs/pipeline.md, "Training harness").
+# The vocabulary is not entered here: train.py takes it from the schema's tokenizer
+# (train_tokenizer.py, POCKET_SCHEMA). mem_mib is what one training job takes on a card;
+# the memory guard adds the card's reserve_mib on top.
+
+["l1-14m"]
+schema = "L1"
+dim = 384
+n_layers = 8
+n_heads = 8
+max_seq_len = 64
+# measured 2026-11-05 (batch 64): torch peak 1432 MiB on an R9700, 1577 on the 8060S; the
+# cards' sysfs counters rose 2049 / 2058 MiB (the runtime's own share on top)
+mem_mib = 2560

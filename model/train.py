@@ -138,7 +138,9 @@ def main():
                 marker = f" -> saved {os.path.basename(args.out)}"
             print(f"iter {it} val_loss {vl:.4f}{marker}")
 
-    print(f"done: best val_loss {best_val:.4f}, checkpoint {args.out}")
+    peak = (f", peak GPU memory {torch.cuda.max_memory_allocated() / 2**20:.0f} MiB"
+            if device == "cuda" else "")
+    print(f"done: best val_loss {best_val:.4f}, checkpoint {args.out}{peak}")
 
 
 if __name__ == "__main__":

@@ -384,12 +384,17 @@ text: A10 0.863, A12 0.000, A12x 0.000 (social 7-9 still investigates, 0.987); e
 prompt_check row OK. Only 7 of the night's 44,968 labels are of the old kind, so the night was
 kept; the seed-71 labels (old prompt) were replaced.
 
-**Run** (`run_l1_focus_retrain.sh`, `TRAIN_HOST=marvin`; ~1 h 30 min wall):
+**Run** (`run_l1_focus_retrain.sh`; ~1 h 30 min wall on 2026-11-05, when it trained on marvin
+alone). The script now makes the labels and hands the rest to the training harness
+(`harness.py run l1-focus2`, [pipeline.md](pipeline.md#training-harness)): fold, the three seeds
+one per card, the probes below, exports and the seed selection, in
+`out/harness/l1-focus2/report.md`. The run's config, `harness/runs/l1-focus2.toml`, carries the
+table below as its validation reference.
 
 ```bash
 export LAB_API_KEY=...   # as in section 1
-TRAIN_HOST=marvin setsid -f nohup bash run_l1_focus_retrain.sh > /dev/null 2>&1 < /dev/null
-# log: out/l1_focus2_pipeline.log; reruns resume the teacher labels
+setsid -f nohup bash run_l1_focus_retrain.sh > /dev/null 2>&1 < /dev/null   # args go to harness.py run, e.g. --mode opportunistic
+# log: out/l1_focus2_pipeline.log; reruns resume the teacher labels and the harness's jobs
 ```
 
 - **Labels:** 6,000 focused labels, seed 73: A10 2000, A12 1000 pairs, A12x 1000 pairs; 42 min
@@ -425,6 +430,33 @@ shipped seed is the one with the widest smallest margin (chosen by that rule bef
 Lessons: probe a narrow row by `last` and by trait before adding data; a student that matches its
 teacher's slip is learning the prompt, not failing to. Check every candidate on more than one
 training seed, because a row near its limit can move 0.2 between seeds of the same data.
+
+**Harness baseline** (2026-11-05, `harness.py run l1-focus2`, lab in training mode; 13.2 min wall
+against the 35 above). The same data (the fold is byte-identical, sha256 `5f87b8eb…`), seeds and
+probes, one job per card: s1337 on marvin's 8060S (0.15 s/iter), s1 and s2 on zaphod's R9700s
+(0.05-0.06 s/iter). Every row passes on every seed. This is the reference in
+`harness/runs/l1-focus2.toml`; the table above does not reproduce. Run alone, a card is
+deterministic: two harness runs gave identical rows for every seed. The first run shared the
+8060S three ways, and its s1337 log leaves this one between iter 100 and 200 (A8 then ends 0.05
+apart).
+
+| Row (limit) | s1337 p11 / p23 | s1 p11 / p23 | s2 p11 / p23 |
+|---|---|---|---|
+| A2 starving hunts (≥ 0.86) | 0.932 / 0.928 | 0.909 / 0.910 | 0.940 / 0.937 |
+| A8 stressed hides (≥ 0.70) | 0.942 / 0.964 | 0.986 / 0.987 | 0.979 / 0.984 |
+| A10 fresh pastime kept (≥ 0.40) | 0.759 / 0.727 | 0.777 / 0.720 | 0.756 / 0.733 |
+| A11 bold 9 - bold 0 (≥ 0.15) | +0.565 / +0.589 | +0.503 / +0.541 | +0.581 / +0.600 |
+| A12 solitary investigates (≤ 0.05) | 0.002 / 0.002 | 0.001 / 0.001 | 0.001 / 0.001 |
+| r7 sociable investigates (≥ 0.10) | 0.985 / 0.986 | 0.980 / 0.974 | 0.982 / 0.977 |
+| content: max single goal (< 0.45) | 0.402 / 0.379 | 0.377 / 0.376 | 0.401 / 0.362 |
+| smallest margin over all rows | +0.048 (tied) | +0.049 (tied) | +0.049 (tied) |
+| val loss | **0.7456** (selected) | 0.7489 | 0.7474 |
+
+Selection treats smallest margins within the probe's own noise of the widest as a tie: the binding
+rows' mean panel-to-panel spread, never less than 0.005 (`tie_floor` in a run's config). Ties go to
+the lower val loss. Here all three bind on A12 within 0.001, so s1337 is selected. Under the same
+rule the first table above still selects s2: its content spread (0.018) ties s1 (+0.039) with s2
+(+0.048), and s2 has the lower val loss. The shipped model stays that s2.
 
 ## 7. The sim census, A13–A16 (2026-11-05)
 
