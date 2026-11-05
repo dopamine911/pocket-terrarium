@@ -50,6 +50,25 @@ not running, use the system daemon without changing the selection:
 DOCKER_CONTEXT=default ./tools/sim_docker.sh --board round
 ```
 
+### Larger windows
+
+Quit the current simulator with **Q** first, so it saves before you reopen it.
+For a 2× round display (932 × 932 pixels), run:
+
+```bash
+DOCKER_CONTEXT=default ./tools/sim_docker.sh --board round -- --zoom 2
+```
+
+`--zoom` accepts whole-number scales from **1 to 8**. The simulator reduces the
+scale when needed to fit the available screen. Changing zoom does not change
+the save directory, so your existing terrarium carries on.
+
+To use the largest whole-number scale that fits a fullscreen window:
+
+```bash
+DOCKER_CONTEXT=default ./tools/sim_docker.sh --board round -- --fullscreen
+```
+
 Headless checks and image builds:
 
 ```bash
