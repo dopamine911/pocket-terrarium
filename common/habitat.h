@@ -50,6 +50,7 @@ typedef struct {
     const char *name;                   /* "DESERT" */
     uint8_t     id;                     /* stored in the save; never reused; 1..31 (species_t.habitats is a bit per id) */
     world_t     world;                  /* the build it belongs to: only a species of the same world lives in it */
+    bool        test_only;              /* compiled in for the tests (A16's warm desert), never offered to a keeper */
     /* the air while lit: the floor from its warm end to its cool end, straight across (an aquarium's may be even), and
        rise_c warmer at the glass's top than on the floor under it - the lamp's heat rising, straight up with v; dark, the
        lamp out, all of it night_drop_c cooler than the lit floor and no rise */
@@ -76,6 +77,7 @@ typedef struct {
 
 #define HABITAT_DESERT     1            /* common/habitat/desert.c (the terrarium) */
 #define HABITAT_FRESHWATER 2            /* common/habitat/freshwater.c (the aquarium) */
+#define HABITAT_TEST_WARM  31           /* common/habitat/desert.c: A16's - the desert 6 C warmer throughout, for the test pack */
 #if PT_TERRARIUM
 #define HABITAT_DEFAULT HABITAT_DESERT
 #else
@@ -83,7 +85,7 @@ typedef struct {
 #endif
 /* the dish's half-width on the sand (the rules keep it clear of the hides; render.c draws it this wide) */
 #define HABITAT_DISH_HW 14.0f
-extern const habitat_t HABITAT_PACK_DESERT, HABITAT_PACK_FRESHWATER;
+extern const habitat_t HABITAT_PACK_DESERT, HABITAT_PACK_FRESHWATER, HABITAT_PACK_TEST_WARM;
 
 const habitat_t *habitat_get(uint8_t id);      /* NULL: no such habitat */
 int  habitat_count(void);

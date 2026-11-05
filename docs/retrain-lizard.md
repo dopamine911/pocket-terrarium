@@ -339,8 +339,8 @@ python3 make_l1_parity.py --check                                   # R4, Python
 | A1 teacher agreement ≥ 72% | `eval.py --teacher` (above; the key in `$LAB_API_KEY`) | built |
 | A2–A12, rules 3/7/8 and the content attractor, on the student | `probe_l1.py --ckpt out/ckpt_l1.pt` | built |
 | the same rows on the teacher (what the student inherits) | `prompt_check.py --schema L1` | built |
-| A13 heat 4–7 share ≥ 0.7, A14 zones/min ≥ 1.0, A15 crickets/h ≥ 4 | a `./fishsim --selftest-llm` census with the L1 model | **not built**: needs sim work (P2b/P6) |
-| A16 the A13 census on test pack 250 | the same census, pack 250 | **not built** (the census; the pack is in C, `SPECIES_PACK_TEST_WARM`, and in Python) |
+| A13 heat 4–7 share ≥ 0.7, A14 zones/min ≥ 1.0, A15 crickets/h ≥ 4 | `./fishsim --census-llm ../model/out/model_q4_l1_focus2.bin ../model/out/tokenizer_l1.bin` (from `sim/`; `PT_CENSUS_SEED` for other terrariums) | built: section 7 |
+| A16 the A13 census, test pack 250 in the test warm desert | the same with `250 31` after the tokenizer | built: section 7 |
 | R4 C/Python encoder parity | `make_l1_parity.py --check`; `./fishsim --selftest-l1-encode` (in `make check`) | built |
 
 `probe_l1.py` reads train.py's PyTorch checkpoint directly (llama2.c's `Transformer`: no export,
@@ -425,6 +425,39 @@ shipped seed is the one with the widest smallest margin (chosen by that rule bef
 Lessons: probe a narrow row by `last` and by trait before adding data; a student that matches its
 teacher's slip is learning the prompt, not failing to. Check every candidate on more than one
 training seed, because a row near its limit can move 0.2 between seeds of the same data.
+
+## 7. The sim census, A13–A16 (2026-11-05)
+
+```bash
+cd sim   # after a terrarium build; each run is one simulated hour, ~30 s
+./fishsim --census-llm ../model/out/model_q4_l1_focus2.bin ../model/out/tokenizer_l1.bin          # A13-A15
+./fishsim --census-llm ../model/out/model_q4_l1_focus2.bin ../model/out/tokenizer_l1.bin 250 31   # A16
+PT_CENSUS_SEED=502 ./fishsim --census-llm ...                                                      # another terrarium
+./fishsim --census-llm rules x 250 31                                                              # the rule stub, same bars
+```
+
+The model decides at the device's pace (one in flight, 3.7 s each, sampled at 1.0). Results on terrariums 501–505,
+three lizards, nobody at the glass:
+
+| Row (bar) | Gecko in the desert | A16: test pack in the test warm desert | Rule stub, gecko |
+|---|---|---|---|
+| A13 heat 4–7 (≥ 70%) | 98–99% | 96–97% | 98% |
+| A14 zones per lizard-minute (≥ 1.0) | 2.56–2.78 | 2.66–2.92 | 2.61 |
+| A15 crickets per lizard-hour (≥ 4) | 4.4–5.3 | 4.4–8.9 | 4.9 |
+
+All three rows passed on all ten runs. The night's model also passed A13–A14 but missed A15 once (4.0 on terrarium
+502). The model asked was 3.3 times a lizard-minute; the night it slept in a hide or lay still 98% of the time; every
+growth shed came off clean.
+
+- **The floor-desert question:** the night's traces came from the flat desert, and the terraces landed mid-run (PLAN P4
+  "Known mismatch"). The census runs on the terraces and passes, so no re-mirror and no top-up night.
+- **A16's habitat:** the test pack first ran in the gecko's own desert, and failed there. Only the basking spot reaches
+  its band, so three lizards cannot share it for 70% of the day. The rule stub managed 16–42%, the model 42–70%; the
+  model basked 57–68% of the time against ~10% for the gecko, so it did read the band. A16 now uses the test warm
+  desert (habitat 31, test-only), the desert 6 °C warmer throughout (`model/schema-lizard.md`).
+- **A15 is the narrowest row:** 4.4 on three of five terrariums for the gecko, against a bar of 4. That rate is set by
+  how often the tank drops crickets on its own, not by the model: the rule stub gets the same 4.9. P2d tunes the feeding,
+  then this census is the re-check.
 
 ## If the night goes wrong
 

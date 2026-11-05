@@ -128,6 +128,8 @@ int selftest_gestures(void);            /* ... THE HAND (resting on the ground n
 int selftest_terr_pay(void);            /* ... the terrarium's sand dollars: keeper meals (crickets, the dish) and clean sheds */
 int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper; the
                                            share above the floor and the zone rows */
+int census_llm(const char *model_path, const char *tok_path, int pack, int habitat);   /* --census-llm <model.bin> <tok.bin>
+                                          [pack [habitat]]: the same terrarium, the trained model thinking at the device's pace: A13-A15 (250 31: A16) */
 #if PT_NET
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
@@ -13323,6 +13325,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-gestures") == 0) return selftest_gestures();
         if (strcmp(argv[a], "--selftest-terr-pay") == 0) return selftest_terr_pay();
         if (strcmp(argv[a], "--selftest-terrarium") == 0) return selftest_terrarium();
+        if (strcmp(argv[a], "--census-llm") == 0 && a + 2 < argc)
+            return census_llm(argv[a + 1], argv[a + 2], a + 3 < argc ? atoi(argv[a + 3]) : SPECIES_DEFAULT,
+                              a + 4 < argc ? atoi(argv[a + 4]) : HABITAT_DEFAULT);
         if (strcmp(argv[a], "--genes") == 0 && a + 1 < argc) return genes_shot(argv[a + 1]);
         if (strcmp(argv[a], "--plant-order") == 0) return plant_order();
         if (strcmp(argv[a], "--place-shot") == 0 && a + 1 < argc) return place_shot(argv[a + 1]);

@@ -1264,11 +1264,44 @@ int selftest_terr_pay(void) {
     return 0;
 }
 
-/* ================================================================ --selftest-terrarium */
-int selftest_terrarium(void) {
-    s_name = "selftest-terrarium";
+/* ================================================================ --selftest-terrarium, --census-llm */
+/* THE MODEL AS THE BRAIN, AT THE DEVICE'S PACE (--census-llm, P4/P6's A13-A16): one decision in flight at a time, as the
+ * board's single advisor; the state is encoded when the decision starts and its answer lands CENSUS_LLM_S later (the 1.8
+ * decides in ~3.7 s, README) on that lizard's next poll; an urgent asker (starving, not already hunting) goes first, then
+ * the rotation - sim/advisor_llm.c's order. Sampled at temperature 1.0, as the device. Synchronous, so a sim hour costs
+ * its inference time, not an hour. */
+#define CENSUS_LLM_S 3.7f
+static struct { bool pend[N_FISH_SLOTS]; int fish, next; goal_t g; double ready; long asks; } s_llm = { .fish = -1 };
+static goal_t advisor_llm_paced(const tank_t *t, int i, bool request) {
+    goal_t out = t->fish[i].goal;
+    if (s_llm.fish == i && t->clock >= s_llm.ready) { if (s_llm.g.id < GOAL_COUNT) out = s_llm.g; s_llm.fish = -1; }
+    if (request) s_llm.pend[i] = true;
+    if (s_llm.fish >= 0) return out;
+    int pick = -1;
+    for (int k = 0; k < N_FISH_SLOTS && pick < 0; k++) {
+        const int j = (s_llm.next + k) % N_FISH_SLOTS;
+        if (s_llm.pend[j] && !tank_swims(t, j)) s_llm.pend[j] = false;
+        if (s_llm.pend[j] && t->fish[j].hunger > 8.0f && t->fish[j].goal.id != GOAL_W_FOOD) pick = j;
+    }
+    for (int k = 0; k < N_FISH_SLOTS && pick < 0; k++) { const int j = (s_llm.next + k) % N_FISH_SLOTS; if (s_llm.pend[j]) pick = j; }
+    if (pick < 0) return out;
+    char st[400];
+    advisor_core_encode(t, pick, st, sizeof st);
+    s_llm.g = advisor_core_infer(st, NULL);
+    s_llm.fish = pick; s_llm.ready = t->clock + CENSUS_LLM_S; s_llm.pend[pick] = false; s_llm.next = (pick + 1) % N_FISH_SLOTS; s_llm.asks++;
+    return out;
+}
+
+/* the free-running terrarium: 40 min lit, the night, 5 min lit; nobody at the glass, the tank's own trickle. The rule stub
+ * (--selftest-terrarium) holds P2b/P2c's bars; the model (--census-llm) holds model/schema-lizard.md's A13-A15, and A16
+ * is the same run with the test pack 250 in its own warm desert (habitat 31) */
+static int terrarium_census(advisor_fn brain, uint8_t habitat, uint8_t pack, bool model) {
     tank_t *t = &s_t;
-    fresh(t, 501, 3, true);                        /* the founding pair and one more, the tank's own trickle on */
+    const char *seed_env = getenv("PT_CENSUS_SEED");   /* another terrarium: the same run, other starts and other dice */
+    fresh(t, seed_env ? (uint32_t)strtoul(seed_env, NULL, 10) : 501, 3, true);   /* the founding pair and one more, the tank's own trickle on */
+    if ((habitat != t->habitat_id || pack != t->pack_id) && !tank_set_packs(t, habitat, pack)) WF("a tank refused habitat %d with pack %d", habitat, pack);
+    /* (another pair: the same lizards take its rates and band from the next tick, the same rocks - selftest-heat's test pack
+       does; the warm desert's ground is the desert's, so where they stand stays ground) */
     const species_t *sp = tank_species(t);
     const terrain_t *tr = tank_terrain(t);
     const int humid = tank_humid_hide(t);
@@ -1280,6 +1313,7 @@ int selftest_terrarium(void) {
     long goal_frames[GOAL_COUNT] = { 0 };
     int zones[N_FISH_MAX] = { 0 }, stuck = 0, stuck_growth = 0, eaten0 = 0;
     bool zone_seen[N_FISH_MAX][6] = { { false } };
+    uint8_t zmin[N_FISH_MAX] = { 0 }; long zmin_sum = 0, zmin_windows = 0;   /* A14: distinct zones a lizard passes through per lit minute */
     stage_t stage0[N_FISH_MAX]; uint16_t clean0[N_FISH_MAX]; int8_t was_surf[N_FISH_MAX]; float was_x[N_FISH_MAX], was_y[N_FISH_MAX];
     for (int i = 0; i < n; i++) { stage0[i] = t->fish[i].stage; clean0[i] = t->fish[i].shed_clean; eaten0 += t->fish[i].eaten; was_surf[i] = t->fish[i].surf; was_x[i] = t->fish[i].x; was_y[i] = t->fish[i].y; }
     const uint32_t drop0 = t->ck_dropped, caught0 = t->ck_caught, missed0 = t->ck_missed, lost0 = t->ck_lost;
@@ -1290,7 +1324,7 @@ int selftest_terrarium(void) {
         if (k == (int)(lit_s / DT)) lights(t, false);
         if (k == (int)((lit_s + dark_s) / DT)) lights(t, true);
         const uint32_t caught_was = t->ck_caught;
-        tank_tick(t, DT, advisor_rules); progression_tick(t, DT);
+        tank_tick(t, DT, brain); progression_tick(t, DT);
         if (!t->night) caught_lit += t->ck_caught - caught_was;
         const int phase = tank_activity_phase(t);
         for (int i = 0; i < n; i++) {
@@ -1305,36 +1339,53 @@ int selftest_terrarium(void) {
                 lit++; int h = (int)f->heat; band47 += h >= 4 && h <= 7; band56 += h >= 5 && h <= 6; in_hide += f->hide >= 0;
                 hunger_lit += f->hunger; hunger_max = fmaxf(hunger_max, f->hunger);
                 above += f->surf != 0; on_kind[tr->path[f->surf].kind]++; on_bask_rock += f->surf == tr->bask_path;
-                row_top += row == 0; zone_lit[z]++;
+                row_top += row == 0; zone_lit[z]++; zmin[i] |= (uint8_t)(1u << z);
             }
             if (phase == PHASE_SLEEP) { sleep++; sleep_ok += f->hide >= 0 || f->pose == LZ_POSE_REST; }
             if (f->shed == SHED_SHEDDING) { shedding++; shed_in_humid += f->hide == humid; }
             if (f->shed == SHED_STUCK) { stuck++; stuck_growth += f->shed_growth; }   /* (a timed shed in a dried hide sticks by design: the keeper's mister) */
         }
+        if (!t->night && (k + 1) % (int)(60 / DT) == 0)   /* a lit minute closed (a minute that ran into the night never closes) */
+            for (int i = 0; i < n; i++) { zmin_sum += __builtin_popcount(zmin[i]); zmin_windows++; zmin[i] = 0; }
+        if (t->night) for (int i = 0; i < n; i++) zmin[i] = 0;
     }
     int grew = 0, clean = 0, eaten = -eaten0;
     for (int i = 0; i < n; i++) { grew += t->fish[i].stage > stage0[i]; clean += t->fish[i].shed_clean - clean0[i]; eaten += t->fish[i].eaten; }
-    printf("selftest-terrarium: %d lizards, %d min lit, %.0f min dark, %d min lit: no keeper, the rule stub, the tank's own trickle\n",
-           n, lit_s / 60, dark_s / 60.0f, morning_s / 60);
-    printf("selftest-terrarium: lit, heat 4-7 %.0f%% of lizard-time (A13's band), 5-6 %.0f%%; in a hide %.0f%%; asleep, in a hide or lying still %.0f%%\n",
+    printf("%s: %d lizards of %s, %d min lit, %.0f min dark, %d min lit: no keeper, %s, the tank's own trickle\n", s_name,
+           n, sp->name, lit_s / 60, dark_s / 60.0f, morning_s / 60, model ? "the model at the device's pace (" "3.7" " s a decision)" : "the rule stub");
+    printf("%s: lit, heat 4-7 %.0f%% of lizard-time (A13's band), 5-6 %.0f%%; in a hide %.0f%%; asleep, in a hide or lying still %.0f%%\n", s_name,
            100.0 * band47 / lit, 100.0 * band56 / lit, 100.0 * in_hide / lit, sleep ? 100.0 * sleep_ok / sleep : 0.0);
-    printf("selftest-terrarium: lit, above the floor %.0f%% of lizard-time (on rocks %.0f%%, the basking rock %.0f%%, on ramps %.0f%%); the zone rows top / bottom %.0f%% / %.0f%%; zones",
+    printf("%s: lit, above the floor %.0f%% of lizard-time (on rocks %.0f%%, the basking rock %.0f%%, on ramps %.0f%%); the zone rows top / bottom %.0f%% / %.0f%%; zones", s_name,
            100.0 * above / lit, 100.0 * on_kind[PATH_ROCK] / lit, 100.0 * on_bask_rock / lit, 100.0 * on_kind[PATH_RAMP] / lit, 100.0 * row_top / lit, 100.0 * (lit - row_top) / lit);
     for (int z = 0; z < 6; z++) printf(" %d:%.0f%%", z + 1, 100.0 * zone_lit[z] / lit);
     printf("\n");
-    printf("selftest-terrarium: sheds: %d off clean, %d lizards grew (a growth shed each), shedding time in the humid hide %.0f%%, stuck %.0f lizard-s (%.0f of it a growth shed); the humid hide %.2f -> %.2f, never misted\n",
+    printf("%s: sheds: %d off clean, %d lizards grew (a growth shed each), shedding time in the humid hide %.0f%%, stuck %.0f lizard-s (%.0f of it a growth shed); the humid hide %.2f -> %.2f, never misted\n", s_name,
            clean, grew, shedding ? 100.0 * shed_in_humid / shedding : 0.0, stuck * DT, stuck_growth * DT, moist0, t->moist[humid]);
-    printf("selftest-terrarium: goals");
+    printf("%s: goals", s_name);
     for (int g = GOAL_FIRST; g < GOAL_FIRST + GOAL_N; g++) printf(" %s %.0f%%", GOAL_NAMES[g], 100.0 * goal_frames[g] / ((double)total * n));
     printf(" | zones each:"); for (int i = 0; i < n; i++) printf(" %d", zones[i]);
     printf(" | eaten %d\n", eaten);
+    const double zones_per_min = zmin_windows ? (double)zmin_sum / zmin_windows : 0;
+    printf("%s: lit, %.2f distinct zones per lizard-minute (A14's >= 1.0)%s\n", s_name, zones_per_min,
+           model ? "" : " (the rule stub: no bar)");
+    if (model) printf("%s: the model was asked %ld times (%.1f a lizard-minute)\n", s_name, s_llm.asks, s_llm.asks / (total * DT / 60.0) / n);
     const double lizard_h = lit * DT / 3600.0, catches_per_lizard_h = caught_lit / lizard_h;
-    printf("selftest-terrarium: AUTO CRICKETS: %u dropped, %u caught (%u lit: %.1f a lizard-hour, A15's >= 4), %u strikes missed (%.0f%% of strikes), %u gone uneaten; hunger lit mean %.1f, at most %.1f\n",
+    printf("%s: AUTO CRICKETS: %u dropped, %u caught (%u lit: %.1f a lizard-hour, A15's >= 4), %u strikes missed (%.0f%% of strikes), %u gone uneaten; hunger lit mean %.1f, at most %.1f\n", s_name,
            t->ck_dropped - drop0, t->ck_caught - caught0, caught_lit, catches_per_lizard_h, t->ck_missed - missed0,
            100.0 * (t->ck_missed - missed0) / fmax(1, (t->ck_missed - missed0) + (t->ck_caught - caught0)), t->ck_lost - lost0, hunger_lit / lit, hunger_max);
     for (int i = 0; i < n; i++)
         printf("  %-5s %-5s %d clean shed%s, heat %.1f, %s, %s\n", t->fish[i].name, STAGE_NAMES[t->fish[i].stage], t->fish[i].shed_clean, t->fish[i].shed_clean == 1 ? "" : "s",
                t->fish[i].heat, GOAL_NAMES[t->fish[i].goal.id], t->fish[i].hide >= 0 ? HIDE_KIND_NAMES[tank_habitat(t)->hides[t->fish[i].hide].kind] : "out");
+    if (model) {                                   /* model/schema-lizard.md A13-A15 (A16: this, on pack 250) */
+        bool fail = false;
+        if (100.0 * band47 / lit < 70) { printf("FAIL: %s: A13 heat 4-7 %.0f%% of lit time (>= 70%%)\n", s_name, 100.0 * band47 / lit); fail = true; }
+        if (zones_per_min < 1.0) { printf("FAIL: %s: A14 %.2f zones per lizard-minute (>= 1.0)\n", s_name, zones_per_min); fail = true; }
+        if (catches_per_lizard_h < 4.0) { printf("FAIL: %s: A15 %.1f crickets a lit lizard-hour (>= 4)\n", s_name, catches_per_lizard_h); fail = true; }
+        if (fail) return 1;
+        printf("%s OK: A13 %.0f%%, A14 %.2f, A15 %.1f%s\n", s_name, 100.0 * band47 / lit, zones_per_min, catches_per_lizard_h,
+               pack == SPECIES_DEFAULT ? "" : habitat == HABITAT_TEST_WARM ? " (A16: the test pack in its warm desert)" : " (the test pack in the desert)");
+        return 0;
+    }
     if (100.0 * band47 / lit < 90) WF("lit, heat 4-7 only %.0f%% of the time (P2b's 99%%; the bar: 90%%)", 100.0 * band47 / lit);
     if (grew < n || stuck_growth) WF("%d of %d lizards grew, %.0f lizard-s stuck in a growth shed: the growth sheds did not come off clean on their own", grew, n, stuck_growth * DT);
     if (sleep && 100.0 * sleep_ok / sleep < 90) WF("asleep, in a hide or lying still only %.0f%% of the time", 100.0 * sleep_ok / sleep);
@@ -1343,4 +1394,27 @@ int selftest_terrarium(void) {
     for (int i = 0; i < n; i++) if (zones[i] < 3) WF("%s saw %d of the zones in %d min", t->fish[i].name, zones[i], (lit_s + morning_s) / 60);
     printf("selftest-terrarium OK\n");
     return 0;
+}
+int selftest_terrarium(void) { s_name = "selftest-terrarium"; return terrarium_census(advisor_rules, HABITAT_DEFAULT, SPECIES_DEFAULT, false); }
+/* --census-llm <model.bin> <tokenizer.bin> [pack [habitat]]: the same terrarium with the model thinking (model/schema-lizard.md
+ * A13-A15; A16: pack SPECIES_TEST_WARM in HABITAT_TEST_WARM). `rules` for the model file: the rule stub against the same
+ * bars - the baseline that tells the model's misses from the habitat's (what the place allows at all). Not in `make check`:
+ * it needs a trained model under model/out (ignored). */
+static void *census_alloc(size_t n) { return calloc(1, n); }
+int census_llm(const char *model_path, const char *tok_path, int pack, int habitat) {
+    s_name = "census-llm";
+    if (strcmp(model_path, "rules") == 0) return terrarium_census(advisor_rules, (uint8_t)habitat, (uint8_t)pack, true);
+    size_t ml = 0, tl = 0;
+    FILE *fm = fopen(model_path, "rb"), *ft = fopen(tok_path, "rb");
+    if (!fm || !ft) { if (fm) fclose(fm); if (ft) fclose(ft); WF("cannot open %s / %s", model_path, tok_path); }
+    fseek(fm, 0, SEEK_END); ml = (size_t)ftell(fm); rewind(fm); fseek(ft, 0, SEEK_END); tl = (size_t)ftell(ft); rewind(ft);
+    uint8_t *mb = malloc(ml), *tb = malloc(tl);
+    const bool ok = mb && tb && fread(mb, 1, ml, fm) == ml && fread(tb, 1, tl, ft) == tl;
+    fclose(fm); fclose(ft);
+    if (!ok) WF("short read of %s / %s", model_path, tok_path);
+    if (!advisor_core_init(mb, ml, tb, tl, census_alloc, 0x1234567u)) WF("%s / %s: not a model this bin can run", model_path, tok_path);
+    free(tb);                                      /* (the model's bytes stay: the weights are read in place) */
+    if (advisor_core_schema() != ADVISOR_SCHEMA_L1) WF("%s is schema %d, not the lizard's L1", model_path, advisor_core_schema());
+    memset(&s_llm, 0, sizeof s_llm); s_llm.fish = -1;
+    return terrarium_census(advisor_llm_paced, (uint8_t)habitat, (uint8_t)pack, true);
 }

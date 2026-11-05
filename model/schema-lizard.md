@@ -162,14 +162,25 @@ sampling as on the device (temperature 1.0). A model ships only if every row hol
 | A10 | `phase active`, bored 0–1, content state → `last` kept | ≥ 0.4 |
 | A11 | bold 0 → 9 sweep: P(`explore` + `investigate`) rises | slope > 0, ≥ 0.15 apart at the ends |
 | A12 | social 0, `other` near: P(`investigate`) | ≤ 0.05 |
-| A13 | Sim census (`--selftest-llm`): share of awake time with heat in 4–7 | ≥ 0.7 |
+| A13 | Sim census (`--census-llm`): share of lit time with heat in 4–7 | ≥ 0.7 |
 | A14 | Sim census: distinct zones per lizard-minute | ≥ 1.0 (lizards roam less than fish' 1.5) |
 | A15 | Sim census: crickets caught per lizard-hour when fed normally | ≥ 4 (they are not starving) |
-| A16 | Pack independence: the A13 census rerun with a test pack whose comfort band is 6 °C warmer than the gecko's | heat 4–7 share ≥ 0.7 there too |
+| A16 | Pack independence: the A13 census rerun with the test pack 250 (comfort band 6 °C warmer than the gecko's) in the test warm desert (habitat 31: the desert 6 °C warmer throughout) | heat 4–7 share ≥ 0.7 there too |
 
 A16 is the check on R6 (PLAN.md). The model only ever sees normalised lines, so
 the test is on the whole loop: the pack's normalisation plus the same model must
 keep a differently built lizard inside its own comfort band.
+
+The census (`./fishsim --census-llm <model> <tokenizer> [pack [habitat]]`, sim/selftest_walk.c) runs three lizards
+through 40 min lit, the night and 5 min lit with nobody at the glass and the tank's own feeding. The model decides at
+the device's pace: one decision in flight, ~3.7 s each, sampled at 1.0. `PT_CENSUS_SEED` picks the terrarium;
+`rules` in place of the model runs the rule stub against the same bars, a baseline for what the place allows.
+
+A16's habitat, decided 2026-11-05. As first written, A16 put the test pack in the gecko's desert. There only the
+basking spot (35 °C) reaches the band (34–38 °C), so three lizards cannot share it for 70% of the day whatever decides.
+Five terrariums each: the rule stub 16–42%, the model 42–70%. The model basked 57–68% of the time against the gecko's
+~10%, so it did read the band. A place that offers the test pack its band as the desert offers the gecko its band
+measures the model, not the room on one rock. The threshold is unchanged.
 
 A2 is defined on clean states (2026-11-04). On the first night's sim states the
 teacher hunted 0.79 overall but 0.93 once shedding, panicked and night-time

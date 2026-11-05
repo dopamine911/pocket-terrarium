@@ -268,14 +268,17 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
       **Known mismatch:** these traces come from the floor-level desert (P2a); the terraces landed mid-run. The
       line only carries normalised heat, sight buckets and zones, so the rules still apply, but the zone/`warm`
       distribution differs (the basking spot is now top row). Decision: train on them, then let A13–A16 decide; if the
-      census fails, re-mirror the terrain in `gen_traces.py` and run a top-up night.
+      census fails, re-mirror the terrain in `gen_traces.py` and run a top-up night. **Decided 2026-11-05:** the census
+      passes on the terraces, so no re-mirror and no top-up.
 - [x] Fold → tokenizer → train → export (2026-11-04, CPU, val 0.7333): A1–A12 all pass but A10 (0.38) and A12 (0.15)
 - [x] Focused repair (2026-11-05, `docs/retrain-lizard.md` §6): the teacher's rule 6/7 conflict fixed in the prompt;
       6,000 focused labels; 50,968 pairs; three seeds all pass every row on two 240-state-per-row panels; shipped
       candidate seed 2 (`out/model_q4_l1_focus2.bin`, smallest margin +0.048; A12 0.001; A1 teacher agreement 82%)
 - [x] Training hardware: marvin's Radeon 8060S in a ROCm container (`model/docker/Dockerfile.rocm-gfx1151`):
       0.15 s/iter, ~13 min per 5,000-iter model (this CPU: 1.22 s/iter; marvin's CPU 0.56)
-- [ ] A13–A16 sim census with the L1 model (needs P2c crickets and P3b; then the terrain re-mirror decision above)
+- [x] A13–A16 sim census (`./fishsim --census-llm`, the model at the device's pace; `docs/retrain-lizard.md` §7): all rows
+      pass on 5 terrariums each: heat in band 98–99%, 2.56–2.78 zones a lizard-minute, 4.4–5.3 crickets a lizard-hour;
+      A16 96–97% for the test pack in the new test warm desert (habitat 31). A15 is the narrowest (feeding, P2d)
 - [x] C/Python encoder parity test (R4): `make_l1_parity.py --check` + `./fishsim --selftest-l1-encode`, 420/420
 
 ### P5 — Progression and UI

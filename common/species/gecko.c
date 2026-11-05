@@ -20,7 +20,7 @@ static const pattern_t GECKO_BANDED = { "BANDED" }, GECKO_SPOTTED = { "SPOTTED" 
 
 #define GECKO_PACK(NAME, ID, TEST, WARMER) {                                                   \
     .name = NAME, .id = ID, .test_only = TEST,                                                 \
-    .world = WORLD_TERRARIUM, .habitats = 1u << HABITAT_DESERT,                                \
+    .world = WORLD_TERRARIUM, .habitats = 1u << HABITAT_DESERT | ((TEST) ? 1u << HABITAT_TEST_WARM : 0u), /* (the test pack: also A16's warm desert) */ \
     .schedule = SCHED_DAY, .settle_s = 600,                    /* ten minutes winding down */  \
     .t_cold = 20 + (WARMER), .t_lo = 28 + (WARMER), .t_hi = 32 + (WARMER), .t_hot = 38 + (WARMER), \
     .tau_s = { 60, 90, 120, 150 },                             /* a hatchling warms in a minute */ \

@@ -7,9 +7,9 @@
 const char *const HIDE_KIND_NAMES[HIDE_KINDS] = { "warm", "humid", "cool" };
 
 #if PT_ALL_PACKS
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_FRESHWATER };
+static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM, &HABITAT_PACK_FRESHWATER };
 #elif PT_TERRARIUM
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT };
+static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM };
 #else
 static const habitat_t *const HABITATS[] = { &HABITAT_PACK_FRESHWATER };
 #endif
