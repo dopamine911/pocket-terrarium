@@ -637,10 +637,10 @@ static void matmul_batch(float *out, const int8_t *xq, const float *xs, int n_to
 
 /* the batch buffers for n tokens: all of them, or the old ones kept (0.4, the 11-02 evening sweep: bmax was set before
  * the allocations, so one that failed left NULL buffers the next call of that size trusted). The allocators have no
- * free, so the batch is sized to grow at most once: Q4_BATCH_FIRST tokens first (the size the boot bench reserved
- * until 0.4 - every prompt fit it; with the bench gone, growing a token at a time leaked a set per new longest prompt,
- * 555 KB of PSRAM in two decisions on the square), then the longest a prompt can be. A size that failed once is not
- * asked again (bfail), and what it did get stays spent */
+ * free, so the batch is sized to grow at most once: Q4_BATCH_FIRST tokens first (the size the boot bench reserved until
+ * 0.4 - every fish prompt fits it; with the bench gone, growing a token at a time leaked a set per new longest prompt,
+ * 555 KB of PSRAM in two decisions on the square), or what q4_model_reserve_batch asked for, then the longest a prompt
+ * can be. A size that failed once is not asked again (bfail), and what it did get stays spent */
 #define Q4_BATCH_FIRST 44
 static bool ensure_batch(q4_model_t *m, int n) {
     if (m->bmax >= n) return true;
@@ -658,6 +658,14 @@ static bool ensure_batch(q4_model_t *m, int n) {
     m->bxq_q = bxq_q; m->bxq_s = bxq_s; m->bhq_q = bhq_q; m->bhq_s = bhq_s; m->btile = btile;
     m->bmax = n;
     return true;
+}
+/* (2026-11-05: the lizard's prompts run to 45 tokens. Left to the first decisions, the batch was sized 44, and the growth
+ * to 63 took the last of the pendant's internal heap - 1 KB free - spilling the rest to PSRAM: 6.1 s decisions instead
+ * of ~4.3. Reserved when the model loads, the set is the right size once, and the boot's internal-RAM placements - the
+ * dirty mask, the card cache - see the heap it leaves) */
+bool q4_model_reserve_batch(q4_model_t *m, int n_tok) {
+    if (!m || n_tok < 1 || n_tok >= m->c.seq_len) return false;
+    return ensure_batch(m, n_tok);
 }
 
 /* the batched pass, from position pos0: the prompt's prefill is pos0 = 0; THE TWO-PASS

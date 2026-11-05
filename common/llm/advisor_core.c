@@ -224,6 +224,10 @@ bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
             if (p[0] == ' ' && strcmp(p + 1, GOAL_NAMES[g_goal_base + g]) == 0) g_goal_ids[g] = id;
     }
     for (int g = 0; g < g_n_goals; g++) if (g_goal_ids[g] < 0) return false;   /* not our vocab */
+    /* the longest prompt this schema sends, reserved now so the batch never grows (q4_model.h): the L1 line's worst case
+       is BOS + 43 words (every sighting present, model/schema-lizard.md) + "->" = 45. The fish line's fits the 44 the
+       first prefill sizes it at, as upstream left it. (No memory now: the first prefills try again, smaller) */
+    if (l1) (void)q4_model_reserve_batch(g_model, 45);
     if (seed) g_rng = seed;
     return true;
 }

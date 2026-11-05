@@ -117,6 +117,10 @@ chord of each stripe is sent), ~19-23 with a card up. LLM 3.8 s / decision,
 11.4 tok/s. Internal heap 44-56 KB free while running. Battery gauge and
 cell present (100%, 4.14 V on the cable).
 
+The terrarium (pocket-terrarium, 2026-11-05, a 1.75C **rev1.1**: its ES7210 answers at 0x42, so the probe takes
+0x40-0x43): ~25 fps in the tank view (render 4-6 ms, flush 15-22 ms), `lizard_v1` 4.0 s / decision at 11.9 tok/s,
+internal heap 58 KB free while running, the card cache in PSRAM (the model's batch is reserved at load, before it).
+
 ## Flip and sleep (2026-10-01, evening)
 
 - **Flip**: upright in the hand with the USB port down reads +X ~16.8k

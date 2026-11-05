@@ -300,10 +300,13 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] Flash a device (2026-11-05): the pendant, a 1.75C **rev1.1** (`tools/flash_round.sh --full`). Its ES7210 sits at
       0x42, not 0x40, so the round build saw no known board and left the panel dark until the probe took 0x40-0x43
       (c09f11c). On it: `lizard_v1` loads, the panel and CST9217 touch work, setup ran, no reset in 3 min
-- [ ] Pendant performance: with the panel on, 17-24 fps (render ~16-22 ms + flush ~16-22 ms; the setup page 66 ms
-      frames) and decisions 6.1 s at 7.8 tok/s (4.3 s / 11 tok/s with the panel dark: render and flush share PSRAM
-      and flash with the model). **Internal heap 1 KB free** with the panel on (29 KB without): a risk for any later
-      internal allocation - find what the terrarium path holds in internal SRAM (dirty mask, card cache)
+- [x] Pendant memory and speed (2026-11-05): the internal heap fell to 1 KB and decisions slowed to 6.1 s. Cause: the
+      model's batch buffers were sized for the fish's 44-token prompts; the lizard's run to 45, so the batch grew to 63
+      (the first set can't be freed) and spilled into PSRAM. The terrarium now reserves 45 when the model loads, before
+      the boot places the dirty mask and card cache. On the pendant: **58 KB free, 4.0 s decisions at 11.9 tok/s,
+      25 fps, render 4-6 ms** (upstream's fish: 44-56 KB, 3.8 s, 28-31 fps); the card cache now sits in PSRAM. The
+      terrarium's drawing state still holds ~24 KB of internal statics (`g_sd`, `g_ts_d`, `SD_MOT`, hide covers):
+      the next room if a later feature needs it
 - [ ] QEMU boot of the terrarium image; frame time on the 1.8
 
 ---

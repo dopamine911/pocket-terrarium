@@ -50,6 +50,10 @@ float *q4_model_forward(q4_model_t *m, int token, int pos);
  * layer (fills the KV cache for positions 0..n-1); returns logits of the last
  * token, or NULL if n is out of range / no memory */
 float *q4_model_prefill(q4_model_t *m, const int *toks, int n);
+/* allocate the batch now for the longest prompt (tokens, BOS included) the caller will send, so it never grows - a
+ * growth leaves the first set spent (the allocators have no free) - and its fast buffers are taken before the caller's
+ * other internal-RAM decisions. Unasked, the first prefill sizes it at 44 (the fish line's). false: no memory */
+bool q4_model_reserve_batch(q4_model_t *m, int n_tok);
 /* the same from position pos0 (THE TWO-PASS DECISION): the cache below pos0 must hold the
  * tokens before it; fills positions pos0..pos0+n-1, returns the last token's logits */
 float *q4_model_prefill_at(q4_model_t *m, const int *toks, int n, int pos0);
