@@ -28,7 +28,7 @@ seed = 23
 # the tolerance. The original section-6 table (three seeds sharing the 8060S) does not reproduce.
 [validate]
 tolerance = 0.03
-selected = 1337         # all three smallest margins (A12) within 0.001: tied, and s1337 has the lowest val loss
+selected = 1337         # scaled margins: s1337 +0.106 (content) against +0.058 / +0.052 (r8 hide)
 baseline_wall_s = 2100   # 35 min: the three seeds side by side on marvin's 8060S alone
 
 # row: {seed = [panel 11, panel 23]}

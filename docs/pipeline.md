@@ -85,12 +85,26 @@ python3 harness.py selftest                            # planner, guard, margins
   the harness (or its ssh) and rerunning `run` adopts running jobs and collects finished ones.
 - **Outputs**, per job in `out/harness/<run>/s<seed>/`: `ckpt.pt`, `model_q4.bin`,
   `model_fp32.bin`, the probe JSONs, the logs, and `manifest.json`. The manifest records the git
-  SHA, dataset hash, configs, host/card, image ID, torch/HIP, s/iter, peak memory and best val.
+  SHA, dataset hash, configs, host/card, image ID, torch/HIP, s/iter, peak memory, and the
+  kept checkpoint's val loss, goal NLL and goal accuracy.
+- **Goal metrics** (train.py, every eval): on whole held-out docs, the label goal's NLL under the
+  device's softmax over the goal tokens only (`goal_nll`), how often the top goal is the label
+  (`goal_acc`), and the loss on the decision tokens. `val_loss` is mostly the state words, which
+  the device never generates. A run's `loss = "decision"` (`train.py --loss decision`) trains on
+  the tokens after `->` only and keeps the checkpoint with the best goal NLL.
 - **Report**, in `out/harness/<run>/report.md`: jobs, every row × seed × panel with its limit,
   the seed-to-seed sd against the panel-to-panel spread, each seed's smallest margin, the
-  selected seed, and the check against `[validate]` if the run has one. Selection takes the
-  widest smallest margin. Seeds within the binding rows' panel spread of it (at least
-  `tie_floor`, 0.005) are tied and go to the lower val loss.
+  selected seed, and the check against `[validate]` if the run has one. Margins are scaled by
+  the row's headroom (limit to best possible: 1 for a rate, 1/9 for the A11 slope, 0 for a
+  `<=` row), so a row pinned near its floor (A12, limit 0.05) can't decide every ranking.
+  Selection takes the widest smallest scaled margin. Seeds within the binding rows' scaled panel
+  spread of it (at least `tie_floor`, 0.005) are tied and go to the lower goal NLL.
+- **Teacher agreement**, `model/agree.py --ckpt A.pt B.pt ...`: a fixed, student-independent
+  state set (seed 777, 300 states), K = 3 teacher answers each, cached in
+  `out/agree_teacher_cache.jsonl` so further checkpoints cost no teacher calls. It reports greedy
+  agreement (A1 without its noise), expected agreement under the device's sampling, the
+  teacher's own self-agreement, their ratio, and NLL, each with a 95% bootstrap CI.
+  `--api rules` runs it offline; `--selftest` checks the arithmetic.
 
 ## Extra tools
 
