@@ -255,17 +255,19 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] Pilot 1 (41 states × 3 on `chat-teacher`): 87.8% agreement, 0 JSON failures, ~160 decisions/min (4 workers).
       Fails A11: content lizards `explore` whatever `bold`; `investigate` never chosen (0/209)
 - [x] Prompt gate (5e2f7d8): every teacher-checkable row passes; pilot 97.3%; the Python sim mirrors the C desert
-- [ ] Traces, overnight (started 2026-11-04, 4 workers × 11,250 on `chat-teacher`, seeds 41–44, hard stop 7 h;
+- [x] Traces, overnight (2026-11-04, 4 workers × 11,250 on `chat-teacher`, seeds 41–44, hard stop 7 h: 44,968 clean pairs;
       plus ~140 extra pairs from seeds 51–54 written by an accidental second launch, kept: distinct seeds).
       **Known mismatch:** these traces come from the floor-level desert (P2a); the terraces landed mid-run. The
       line only carries normalised heat, sight buckets and zones, so the rules still apply, but the zone/`warm`
       distribution differs (the basking spot is now top row). Decision: train on them, then let A13–A16 decide; if the
       census fails, re-mirror the terrain in `gen_traces.py` and run a top-up night.
-- [ ] `fold_traces.py` → `train_tokenizer.py` → `train.py` (dim 384, 8 layers, seq 64) → `export_q4.py`
-- [ ] Training hardware: **CPU PyTorch** is enough. 6 × 14.3M params × 64×64 tokens × 5,000 iters ≈ 1.8 PFLOP,
-      roughly 1–3 h on marvin's 16 Zen 5 cores or zaphod's 3900X [INFERENCE: time 100 iters first].
-      GPU training would need a ROCm PyTorch the lab doesn't have (lab issue #16 is about llama.cpp only)
-      and would compete with the served models.
+- [x] Fold → tokenizer → train → export (2026-11-04, CPU, val 0.7333): A1–A12 all pass but A10 (0.38) and A12 (0.15)
+- [x] Focused repair (2026-11-05, `docs/retrain-lizard.md` §6): the teacher's rule 6/7 conflict fixed in the prompt;
+      6,000 focused labels; 50,968 pairs; three seeds all pass every row on two 240-state-per-row panels; shipped
+      candidate seed 2 (`out/model_q4_l1_focus2.bin`, smallest margin +0.048; A12 0.001; A1 teacher agreement 82%)
+- [x] Training hardware: marvin's Radeon 8060S in a ROCm container (`model/docker/Dockerfile.rocm-gfx1151`):
+      0.15 s/iter, ~13 min per 5,000-iter model (this CPU: 1.22 s/iter; marvin's CPU 0.56)
+- [ ] A13–A16 sim census with the L1 model (needs P2c crickets and P3b; then the terrain re-mirror decision above)
 - [ ] C/Python encoder parity test (R4)
 
 ### P5 — Progression and UI

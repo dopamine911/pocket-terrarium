@@ -1,10 +1,12 @@
-# Lizard schema L1 — training runbook (prepared 2026-11-04; the long run NOT started)
+# Lizard schema L1 — training runbook (prepared 2026-11-04; night run 2026-11-04; focused repair 2026-11-05)
 
 The first model of pocket-terrarium: the species-agnostic lizard line
 (`model/schema-lizard.md`), taught by the lab's `chat-teacher`, trained from
 scratch (no fish data carries over: the goals are different). Everything up to
 the overnight run is built; the pilot and the teacher-side prompt check ran on
-2026-11-04 (below). The night, the training and the acceptance have not run.
+2026-11-04 (below). The night (44,968 pairs) and its training ran 2026-11-04; that model
+failed A10/A12. The focused repair (section 6, 2026-11-05) passes A1-A12 on three seeds;
+the shipped candidate is `out/model_q4_l1_focus2.bin`. A13-A16 (the sim census) are still open.
 
 | Piece | State |
 |---|---|
@@ -362,6 +364,67 @@ the panel. On sim states only the teacher's rates exist so far, in fold's covera
 The rows as `model/schema-lizard.md` states them since 2026-11-04 (and as the pilot,
 prompt_check and fold's coverage block pin them): A2 for heat 3–7, A3/A4/A9/A10 in
 `phase active`, A7 whatever the heat.
+
+## 6. Focused repair (2026-11-05): A10/A12, the teacher's rule conflict, three seeds
+
+The night's model (`ckpt_l1.pt`, 44,968 pairs, val 0.7333) failed two rows on the fixed probe:
+A10 0.377 (≥ 0.40) and A12 0.148 (≤ 0.05). Every other row passed.
+
+**Diagnosis.** `l1_focus.py` asks the teacher about states built for those two rows. The teacher
+passed both: A10 kept 0.775, A12 0.006. So the night simply had too few such states. A first
+top-up (4,000 focused labels, seed 71) got A10 to 0.56–0.66, but A12 only to 0.046–0.050. Three
+more training seeds on those data then put A12 anywhere from 0.024 to 0.209. A split of the
+student's A12 by `last` found the leak: P(investigate) was 0.12 when the solitary lizard was
+already investigating, and about 0 for every other `last`. The teacher did the same, 0.273 on
+150 such pairs (`--a12x-pairs`). Rule 6 (bored 0-2 keeps last) beat rule 7 (social 0-2 never
+investigates). A clause in rule 7 alone took the teacher only to 0.187. A sentence in rule 6
+itself took it to 0.000. That is the shipped text: "Investigate stops making sense the moment
+the lizard is solitary (social 0-2) with the other near ...". Measured on the teacher with that
+text: A10 0.863, A12 0.000, A12x 0.000 (social 7-9 still investigates, 0.987); every
+prompt_check row OK. Only 7 of the night's 44,968 labels are of the old kind, so the night was
+kept; the seed-71 labels (old prompt) were replaced.
+
+**Run** (`run_l1_focus_retrain.sh`, `TRAIN_HOST=marvin`; ~1 h 30 min wall):
+
+```bash
+export LAB_API_KEY=...   # as in section 1
+TRAIN_HOST=marvin setsid -f nohup bash run_l1_focus_retrain.sh > /dev/null 2>&1 < /dev/null
+# log: out/l1_focus2_pipeline.log; reruns resume the teacher labels
+```
+
+- **Labels:** 6,000 focused labels, seed 73: A10 2000, A12 1000 pairs, A12x 1000 pairs; 42 min
+  at 4 workers. On those labels the teacher kept 0.808 for A10, investigated 0.000 for A12 and
+  A12x when solitary, and 0.968 / 0.994 when sociable.
+- **Fold:** 50,968 clean pairs.
+- **Training:** seeds 1337, 1 and 2 side by side on marvin's Radeon 8060S, in the ROCm container
+  (`docker/Dockerfile.rocm-gfx1151`). Each ran at 0.42 s/iter, about 35 min. One seed alone runs
+  at 0.15 s/iter, so three in parallel buys nothing over three in a row.
+- **Probes:** each seed on two independent panels, `--n 400`: 240 states per row, 10x the fixed
+  probe.
+
+| Row (limit) | s1337 p11 / p23 | s1 p11 / p23 | **s2 p11 / p23 (shipped)** |
+|---|---|---|---|
+| A2 starving hunts (≥ 0.86) | 0.966 / 0.966 | 0.949 / 0.954 | 0.918 / 0.932 |
+| A8 stressed hides (≥ 0.70) | 0.993 / 0.991 | 0.980 / 0.982 | 0.968 / 0.972 |
+| A10 fresh pastime kept (≥ 0.40) | 0.739 / 0.674 | 0.757 / 0.707 | 0.731 / 0.717 |
+| A11 bold 9 - bold 0 (≥ 0.15) | +0.545 / +0.579 | +0.523 / +0.570 | +0.541 / +0.560 |
+| A12 solitary investigates (≤ 0.05) | 0.000 / 0.000 | 0.000 / 0.000 | 0.001 / 0.001 |
+| r7 sociable investigates (≥ 0.10) | 0.983 / 0.983 | 0.983 / 0.985 | 0.975 / 0.975 |
+| content: max single goal (< 0.45) | 0.423 / 0.395 | 0.411 / 0.406 | 0.402 / 0.381 |
+| smallest margin over all rows | +0.027 | +0.039 | **+0.048** |
+
+A3-A7 and A9 are ≥ 0.968 on every seed and panel; rules 3 and 8 are positive everywhere. The
+shipped seed is the one with the widest smallest margin (chosen by that rule before the run).
+
+- **Shipped:** seed 2 (val 0.7445), `out/model_q4_l1_focus2.bin`, 7.56 MB, max group error 0.0376.
+- **A1** (`eval.py --teacher`, n 60, seed 777, greedy fp32 through `runw`): 49/60 (82%) for both
+  the night's model and this one. Upstream's v4m shipped at 72%; its teacher agreed with itself
+  82% of the time.
+- **Still open:** A13-A16, the sim census, need the cricket/render work (P2c/P3b).
+
+Lessons: probe a narrow row by `last` and by trait before adding data; a student that matches its
+teacher's slip is learning the prompt, not failing to. Check every candidate on more than one
+training seed, because a row near its limit can move 0.2 between seeds of the same data.
 
 ## If the night goes wrong
 
