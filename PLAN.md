@@ -193,12 +193,18 @@ flowchart LR
 - [x] `habitat_t` rocks/ramps/basking surface/air rise; `common/terrain.c` (per-glass layout, rules, Dijkstra routing)
 - [x] Desert: low ledge, mid shelf, high rock with the basking spot in the upper half on every board
 - [x] Keeper-free: heat 4–7 96–99% of lit time, 3/3 sheds clean, 53–58% of lit time above the floor
-- Open: `draw_lizard` needs pitch on ramps (33–42% of lit time); `LZ_HALF_LEN` 42 vs the 30 px rock margin;
-  pellets sink through rocks; climbing from floor to basking spot takes ~60 s (P2d tuning)
+- Resolved in P2c/P3b: ramp pitch is drawn; `lizard_half_len` replaces `LZ_HALF_LEN`; crickets replace pellets.
+  Open (P2d): climbing from the floor to the basking spot takes ~60 s
 
-**P2c — food and hands**
-- [ ] Crickets: spawn on feed tap, hop/flee AI, hide in decor; strike hit/miss; mealworm dish
-- [ ] Touch: hold = hand in the terrarium (trust), rap = startle, tap = crickets
+**P2c — food and hands (done, d222c80)**
+- [x] Crickets land on the ground under the drop, hop, flee, take cover and come out, expire; reachable-prey sight;
+      hunt memory; misses by heat/stage/cricket state; one meal per catch. Mealworm dish (save byte 2096). Auto
+      crickets only in the active phase. Census: 4.9 crickets per awake lizard-hour (A15 ≥ 4)
+- [x] Touch: hold = hand on the ground (trusting lizards come), three taps = startle, tap = card (whole-body hit)
+- [x] Money: a keeper meal pays 1 per 300 s awake, a clean shed 5 (`docs/progression.md`, `docs/shed.md`)
+- [x] Every selftest runs in its own temp dir (`sim/sim_tmp.c`)
+- Open (P2d): most of the 1.8's glass has the high rock or the last ramp under it, so hand-dropped crickets
+      rarely land low; misses (46% for hatchlings) and hide times want tuning
 
 **P2d — tuning** against A13–A15 once a lizard model exists
 
@@ -207,13 +213,15 @@ flowchart LR
 body cache: ~0.4 ms cached / ~2.5–3 ms on a body build on the device, estimated), `render_scene_desert.c`, the mister
 icon, `sim --lizard-sheet`.
 
-**P3b — into the tank**
-- [ ] Draw lizards and the desert in `render_tank` (terrarium); render-stack rules for hides and peeking
-- [ ] Engine fields the pose needs: walk/dig phase, blink, tongue, fat reserve; `LZ_HALF_LEN` 20 → `lizard_half_len` (42 adult)
-- [ ] Scene bake spread over frames (~300 ms on the board today); smoother turns (4 yaw steps per half-turn)
-- [ ] Size: compile the other world and the networking out (`#if PT_WORLD` / `PT_NET`, per-world sources and sounds);
-      the app partition is 5% free (repartition to one 5 MB slot is the reserve option, OTA being off)
-- [ ] Icons: redraw the fish-specific milestones and shop items
+**P3b — into the tank (done, d222c80)**
+- [x] `render_terrarium`: the baked desert and each lizard from its real state; feet-sorted; hide fronts row by row
+- [x] Pose fields (walk/dig phase, blink, tongue, fat); `LZ_HALF_LEN` → `lizard_half_len`; ramps end 48 px in
+- [x] One scene per light (swap) + per-tick bake slices: live frames < 40 ms est. (was 432–629 ms per bake);
+      turns left at 8 body steps per half-turn
+- [x] Size: the unused world and networking compiled out; app image 5% → 35% free in both worlds
+- [x] Terrarium milestone icons (12) via `WORLD_ICON`; the remaining fish art (card food/traits, growth glyphs,
+      trimming badge, shop pieces, sand dollar, MY TANKS icon) is P5
+- Open: a tongue flick can poke ~5 px past the round glass; screenshots in `~/Pictures/pocket-terrarium-art/live_*`
 
 ### P4 — Model (ai-lab)
 
@@ -268,7 +276,7 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] Training hardware: marvin's Radeon 8060S in a ROCm container (`model/docker/Dockerfile.rocm-gfx1151`):
       0.15 s/iter, ~13 min per 5,000-iter model (this CPU: 1.22 s/iter; marvin's CPU 0.56)
 - [ ] A13–A16 sim census with the L1 model (needs P2c crickets and P3b; then the terrain re-mirror decision above)
-- [ ] C/Python encoder parity test (R4)
+- [x] C/Python encoder parity test (R4): `make_l1_parity.py --check` + `./fishsim --selftest-l1-encode`, 420/420
 
 ### P5 — Progression and UI
 - [ ] Stages advance at sheds; trust via handling
