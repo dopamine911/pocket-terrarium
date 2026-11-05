@@ -296,8 +296,15 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] Acceptance A1–A16 in `model/schema-lizard.md` (model sweeps, sim census, pack independence), every row
 
 ### P7 — Boards
-- [ ] Sim screenshots on all 4 boards (`tools/shot.py`), QEMU boot, flash a device (`tools/flash.sh`)
-- [ ] Frame time on the 1.8
+- [x] Sim screenshots on all 4 boards (P3b, `~/Pictures/pocket-terrarium-art/live_*`)
+- [x] Flash a device (2026-11-05): the pendant, a 1.75C **rev1.1** (`tools/flash_round.sh --full`). Its ES7210 sits at
+      0x42, not 0x40, so the round build saw no known board and left the panel dark until the probe took 0x40-0x43
+      (c09f11c). On it: `lizard_v1` loads, the panel and CST9217 touch work, setup ran, no reset in 3 min
+- [ ] Pendant performance: with the panel on, 17-24 fps (render ~16-22 ms + flush ~16-22 ms; the setup page 66 ms
+      frames) and decisions 6.1 s at 7.8 tok/s (4.3 s / 11 tok/s with the panel dark: render and flush share PSRAM
+      and flash with the model). **Internal heap 1 KB free** with the panel on (29 KB without): a risk for any later
+      internal allocation - find what the terrarium path holds in internal SRAM (dirty mask, card cache)
+- [ ] QEMU boot of the terrarium image; frame time on the 1.8
 
 ---
 
