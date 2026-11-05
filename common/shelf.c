@@ -337,7 +337,10 @@ int shelf_pieces_value(int i) {
     if (!read_hdr(s_t[i].slot, &h, s_x->a)) return 0;
     uint32_t u = progression_blob_unlocks(s_x->a, h.save_len);
     int v = 0;
-    for (int item = 0; item < SD_ITEM_COUNT; item++) if ((u & SD_ITEMS[item].bit) && tank_decor_placeable(item)) v += progression_sell_value(item);
+    for (int item = 0; item < SD_TERR_FIRST + SD_TERR_COUNT; item++) {   /* (the terrarium's decorations too: tank_decor_placeable is false for the rest of its items) */
+        const sd_item_t *it = progression_item(item);
+        if (it && (u & it->bit) && tank_decor_placeable(item)) v += progression_sell_value(item);
+    }
     return v;
 }
 bool shelf_remove(int i) {

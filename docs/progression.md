@@ -280,8 +280,8 @@ birth flow (setup.c) and pays SD_BIRTH, as a fry. A sale earns the place again w
 rule); the shop's hatchlings (after a first sale) stop at the pack's cap too.
 
 **The shop** (one item numbering: the fish's eleven, SD_ITEMS, then the terrarium's at SD_TERR_FIRST; `progression_item`
-any of them; the bits in `sd_unlocks` from bit 20). Sold only in the terrarium's bin, kept for good, never placed, sold
-back or shelved:
+any of them; the bits in `sd_unlocks` from bit 20). Sold only in the terrarium's bin. The upkeep, items 11..13, kept for
+good, never placed, sold back or shelved:
 
 | Item | Price | Effect |
 |---|---|---|
@@ -289,13 +289,33 @@ back or shelved:
 | BASKING BULB | 90 | the lamp's pool of warmth 1.5x as wide (SD_BULB_R_X, `terrain_air_lamp_c`): the spot itself and the night unchanged |
 | MEALWORM FARM | 140 | fills the dish when bought, at every light-on and after a sleep of an hour or more; its worms are the tank's own (no keeper meal, no pay) until the keeper fills the dish by hand (`tank_t.dish_farm`, saved at 2098) |
 
+The decorations (P5b, items 14..17, `TERR_DECO_ITEM0`, bits 23..26; tank.h THE TERRARIUM's DECORATIONS, `--selftest-terr-deco`),
+cosmetic, the fish's piece machinery as it is: bought, the placement page (drag; SELL, SHELVE, LOCK, DONE), a 0.7 s hold on
+one opens it again (not when a lizard is under the finger: the hand hold is the trust's), the shelf, sold back for SD_SELL_PCT:
+
+| Item | Price | Size (px) |
+|---|---|---|
+| SAGUARO CACTUS | 120 | 22 x 48 |
+| COW SKULL | 160 | 32 x 18 |
+| DRIFTWOOD | 60 | 56 x 16 |
+| SUCCULENT POT | 90 | 24 x 28 |
+
+They stand at one depth, their feet on `TERR_DECO_FY` just behind the lizards' walking band (so every lizard on the floor
+walks in front of them), drawn live in the scene's light (the lamp's pool by day, the moon at night: render.c `ts_deco`,
+the sprites from tools/gen_terr_icons.py), the taller behind the lower. They never cover a hide, the mealworm dish, a
+ramp's foot or the x under the basking spot: `tank_deco_clear` bars each (widened by the piece's half-width), and
+`tank_decor_set` slides a barred x to the nearest clear one, on every glass. A purchase stands one at its home
+(`tank_deco_home`: clear, off the other decorations as far as the sand allows); on the small glasses the free sand is
+short and they may overlap one another.
+
 HOW TO EARN in the terrarium: +1 each lizard you feed, +5/10/25 a lizard grows, +5 a clean shed, +20 an egg hatches, +15
 a lizard trusts you (full trust), +25 for 100 glass smudges.
 
-**Saved** (append-only, `SAVE_LAYOUT_LOCK`): the clean run at 2097 and the farm's dish at 2098, in what was the 2104-byte
-save's padding (still 2104 B); the new badge bits ride in the existing ms_bits / tank_ms_bits, the items in sd_unlocks
-(the load keeps the terrarium's bits in its bin). An aquarium's save, and every older one, reads zeros: no run yet, the
-dish the keeper's.
+**Saved** (append-only, `SAVE_LAYOUT_LOCK`): the clean run at 2097 and the farm's dish at 2098, the decorations' spots at
+2099..2102 (x / 2 each, 0 = unplaced), in what was the 2104-byte save's padding (still 2104 B); the new badge bits ride in
+the existing ms_bits / tank_ms_bits, the items in sd_unlocks, the shelf in sd_shelved and the locks in sd_locked (the load
+keeps the terrarium's bits in its bin). An aquarium's save, and every older one, reads zeros: no run yet, the dish the
+keeper's, no decoration placed.
 
 ## IMU (motion)
 

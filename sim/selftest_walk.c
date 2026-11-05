@@ -1450,7 +1450,8 @@ int selftest_terr_progress(void) {
         t->sd_balance = it->price + 3;
         if (!progression_buy(t, item) || !(t->sd_unlocks & it->bit) || t->sd_balance != 3) WF("%s: not sold at its price (balance %d)", it->name, (int)t->sd_balance);
         if (progression_buy(t, item) || t->sd_balance != 3) WF("%s sold twice", it->name);
-        if (progression_sell_value(item) || progression_sell(t, item)) WF("%s sells back", it->name);
+        if (!tank_decor_placeable(item) && (progression_sell_value(item) || progression_sell(t, item))) WF("%s sells back", it->name);   /* (the upkeep: the decorations
+                                                                       sell back as the fish's pieces do, --selftest-terr-deco) */
         if (it->bit == SD_ITEM_MOSS) {                         /* the humid hide soaked, and drying at half the pace */
             if (t->moist[humid] < 0.999f) WF("the moss: the humid hide at %.2f, not soaked", t->moist[humid]);
             for (int s = 0; s < 600; s++) progression_tick(t, 1.0f);

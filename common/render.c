@@ -6188,7 +6188,7 @@ static void ts_scene(const tank_t *t, const habitat_t *h, bool tick) {
 }
 
 /* ---- what moves ---- */
-#define TS_RECTS (N_FISH_SLOTS + MAX_CRICKETS + 4)
+#define TS_RECTS (N_FISH_SLOTS + MAX_CRICKETS + 4 + TERR_DECO_N)
 static void ts_mark(void *user, int x0, int x1, int y) {             /* draw_lizard's runs: the dirty and touched masks */
     (void)user;
     if ((unsigned)y >= (unsigned)TANK_H) return;
@@ -6275,6 +6275,35 @@ static void ts_cricket(ctx_t *c, const cricket_t *k, const habitat_t *h, bool li
             px_blend_s(c, ox + f * (x - 5), oy + y, &pal[q - KEYS], 255);
         }
     box->x0 = (short)(ox - 6); box->y0 = (short)(oy - 1); box->x1 = (short)(ox + 6); box->y1 = (short)(oy + 7);
+}
+/* THE TERRARIUM's DECORATIONS (tank.h, P5b): each its sprite (assets/icons/deco_*_terr.png, tools/gen_terr_icons.py) on
+   the sand at its x, its feet on TERR_DECO_FY just behind the lizards' walking band, in the light the dish stands in -
+   the lamp's pool by day, the moon at night, the night's dim - over a soft contact shadow */
+static const icon_t *ts_deco_art(int d) {
+    static const icon_t *const ART[TERR_DECO_N] = { &icon_deco_saguaro_terr, &icon_deco_skull_terr, &icon_deco_driftwood_terr, &icon_deco_pot_terr };
+    return ART[d];
+}
+static void ts_deco(ctx_t *c, const tank_t *t, int d, const habitat_t *h, bool lit, ts_rect_t *box) {
+    const icon_t *ic = ts_deco_art(d);
+    const float x = tank_decor_x(t, TERR_DECO_ITEM0 + d);
+    const int fy = (int)lroundf(TERR_DECO_FY), x0 = (int)lroundf(x - ic->w * 0.5f), y0 = fy - ic->h;
+    const src_t sh = src_color(0x000000, 1.0f);
+    for (int r = -1; r <= 1; r++) span(c, x0 + 1 + 3 * abs(r), x0 + ic->w - 2 - 3 * abs(r), fy + r, &sh, 55);   /* its shadow on the sand */
+    const float glow = ts_glow_at(h, lit, x, fy - ic->h * 0.5f);
+    struct { uint16_t v; bool ok; src_t s; } memo[16] = { 0 };          /* the sprite's few colours lit once a frame, not a pixel at a time */
+    for (int j = 0; j < ic->h; j++)
+        for (int i = 0; i < ic->w; i++) {
+            const int a = ic->a[j * ic->w + i];
+            if (!a) continue;
+            const uint16_t v = ic->rgb[j * ic->w + i];
+            const int k = (v ^ v >> 5 ^ v >> 11) & 15;
+            if (!memo[k].ok || memo[k].v != v) {
+                const uint32_t rgb = (uint32_t)((v >> 11) << 3) << 16 | (uint32_t)(((v >> 5) & 63) << 2) << 8 | (uint32_t)((v & 31) << 3);
+                memo[k].v = v; memo[k].ok = true; memo[k].s = src_color(ts_lit(rgb, glow, !lit), c->dim);
+            }
+            px_blend_s(c, x0 + i, y0 + j, &memo[k].s, a);
+        }
+    box->x0 = (short)(x0 - 1); box->y0 = (short)(y0 - 1); box->x1 = (short)(x0 + ic->w + 1); box->y1 = (short)(fy + 2);
 }
 /* the mealworm dish (tank.h THE CRICKETS): a shallow clay dish on the sand, HABITAT_DISH_HW either side of its middle,
    its worms wriggling in it - as many as it holds */
@@ -6370,7 +6399,7 @@ static void render_terrarium(const tank_t *t, uint16_t *fb, int stride) {
     PROF_ADD(0, p0);
     ts_rect_t rects[TS_RECTS]; int nr = 0;
     /* back to front by the feet's y: the dish, the crickets about, the lizards (a lizard's feet: its middle + TERRAIN_FEET_DY) */
-    uint16_t who[N_FISH_SLOTS + MAX_CRICKETS + 1]; float at[N_FISH_SLOTS + MAX_CRICKETS + 1]; int n = 0;
+    uint16_t who[N_FISH_SLOTS + MAX_CRICKETS + 1 + TERR_DECO_N]; float at[N_FISH_SLOTS + MAX_CRICKETS + 1 + TERR_DECO_N]; int n = 0;
     for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) { who[n] = (uint16_t)i; at[n] = t->fish[i].y + TERRAIN_FEET_DY; n++; }
     for (int k = 0; k < MAX_CRICKETS; k++) {
         const cricket_t *q = &t->cricket[k];
@@ -6378,6 +6407,10 @@ static void render_terrarium(const tank_t *t, uint16_t *fb, int stride) {
         who[n] = (uint16_t)(0x100 | k); at[n] = q->y; n++;
     }
     if (tank_dish_here(t)) { float dx; who[n] = 0x200; tank_dish_point(t, &dx, &at[n]); n++; }
+    { static const int8_t DRAW[TERR_DECO_N] = TERR_DECO_DRAW;          /* the decorations: behind the walking band's feet (TERR_DECO_FY), the
+                                                                          taller behind the lower (the sort keeps their order) */
+      for (int k = 0; k < TERR_DECO_N; k++)
+          if (tank_decor_in(t, TERR_DECO_ITEM0 + DRAW[k])) { who[n] = (uint16_t)(0x400 | DRAW[k]); at[n] = TERR_DECO_FY; n++; } }
     for (int a = 1; a < n; a++) {                                      /* (an insertion: a dozen at most) */
         const uint16_t w = who[a]; const float y = at[a]; int b = a;
         while (b > 0 && at[b - 1] > y) { who[b] = who[b - 1]; at[b] = at[b - 1]; b--; }
@@ -6386,7 +6419,8 @@ static void render_terrarium(const tank_t *t, uint16_t *fb, int stride) {
     lizard_frame(tick ? 1 : g_ts_left);                                /* a body built a tank tick at most (render_lizard.h); the same tick drawn
                                                                           again builds no more, so its lizards fall back alike */
     for (int q = 0; q < n && nr < TS_RECTS; q++) {
-        if (who[q] == 0x200) { ts_dish(&c, t, h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
+        if (who[q] & 0x400) { ts_deco(&c, t, who[q] & 0xff, h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
+        else if (who[q] == 0x200) { ts_dish(&c, t, h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
         else if (who[q] & 0x100) { ts_cricket(&c, &t->cricket[who[q] & 0xff], h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }
         else { if (ts_lizard(&c, t, who[q], h, lit, dim, &rects[nr])) nr++; PROF_ADD(7, p0); }
     }
@@ -9873,7 +9907,11 @@ static const icon_t *shop_icon(int item) {
 #if PT_TERRARIUM   /* the terrarium's own items (progression.h SD_TERR_FIRST): the moss for the humid hide, the basking bulb, the worm farm */
     if (item == SD_TERR_FIRST) return &icon_shop_moss_terr;
     if (item == SD_TERR_FIRST + 1) return &icon_shop_bulb_terr;
-    if (item >= SD_TERR_FIRST + 2) return &icon_shop_farm_terr;
+    if (item == SD_TERR_FIRST + 2) return &icon_shop_farm_terr;
+    if (tank_deco_index(item) >= 0) {                          /* the decorations (P5b) */
+        static const icon_t *const SHOP[TERR_DECO_N] = { &icon_shop_saguaro_terr, &icon_shop_skull_terr, &icon_shop_driftwood_terr, &icon_shop_pot_terr };
+        return SHOP[tank_deco_index(item)];
+    }
 #endif
     return item == 0 ? &icon_shop_plant : item == 1 ? &icon_shop_snail : item == 2 ? &icon_shop_castle : item == 3 ? &icon_shop_coral : item == 4 ? &icon_shop_cluster : item == 5 ? &icon_shop_shrimp : item == 6 ? &icon_shop_urchin : item == 7 ? &icon_shop_seahorse : item == 8 ? &icon_shop_pumpkin : item == 9 ? &icon_shop_volcano : &icon_shop_crab;
 }
@@ -9989,7 +10027,7 @@ static void shop_fry_modal(ctx_t *c, const tank_t *t, uint16_t *fb, int stride) 
  * grown (it keeps growing there), the pumpkin says when this build no longer
  * sells it (so a SELL is an informed one). NULL = nothing to say. */
 static const char *shelf_line(const tank_t *t, int item, char *out, size_t n) {
-    bool shelved = (t->sd_shelved & SD_ITEMS[item].bit) != 0;
+    bool shelved = (t->sd_shelved & progression_item(item)->bit) != 0;
     if (item == 8 && !SD_PUMPKIN_IN_SHOP) return "NOT IN THE SHOP NOW";
     if (!shelved) return tank_decor_locked(t, item) ? "LOCKED IN PLACE" : NULL;   /* (0.3.9: why a hold on it opens nothing; MOVE is the way to its page) */
     if (item == 3) { snprintf(out, n, "GROWING  %d%%", (int)(tank_coral_growth(t) * 100 / CORAL_FULL + 0.5f)); return out; }
@@ -10141,7 +10179,7 @@ void render_shop(const tank_t *t, uint16_t *fb, int stride) {
     if (owned && tank_decor_placeable(g_shp_modal)) {         /* a placeable piece (0.3.9): in the tank MOVE | SHELVE; on the shelf PLACE | SELL (twice) */
         bool shelved = (t->sd_shelved & it->bit) != 0; char sub[28];
         if (shelved) shelf_slot(&c, X + (W - 64) / 2, Y + 14, t, g_shp_modal, 2);   /* over the icon: the piece as it is on the shelf */
-        const char *state = shelved ? "ON THE SHELF" : "IN THE TANK";
+        const char *state = shelved ? "ON THE SHELF" : WORLD_STR("IN THE TANK", "IN THE TERRARIUM");
         draw_text(&c, X + (W - text_w(state, 2)) / 2, Y + 164, 2, MSP_TEAL, state);
         if (shelf_line(t, g_shp_modal, sub, sizeof sub)) draw_text(&c, X + (W - text_w(sub, 2)) / 2, Y + 184, 2, MSP_QUIET, sub);
         button(&c, SHP_TWO_X0, by, MSP_HOW_W, MSP_HOW_H, 0x1c2f36, MSP_TEAL, shelved ? "PLACE" : "MOVE", 2);

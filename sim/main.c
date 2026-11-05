@@ -1333,7 +1333,7 @@ static int selftest_double_tap(void) {
     static const float GAP[2] = { 0.19f, 0.55f };
     int doubles = 0, rows = 0;
     for (int v = 0; v < 3; v++) {                                      /* 0: nothing owned; 1: every piece in the tank; 2: the fry for sale */
-        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM : every) : 0; tank.sd_shelved = 0;   /* (the terrarium sells its own) */
+        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM | TERR_DECO_BITS : every) : 0; tank.sd_shelved = 0;   /* (the terrarium sells its own) */
         if (v == 2) tank.tank_ms_bits |= TMS_FIRST_SALE; else tank.tank_ms_bits &= ~TMS_FIRST_SALE;
         const int n_rows = (PT_TERRARIUM ? SD_TERR_COUNT : SD_ITEM_COUNT - !progression_pumpkin_offered(&tank)) + (v == 2), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
         for (int pg = 0; pg < pages; pg++)
@@ -1374,7 +1374,7 @@ static int selftest_double_tap(void) {
     const double MASH_DT = 0.205;                                      /* ~5 Hz (90 ms down, 115 up): tap 4 lands 615 ms after the first */
     int mashes = 0;
     for (int v = 0; v < 3; v++) {
-        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM : every) : 0; tank.sd_shelved = 0;
+        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM | TERR_DECO_BITS : every) : 0; tank.sd_shelved = 0;
         if (v == 2) tank.tank_ms_bits |= TMS_FIRST_SALE; else tank.tank_ms_bits &= ~TMS_FIRST_SALE;
         const int n_rows = (PT_TERRARIUM ? SD_TERR_COUNT : SD_ITEM_COUNT - !progression_pumpkin_offered(&tank)) + (v == 2), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
         for (int pg = 0; pg < pages; pg++)
@@ -2275,8 +2275,8 @@ static int selftest_genes(void) {
 #ifndef _MSC_VER
 #include <dirent.h>
 static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096, 2104 };
-#define SAVE_NOW 2104                    /* today's sizeof(save_t): the terrarium's progress, pocket-terrarium P5 (2097..2098: the clean run, the farm's dish; 2099..2103 padding); the mealworm dish, P2c (2096); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
-#define SAVE_FIELDS 2099                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
+#define SAVE_NOW 2104                    /* today's sizeof(save_t): the terrarium's decorations' spots, pocket-terrarium P5b (2099..2102; 2103 padding); the terrarium's progress, P5 (2097..2098: the clean run, the farm's dish); the mealworm dish, P2c (2096); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
+#define SAVE_FIELDS 2103                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
 #define SAVE_032 1688                    /* 0.3.2's save: an older build's head */
 static uint32_t sv_u32(const uint8_t *e, size_t off) { uint32_t v; memcpy(&v, e + off, 4); return v; }
 static float    sv_f32(const uint8_t *e, size_t off) { float v; memcpy(&v, e + off, 4); return v; }
@@ -3650,7 +3650,7 @@ static void sim_tank_gestures(bool down, int x, int y, int px, int py, uint32_t 
     if (down && !modal) tank_touch_drag(&tank, (float)x, (float)y);   /* stroke -> wipe/slash */
     if (down && !modal && !*held_page && tank.tool == TOOL_HAND && held_ms > 700 && abs(x - px) < 24 && abs(y - py) < 24) {
         int it = tank_decor_hit(&tank, (float)px, (float)py);
-        if (it >= 0) { setup_begin_place(&tank, it); *held_page = true; selected_fish = -1; printf("held on the %s: placement page up (MOVE / DEPTH / SELL)\n", SD_ITEMS[it].name); }
+        if (it >= 0) { setup_begin_place(&tank, it); *held_page = true; selected_fish = -1; printf("held on the %s: placement page up (MOVE / DEPTH / SELL)\n", progression_item(it)->name); }
     }
     if (!down) *held_page = false;
     if (down && !modal && !*held_page && held_ms > 300 && abs(y - py) < 30) tank_touch_hold(&tank, (float)x, (float)y);
@@ -13391,6 +13391,8 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-terr-render") == 0) { int selftest_terr_render(void); return selftest_terr_render(); }         /* ... its scenes and stack */
         if (strcmp(argv[a], "--terr-ui-shot") == 0 && a + 1 < argc) { int terr_ui_shot(const char *prefix); return terr_ui_shot(argv[a + 1]); }   /* ... its pages (P5) */
         if (strcmp(argv[a], "--selftest-terr-setup") == 0) { int selftest_terr_setup(void); return selftest_terr_setup(); }            /* ... its first run (P5) */
+        if (strcmp(argv[a], "--terr-deco-shot") == 0 && a + 1 < argc) { int terr_deco_shot(const char *prefix); return terr_deco_shot(argv[a + 1]); }   /* ... its decorations (P5b) */
+        if (strcmp(argv[a], "--selftest-terr-deco") == 0) { int selftest_terr_deco(void); return selftest_terr_deco(); }              /* ... bought, kept clear, saved, sold */
 #endif
         if (strcmp(argv[a], "--critter-cards") == 0 && a + 1 < argc) return critter_cards(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-critter-nav") == 0) return selftest_critter_nav();
@@ -13604,7 +13606,7 @@ int main(int argc, char **argv) {
             setup_touch(&tank, (float)mx, (float)my, mpress);   /* taps and the letter wheel, classified in setup.c */
             if (!setup_active()) {
                 if (rename) printf("rename closed: the fish is %s\n", who >= 0 && who < tank.n_fish ? tank.fish[who].name : "?");
-                else if (place >= 0) printf("placed: %s at x %.0f, %s layer, saved\n", SD_ITEMS[place].name, tank_decor_x(&tank, place),
+                else if (place >= 0) printf("placed: %s at x %.0f, %s layer, saved\n", progression_item(place)->name, tank_decor_x(&tank, place),
                                        tank_decor_z(&tank, place) == DECOR_Z_BACK ? "BEHIND" : tank_decor_z(&tank, place) == DECOR_Z_FRONT ? "IN FRONT" : "AMONG");
                 else { printf(birth ? "birth flow done: %s named and saved\n" : "setup done\n", who >= 0 ? tank.fish[who].name : "?"); print_roster(&tank); }
             }
@@ -13668,11 +13670,11 @@ int main(int argc, char **argv) {
                 else if (r >= SHOP_TAP_PLACE) {             /* back from the shelf (0.3.9): the placement page, its old spot in place */
                     int item = r - SHOP_TAP_PLACE;
                     if (progression_unshelve(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); shop_view = false; render_shop_leave(); setup_begin_place(&tank, item);
-                                                             printf("shop: %s back from the shelf - placement page up\n", SD_ITEMS[item].name); }
+                                                             printf("shop: %s back from the shelf - placement page up\n", progression_item(item)->name); }
                 }
                 else if (r >= SHOP_TAP_SHELVE) {            /* put away (0.3.9): the shop stays up, the row says ON THE SHELF */
                     int item = r - SHOP_TAP_SHELVE;
-                    if (progression_shelve(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s on the shelf (PUT BACK returns it)\n", SD_ITEMS[item].name); }
+                    if (progression_shelve(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s on the shelf (PUT BACK returns it)\n", progression_item(item)->name); }
                 }
                 else if (r >= SHOP_TAP_FRY) {               /* a fry bought (0.3.5): the shop closes, the birth flow welcomes it */
                     int k = r - SHOP_TAP_FRY;
@@ -13682,12 +13684,12 @@ int main(int argc, char **argv) {
                 }
                 else if (r >= SHOP_TAP_SELL) {              /* sold back (the second tap on SELL) */
                     int item = r - SHOP_TAP_SELL;
-                    if (progression_sell(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s sold back for %d, balance %d\n", SD_ITEMS[item].name, progression_sell_value(item), tank.sd_balance); }
+                    if (progression_sell(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s sold back for %d, balance %d\n", progression_item(item)->name, progression_sell_value(item), tank.sd_balance); }
                 }
                 else if (r >= SHOP_TAP_MOVE) {              /* a piece already in the tank: place it again */
                     int item = r - SHOP_TAP_MOVE;
                     shop_view = false; render_shop_leave(); setup_begin_place(&tank, item);
-                    printf("shop: MOVE %s - placement page up (drag, DEPTH, DONE)\n", SD_ITEMS[item].name);
+                    printf("shop: MOVE %s - placement page up (drag, DEPTH, DONE)\n", progression_item(item)->name);
                 }
                 else if (r >= SHOP_TAP_BUY) {
                     int item = r - SHOP_TAP_BUY;

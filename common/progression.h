@@ -297,8 +297,15 @@ const char *const *progression_fry_tip(int kind);
 #define SD_PRICE_MOSS 40          /* the first and cheap, as the sword plant: the shed's upkeep halved */
 #define SD_PRICE_BULB 90
 #define SD_PRICE_FARM 140
+/* ... then its DECORATIONS (P5b, tank.h THE TERRARIUM's DECORATIONS; items SD_TERR_FIRST + 3 = TERR_DECO_ITEM0 ..):
+ * cosmetic pieces, placed, shelved, locked and sold back (SD_SELL_PCT) as the fish's are */
+#define SD_PRICE_SAGUARO   120
+#define SD_PRICE_SKULL     160
+#define SD_PRICE_DRIFTWOOD 60
+#define SD_PRICE_POT       90
 #define SD_TERR_FIRST SD_ITEM_COUNT
-#define SD_TERR_COUNT 3
+#define SD_TERR_COUNT 7
+_Static_assert(SD_TERR_FIRST + 3 == TERR_DECO_ITEM0 && SD_TERR_COUNT == 3 + TERR_DECO_N, "the decorations follow the moss, the bulb and the farm");
 typedef struct {
     uint32_t    bit;               /* SD_ITEM_* */
     const char *name;              /* <= 15 chars: the row draws it at scale 2 from x 76, 178 px, short of the button at 300;
@@ -344,7 +351,7 @@ bool progression_unshelve(tank_t *t, int item);
  * piece has its own lock; it rides the shelf and goes with a sale. Saved at
  * once. false = not owned, not placeable, or already as asked. */
 bool progression_lock(tank_t *t, int item, bool on);
-#define SD_DECOR_BITS (SD_ITEM_PLANT | SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_CLUSTER | SD_ITEM_PUMPKIN | SD_ITEM_VOLCANO)   /* the placeable six */
+#define SD_DECOR_BITS (SD_ITEM_PLANT | SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_CLUSTER | SD_ITEM_PUMPKIN | SD_ITEM_VOLCANO | TERR_DECO_BITS)   /* the placeable six, and the terrarium's decorations */
 /* a fish sold (2026-10-01, Strato: a SELL button on the milestones page's
  * fish card - "the more mature a fish is, the more sand dollars it is
  * worth. once a fish is sold it opens up a slot for a new fry"). The price

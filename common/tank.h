@@ -985,6 +985,9 @@ typedef struct tank {
      * By slot (tank_decor_slot): castle, coral, cluster, pumpkin, plant,
      * volcano (DECOR_SLOTS). Saved. */
     uint8_t  decor_rank[6];
+    /* the terrarium's decorations (P5b, SD_ITEM_SAGUARO..): each one's x on the sand / 2 (0 = unplaced: its own clear spot,
+     * tank_decor_x). Saved */
+    uint8_t  deco_x[4];
     /* the shrimp school (SD_ITEM_SHRIMP, see SHRIMP_*): how many (saved), the
      * pellets eaten toward the next one (0..SHRIMP_PER_JOIN, saved), the seconds
      * before another may join (saved), each shrimp's motion (not saved: a load
@@ -1673,6 +1676,25 @@ enum { SD_ITEM_MOSS = 1u << 20, SD_ITEM_BULB = 1u << 21, SD_ITEM_FARM = 1u << 22
 #define SD_BULB_R_X   1.5f
 void  tank_dish_farm(tank_t *t);                 /* the farm fills the dish (owned, the habitat has one, not full): its worms
                                                     are the tank's own until the keeper fills it by hand */
+/* THE TERRARIUM's DECORATIONS (pocket-terrarium P5b): desert pieces from the same shop, items TERR_DECO_ITEM0.. (bits from
+ * 23), cosmetic - and the aquarium's piece machinery as it is: bought, placed on the placement page (setup.c), held on to
+ * open that page, LOCKED, put on the shelf (sd_shelved), sold back (progression_sell). Each stands at its x on the sand
+ * just behind the lizards' walking band (TERR_DECO_FY: one depth, no stack; drawn live in the scene's light, render.c
+ * THE TERRARIUM), never over a hide, the mealworm dish, a ramp's foot or under the basking spot: tank_decor_set slides a
+ * spot that would be to the nearest clear x (tank_deco_clear, from the terrain's own places on this glass). A purchase
+ * stands it at its home (tank_deco_home); the placement page moves it. Saved: x / 2 a piece (tank_t.deco_x, 0 = unplaced:
+ * its own fraction's x, slid clear). At their one depth the taller stand behind the lower (TERR_DECO_DRAW) */
+enum { SD_ITEM_SAGUARO = 1u << 23, SD_ITEM_SKULL = 1u << 24, SD_ITEM_DRIFTWOOD = 1u << 25, SD_ITEM_POT = 1u << 26 };
+#define TERR_DECO_N      4
+#define TERR_DECO_ITEM0  (SD_ITEM_COUNT + 3)          /* the shop's item number of the first (progression.h SD_TERR_FIRST + 3) */
+#define TERR_DECO_BITS   (SD_ITEM_SAGUARO | SD_ITEM_SKULL | SD_ITEM_DRIFTWOOD | SD_ITEM_POT)
+#define TERR_DECO_FY     (PLACE_Y + TERRAIN_FEET_DY - 7.0f)   /* where they stand: behind the back lane's feet (LZ_LANE_BACK) */
+#define TERR_DECO_DRAW   { 0, 3, 1, 2 }               /* drawn in this order (the saguaro, the pot, the skull, the driftwood); held last first */
+int   tank_deco_index(int item);                   /* 0..TERR_DECO_N-1, or -1: not a terrarium decoration */
+bool  tank_deco_clear(const tank_t *t, int item, float x);   /* item centred at x covers no hide, dish, ramp foot or basking spot */
+float tank_deco_slide(const tank_t *t, int item, float x);   /* the nearest x it may stand at (x itself when clear) */
+float tank_deco_home(const tank_t *t, int item);    /* a purchase's spot: clear, near its own fraction's x, and off the other
+                                                       decorations in the terrarium as far as this glass's sand allows */
 /* a hatchling (pocket-terrarium P5, progression.c THE HATCHING): lizard `slot` set inside the habitat's humid hide (or its
    first hide; none: where it stands), hidden - it comes out at the hide's mouth when its plan leads it out */
 void  tank_hatch_place(tank_t *t, int slot);

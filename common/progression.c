@@ -311,6 +311,9 @@ typedef struct {
      * yet, the dish's worms the keeper's): clean_run, the sheds off clean in a row tank-wide (TMS_CLEAN_RUN, CLEAN_RUN_N;
      * held at 255); dish_farm 1 = the dish's worms are the MEALWORM FARM's (tank_t.dish_farm) */
     uint8_t  clean_run, dish_farm;
+    /* the terrarium's decorations' spots (pocket-terrarium P5b: tank_t.deco_x, x / 2 on the sand; an older save's zeros -
+     * and every aquarium's - read: unplaced, each at its own clear spot) */
+    uint8_t  deco_x[TERR_DECO_N];
     /* never a field: where this build's fields end and a newer build's tail
      * begins (SAVE_FIELDS_END; new fields go above it) */
     uint8_t  newer_tail[];
@@ -440,7 +443,9 @@ SAVE_AT(dish_worms, 2096);                                                      
 _Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2097 of fields, padded to 8 */
 SAVE_AT(clean_run, 2097); SAVE_AT(dish_farm, 2098);                                                   /* the terrarium's progress, pocket-terrarium P5 */
 _Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2099 of fields, padded to 8 */
-/* (the next field: SAVE_AT(its_name, 2099 or its type's alignment past it);) */
+SAVE_AT(deco_x, 2099);                                                                                 /* the terrarium's decorations, pocket-terrarium P5b */
+_Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2103 of fields, padded to 8 */
+/* (the next field: SAVE_AT(its_name, 2103 or its type's alignment past it);) */
 /* A ROLLBACK keeps the newer build's tail (2026-10-05): a save longer than
  * this build's fields loads its head, and every save writes the bytes past
  * SAVE_FIELDS_END back as they were - so the update back up finds its tail
@@ -590,6 +595,11 @@ const sd_item_t SD_TERR_ITEMS[SD_TERR_COUNT] = {
     { SD_ITEM_MOSS, "SPHAGNUM MOSS", "FOR THE HUMID HIDE: IT",     "STAYS DAMP TWICE AS LONG", SD_PRICE_MOSS },
     { SD_ITEM_BULB, "BASKING BULB",  "A WIDER POOL OF WARMTH",     "ON THE BASKING ROCK",      SD_PRICE_BULB },
     { SD_ITEM_FARM, "MEALWORM FARM", "FILLS THE WORM DISH ITSELF", "EVERY MORNING",            SD_PRICE_FARM },
+    /* the decorations (P5b, tank.h THE TERRARIUM's DECORATIONS): placed, shelved, locked and sold back as the fish's pieces are */
+    { SD_ITEM_SAGUARO,   "SAGUARO CACTUS", "A TALL DESERT CACTUS,",  "ARMS RAISED TO THE LAMP",  SD_PRICE_SAGUARO },
+    { SD_ITEM_SKULL,     "COW SKULL",      "BLEACHED BY THE SUN,",   "LONG HORNS ON THE SAND",   SD_PRICE_SKULL },
+    { SD_ITEM_DRIFTWOOD, "DRIFTWOOD",      "A SILVERED OLD BRANCH,", "WORN SMOOTH BY THE WIND",  SD_PRICE_DRIFTWOOD },
+    { SD_ITEM_POT,       "SUCCULENT POT",  "A TERRACOTTA POT OF",    "PLUMP ROSETTE SUCCULENTS", SD_PRICE_POT },
 };
 const sd_item_t *progression_item(int item) {
     if (item >= 0 && item < SD_ITEM_COUNT) return &SD_ITEMS[item];
@@ -647,10 +657,13 @@ static void sd_tick(tank_t *t) {
         t->cr_found_paid++; sd_award(t, t->cr_found_paid == 1 ? SD_CRAB_FIND : SD_CRAB_FIND_AGAIN);
     }
 }
-int progression_sell_value(int item) { return item < 0 || item >= SD_ITEM_COUNT ? 0 : SD_ITEMS[item].price * SD_SELL_PCT / 100; }
+int progression_sell_value(int item) {
+    if (item >= 0 && item < SD_ITEM_COUNT) return SD_ITEMS[item].price * SD_SELL_PCT / 100;
+    return tank_deco_index(item) >= 0 ? progression_item(item)->price * SD_SELL_PCT / 100 : 0;   /* (the terrarium's decorations; its other items stay) */
+}
 bool progression_sell(tank_t *t, int item) {
-    if (item < 0 || item >= SD_ITEM_COUNT || !tank_decor_placeable(item)) return false;   /* the snail stays */
-    const sd_item_t *it = &SD_ITEMS[item];
+    const sd_item_t *it = progression_item(item);
+    if (!it || !tank_decor_placeable(item)) return false;   /* the snail stays */
     if (!(t->sd_unlocks & it->bit)) return false;
     t->sd_unlocks &= ~it->bit; t->sd_shelved &= ~it->bit; t->sd_locked &= ~it->bit;   /* sold from the tank or from the shelf alike; a sold piece's lock goes with it */
     int back = progression_sell_value(item);
@@ -661,8 +674,8 @@ bool progression_sell(tank_t *t, int item) {
 }
 /* ---- the decoration shelf (0.3.9) ---- */
 bool progression_shelve(tank_t *t, int item) {
-    if (item < 0 || item >= SD_ITEM_COUNT || !tank_decor_placeable(item)) return false;
-    const sd_item_t *it = &SD_ITEMS[item];
+    const sd_item_t *it = progression_item(item);
+    if (!it || !tank_decor_placeable(item)) return false;
     if (!(t->sd_unlocks & it->bit) || (t->sd_shelved & it->bit)) return false;
     tank_decor_poof(t, item);                              /* it pops away into a plume of bubbles (Strato 2026-10-19) */
     t->sd_shelved |= it->bit;
@@ -671,8 +684,8 @@ bool progression_shelve(tank_t *t, int item) {
     return true;
 }
 bool progression_unshelve(tank_t *t, int item) {
-    if (item < 0 || item >= SD_ITEM_COUNT || !tank_decor_placeable(item)) return false;
-    const sd_item_t *it = &SD_ITEMS[item];
+    const sd_item_t *it = progression_item(item);
+    if (!it || !tank_decor_placeable(item)) return false;
     if (!(t->sd_unlocks & it->bit) || !(t->sd_shelved & it->bit)) return false;
     t->sd_shelved &= ~it->bit;
     tank_decor_raise(t, item);                             /* back on top of its depth, as a purchase lands (2026-10-17) */
@@ -681,8 +694,8 @@ bool progression_unshelve(tank_t *t, int item) {
 }
 /* ---- the LOCK on a piece (0.3.9) ---- */
 bool progression_lock(tank_t *t, int item, bool on) {
-    if (item < 0 || item >= SD_ITEM_COUNT || !tank_decor_placeable(item)) return false;
-    const sd_item_t *it = &SD_ITEMS[item];
+    const sd_item_t *it = progression_item(item);
+    if (!it || !tank_decor_placeable(item)) return false;
     if (!(t->sd_unlocks & it->bit)) return false;
     if (((t->sd_locked & it->bit) != 0) == on) return false;
     if (on) t->sd_locked |= it->bit; else t->sd_locked &= ~it->bit;
@@ -791,6 +804,7 @@ bool progression_buy(tank_t *t, int item) {
     if (it->bit == SD_ITEM_PUMPKIN) tank_pumpkin_place(t);
     if (it->bit == SD_ITEM_VOLCANO) tank_volcano_place(t);
     if (it->bit == SD_ITEM_CRAB) { t->cr_variant = (uint8_t)(tank_randf(t, 0, 255.999f)); tank_crab_place(t); }   /* its seed pattern is drawn once, at the sale */
+    if (tank_deco_index(item) >= 0) tank_decor_set(t, item, tank_deco_home(t, item), DECOR_Z_BACK);   /* a decoration: its home on the sand, kept (the placement page moves it) */
     if (tank_decor_placeable(item)) tank_decor_raise(t, item);   /* the piece placed last goes on top (2026-10-17) */
     progression_save(t);                                   /* a purchase sticks at once */
     return true;
@@ -1760,6 +1774,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     t->dish_worms = tank_dish_here(t) && packs_ok ? (sv.dish_worms <= DISH_WORMS ? sv.dish_worms : DISH_WORMS) : 0;
     t->dish_farm = t->dish_worms && sv.dish_farm != 0;   /* (P5: the farm's worms, the tank's own; an older save's zero: the keeper's) */
     s_clean_run = packs_ok ? sv.clean_run : 0;           /* (P5: the clean run - another world's pair starts its own) */
+    memcpy(t->deco_x, sv.deco_x, sizeof t->deco_x);       /* (P5b: the decorations' spots; an older save's zeros: each its own clear spot) */
     if (sv.tank_uid) t->uid = sv.tank_uid;
     tank_ensure_ids(t);                       /* a pre-0.4 save: fresh IDs, the parents' from their slots */
     s_setup_pending = sv.setup_pending != 0;
@@ -2273,6 +2288,7 @@ bool progression_save(tank_t *t) {
     sv.dish_worms = tank_dish_here(t) ? t->dish_worms : 0;   /* (an aquarium's: always 0 - freshwater has no dish) */
     sv.dish_farm = sv.dish_worms && t->dish_farm;            /* (P5) */
     sv.clean_run = s_clean_run;
+    memcpy(sv.deco_x, t->deco_x, sizeof sv.deco_x);       /* (P5b) */
     sv.tank_uid = t->uid;
     const void *out = &sv; size_t out_n = sizeof sv; uint8_t *joined = NULL;
     if (s_newer && (joined = malloc(SAVE_FIELDS_END + s_newer_n))) {   /* a newer build's tail, as it left it */

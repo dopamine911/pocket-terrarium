@@ -114,6 +114,7 @@ SELFTESTS_TERRARIUM += --selftest-walk --selftest-goals --selftest-crickets --se
 SELFTESTS_TERRARIUM += --selftest-terr-render                                                  # P3b: the desert's scenes and the lizards' stack
 SELFTESTS_TERRARIUM += --selftest-terr-setup                                                   # P5: the first run's MORPH pages, kept across a reboot
 SELFTESTS_TERRARIUM += --selftest-terr-progress                                                # P5: its badges, a hatchling's gates and the pack's cap, the shop's three
+SELFTESTS_TERRARIUM += --selftest-terr-deco                                                    # P5b: the decorations - bought, kept clear of hides/dish/ramps/bask, saved, shelved, sold
 # THE NETWORK's selftests (version.h PT_NET), in the networked bin alone (NET=1): the passport, the link engine under a
 # hostile radio, GIVE and the visitor collection's pages in both worlds; the visits through the doors and a cross-tank
 # fry's cap in the aquarium's (a lizard never takes a door). The shared tests with networked steps of their own (#if PT_NET

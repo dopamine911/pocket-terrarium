@@ -377,8 +377,9 @@ void render_fish_removed(int idx);   /* a fish left, the slots shifted: the keep
  * to the milestones page, 2026-09-16),
  * SHOP_TAP_KEPT when a modal opened or closed. Page state is render-local;
  * render_shop_leave clears it when the page closes. */
-enum { SHOP_TAP_NONE = 0, SHOP_TAP_KEPT = 1, SHOP_TAP_CLOSE = 2, SHOP_TAP_BUY = 16, SHOP_TAP_MOVE = 32, SHOP_TAP_SELL = 64,
-       SHOP_TAP_FRY = 128, SHOP_TAP_SHELVE = 256, SHOP_TAP_PLACE = 512 };   /* BUY / MOVE / SELL / SHELVE / PLACE + item index; FRY + the fry's place in the offer (0.3.5) */
+enum { SHOP_TAP_NONE = 0, SHOP_TAP_KEPT = 1, SHOP_TAP_CLOSE = 2, SHOP_TAP_BUY = 16, SHOP_TAP_MOVE = 48, SHOP_TAP_SELL = 80,
+       SHOP_TAP_FRY = 128, SHOP_TAP_SHELVE = 256, SHOP_TAP_PLACE = 512 };   /* BUY / MOVE / SELL / SHELVE / PLACE + item index (< 32: the
+                                                                               terrarium's decorations are items 14..17); FRY + the fry's place in the offer (0.3.5) */
 /* SHOP_TAP_SHELVE / SHOP_TAP_PLACE (0.3.9, the decoration shelf): a piece in
  * the tank has MOVE | SHELVE in its modal (SELL moved to the placement page);
  * SHELVE puts it away (progression_shelve) and the shop stays up - its row

@@ -49,6 +49,16 @@ PAL = {
     "M": 0xd0d6dc, "P": 0x8c96a0, "U": 0x525a64,
     # a mealworm: yellow-brown bands, the head dark
     "y": 0xe8bc52, "a": 0xb8862c, "d": 0x7a5418,
+    # the decorations, in daylight: a saguaro's greens and its spines
+    "6": 0x9cc070, "7": 0x6a9850, "8": 0x47703c, "9": 0x2c4c2c, "x": 0xf2ead0,
+    # bleached bone
+    "I": 0xfffaf0, "Z": 0xe6dcc6, "+": 0xc2b49a, "%": 0x8c7e68, "#": 0x3e342c,
+    # silvered driftwood
+    "=": 0xdcd8cf, "-": 0xb2aa9e, "~": 0x857d72, ":": 0x575047,
+    # terracotta
+    ";": 0xec9e6c, "*": 0xc66c42, "^": 0x96482c, "&": 0x642c1c,
+    # the scene's echeverias (render_scene_desert.c sd_plant): four greens, the pink tips
+    "<": 0xa6cc98, ">": 0x8aba84, "[": 0x6ea06c, "]": 0x588658, "!": 0xd8889a,
 }
 
 
@@ -815,6 +825,247 @@ def farm():                             # a mealworm farm: a tub of bran, the wo
     return im
 
 
+# ---- the desert decorations: a shop icon (32 px, outlined) and the piece itself as it stands on the sand
+# (no outline, no ground, no shadow: the scene draws the contact shadow and lights it; its foot is the bottom row's centre)
+def grid(w, h):
+    return [["."] * w for _ in range(h)]
+
+
+def joined(g):
+    return ["".join(r) for r in g]
+
+
+def stem(g, path, r, tones, spines=0, light=(-0.75, -0.65), seed=0):
+    """a ribbed round stem along a polyline, half-width r: tones lit, mid, shade, dark; ribs run along it, spines on them"""
+    lx, ly = light
+    for y in range(len(g)):
+        for x in range(len(g[0])):
+            px, py, best = x + 0.5, y + 0.5, None
+            for (x0, y0), (x1, y1) in zip(path, path[1:]):
+                dx, dy = x1 - x0, y1 - y0
+                t = max(0, min(1, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)))
+                qx, qy = x0 + t * dx, y0 + t * dy
+                d = math.hypot(px - qx, py - qy)
+                if best is None or d < best[0]:
+                    n = math.hypot(dx, dy)
+                    nx, ny = -dy / n, dx / n
+                    if nx * lx + ny * ly < 0:
+                        nx, ny = -nx, -ny               # n: toward the light
+                    best = (d, ((px - qx) * nx + (py - qy) * ny) / r)
+            d, s = best
+            if d > r:
+                continue
+            k = int((1 - s) * r)                        # which rib
+            c = tones[0] if s > 0.35 else tones[1] if s > -0.4 else tones[2]
+            if k % 2:
+                c = {tones[0]: tones[1], tones[1]: tones[2], tones[2]: tones[3]}[c]
+            if s < -0.82:
+                c = tones[3]
+            if spines and k % 2 == 0 and c != tones[3] and (y * 2 + k * 3 + seed) % spines == 0 and d < r - 0.6:
+                c = "x"
+            g[y][x] = c
+
+
+def saguaro(w, h, trunk_r, arm_r, cx, top, arms, spines=7):
+    g = grid(w, h)
+    for path in arms:
+        stem(g, path, arm_r, "6789", spines, seed=3)
+    stem(g, [(cx, top), (cx, h + trunk_r)], trunk_r, "6789", spines)
+    return joined(g)
+
+
+def wood(g, path, radii, twist, light=(-0.45, -0.9), period=4.0, width=0.85):
+    """a silvered branch along path, radii[i] thick at each point; the grain twists round it"""
+    lx, ly = light
+    for y in range(len(g)):
+        for x in range(len(g[0])):
+            px, py, best = x + 0.5, y + 0.5, None
+            for i, ((x0, y0), (x1, y1)) in enumerate(zip(path, path[1:])):
+                dx, dy = x1 - x0, y1 - y0
+                t = max(0, min(1, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)))
+                qx, qy = x0 + t * dx, y0 + t * dy
+                r = radii[i] + (radii[i + 1] - radii[i]) * t
+                d = math.hypot(px - qx, py - qy) / r
+                if best is None or d < best[0]:
+                    n = math.hypot(dx, dy)
+                    nx, ny = -dy / n, dx / n
+                    if nx * lx + ny * ly < 0:
+                        nx, ny = -nx, -ny
+                    best = (d, ((px - qx) * nx + (py - qy) * ny) / r, r, (t + i) / (len(path) - 1))
+            d, s, r, along = best
+            if d > 1:
+                continue
+            c = "=" if s > 0.3 else "-" if s > -0.45 else "~"
+            if s < -0.8:
+                c = ":"
+            if (s * r + along * len(path) * twist * 6) % period < width and c != ":":
+                c = {"=": "-", "-": "~", "~": ":"}[c]
+            g[y][x] = c
+
+
+def driftwood(w, h, parts):
+    g = grid(w, h)
+    for path, radii, twist in parts:
+        wood(g, path, radii, twist)
+    return joined(g)
+
+
+ECHE_SIN = (0.0, -0.5227, 0.5227, -0.8674, 0.8674, -0.9927, 0.9927)
+ECHE_COS = (1.0, 0.8525, 0.8525, 0.4976, 0.4976, 0.1205, 0.1205)
+ECHE_LEN = (12, 11.5, 11.5, 10.5, 10.5, 9, 9)
+
+
+def echeveria(g, cx, cy, sc):
+    """the scene's echeveria (render_scene_desert.c sd_plant) scaled by sc: pointed leaves fanning up, pink tips"""
+    darker, lighter = {"<": ">", ">": "[", "[": "]", "]": "]"}, {"<": "<", ">": "<", "[": ">", "]": "["}
+    for y in range(len(g)):
+        for x in range(len(g[0])):
+            dx, dy = (x + 0.5 - cx) / sc, (y + 0.5 - cy) / sc
+            if dx < -13 or dx > 13 or dy < -13 or dy > 2:
+                continue
+            for k in range(6, -1, -1):                  # the outer, lower leaves are the nearer
+                u, v = dx * ECHE_SIN[k] - dy * ECHE_COS[k], dx * ECHE_COS[k] + dy * ECHE_SIN[k]
+                if u < 0 or u > ECHE_LEN[k]:
+                    continue
+                q = u / ECHE_LEN[k]
+                wd = 3 * (q / 0.35 if q < 0.35 else (1 - q) / 0.65) + 0.4
+                if abs(v) > wd:
+                    continue
+                c = "<" if k < 1 else ">" if k < 3 else "[" if k < 5 else "]"
+                if q > 0.84:
+                    c = "!"
+                elif v > wd - 0.9 / sc:
+                    c = darker[c]
+                elif v < -wd + 0.9 / sc:
+                    c = lighter[c]
+                g[y][x] = c
+                break
+
+
+def pot(w, h, top, rim_w, body_top_w, body_bot_w, plants):
+    """a terracotta pot, its rim from row top, tapering to its foot on the bottom row; plants (x, y, scale) in it"""
+    g = grid(w, h)
+    for px, py, sc in plants:
+        echeveria(g, px, py, sc)
+    for y in range(top, h):
+        t = (y - top - 3) / max(1, h - 1 - top - 3)
+        half = rim_w / 2 if y < top + 3 else (body_top_w + (body_bot_w - body_top_w) * t) / 2
+        for x in range(w):
+            u = (x + 0.5 - w / 2) / half
+            if abs(u) > 1:
+                continue
+            c = "&" if u > 0.85 else ";" if u < -0.45 else "*" if u < 0.4 else "^"
+            if y == top:
+                c = {";": ";", "*": ";", "^": "*", "&": "^"}[c]
+            elif y == top + 2:
+                c = {";": "*", "*": "^", "^": "^", "&": "&"}[c]
+            elif y == top + 3:                          # the rim's shadow on the body
+                c = {";": "^", "*": "^", "^": "&", "&": "&"}[c]
+            g[y][x] = c
+    return joined(g)
+
+
+SKULL_LEFT = [                  # 16 x 18: a cow skull's left half, the horn sweeping out and up
+    ".+..............",
+    ".Z%.............",
+    ".ZZ%............",
+    "..ZZ%......ZZZZZ",
+    "...ZZZ++..ZIIIII",
+    "....ZZZZZZZIIIII",
+    ".....%%%%%ZIIZII",
+    ".........ZIIIIII",
+    ".........Z##+ZII",
+    ".........Z###ZII",
+    "..........Z##ZII",
+    "..........ZZIIII",
+    "...........ZIIII",
+    "...........ZIZ#I",
+    "............ZZ#I",
+    "............ZZ+I",
+    "............ZZZI",
+    ".............+ZZ",
+]
+
+
+def skull():
+    """the whole skull: the left half mirrored a shade darker, a dark edge down its shaded side and under the jaw"""
+    darker = {"I": "Z", "Z": "+", "+": "%", "%": "%", "#": "#"}
+    g = [list(r + "".join(darker.get(c, c) for c in reversed(r))) for r in SKULL_LEFT]
+    h, w = len(g), len(g[0])
+    for y in range(h):
+        for x in range(w // 2, w):
+            if g[y][x] in "IZ+" and (x + 1 == w or g[y][x + 1] == "."):
+                g[y][x] = "%"
+    g[h - 1] = [{"I": "Z", "Z": "+", "+": "%"}.get(c, c) for c in g[h - 1]]
+    return joined(g)
+
+
+SAGUARO_ARMS = [[(11, 31), (5.5, 31), (3.5, 28), (3.5, 13)], [(11, 24), (16.5, 24), (18.5, 21), (18.5, 8)]]
+DRIFTWOOD = [                   # (path, radii, twist): a root snag, a branch stub reaching up, the trunk lying
+    ([(8, 9.5), (4.5, 4.5), (3, 1.5)], [2.0, 1.5, 1.0], 0.5),
+    ([(31, 10), (38, 5.5), (45, 2.4), (50, 1.6)], [2.0, 1.6, 1.2, 0.9], 0.5),
+    ([(5.5, 10.5), (16, 11.4), (31, 12.4), (43, 11.3), (54, 9.8)], [4.3, 3.9, 3.3, 2.5, 1.4], 0.6),
+]
+DRIFTWOOD_ICON = [
+    ([(6, 13), (3, 6), (2.5, 2)], [2.2, 1.6, 1.0], 0.5),
+    ([(17, 13), (22, 7), (25, 3), (28, 1.8)], [2.0, 1.6, 1.2, 0.9], 0.5),
+    ([(4.5, 14), (11, 15.5), (18, 16.3), (25, 15.2), (29, 13.6)], [4.2, 3.8, 3.3, 2.5, 1.3], 0.6),
+]
+SAND_ICON = [
+    "......nnnnnnnnnnnnnnnnnnn......",
+    "..nnnnNNnnnnnnnnnnnnnNNnnnnnn..",
+    "nNNNNNNNNmNNNNNNNNNNNNNmNNNNNNN",
+]
+
+
+def piece(rows):
+    return sprite(rows, outline=False)
+
+
+def deco_saguaro():                     # 22 x 48
+    return piece(saguaro(22, 48, 4.2, 2.7, 11, 4.5, SAGUARO_ARMS))
+
+
+def deco_skull():                       # 32 x 18
+    return piece(skull())
+
+
+def deco_driftwood():                   # 56 x 16
+    return piece(driftwood(56, 16, DRIFTWOOD))
+
+
+def deco_pot():                         # 24 x 28
+    return piece(pot(24, 28, 16, 22, 19, 14, [(5.5, 17, 0.62), (18.5, 17, 0.62), (12, 17.5, 0.98)]))
+
+
+def shop_saguaro():
+    im = canvas()
+    arms = [[(13, 19), (7.2, 19), (5.2, 16.5), (5.2, 7)], [(13, 14), (18.8, 14), (20.8, 11.5), (20.8, 4)]]
+    put(im, sprite(saguaro(26, 29, 3.4, 2.2, 13, 3.6, arms, spines=5)), 2, 0)
+    put(im, sprite([r[4:26] for r in SAND_ICON]), 4, 27)
+    return im
+
+
+def shop_skull():
+    im = canvas()
+    put(im, sprite([r[4:26] for r in SAND_ICON]), 4, 25)
+    put(im, sprite([r[1:31] for r in skull()]), 0, 8)
+    return im
+
+
+def shop_driftwood():
+    im = canvas()
+    put(im, sprite(SAND_ICON), 0, 26)
+    put(im, sprite(driftwood(30, 21, DRIFTWOOD_ICON)), 0, 7)
+    return im
+
+
+def shop_pot():
+    im = canvas()
+    put(im, sprite(pot(26, 30, 17, 24, 21, 15, [(6, 18, 0.66), (20, 18, 0.66), (13, 18.5, 1.05)])), 2, 0)
+    return im
+
+
 ICONS_TERR = {
     "ms_first_meal": first_meal,
     "ms_first_hold_approach": first_hold_approach,
@@ -843,13 +1094,21 @@ ICONS_TERR = {
 
 # the terrarium's own: no aquarium original to size against, so each carries its size
 ICONS_TERR_ONLY = {
-    "ms_first_shed": (first_shed, 32),
-    "ms_shed_helped": (shed_helped, 32),
-    "ms_clean_run": (clean_run, 32),
-    "ms_first_adult": (first_adult, 32),
-    "shop_moss": (moss, 32),
-    "shop_bulb": (bulb, 32),
-    "shop_farm": (farm, 32),
+    "ms_first_shed": (first_shed, (32, 32)),
+    "ms_shed_helped": (shed_helped, (32, 32)),
+    "ms_clean_run": (clean_run, (32, 32)),
+    "ms_first_adult": (first_adult, (32, 32)),
+    "shop_moss": (moss, (32, 32)),
+    "shop_bulb": (bulb, (32, 32)),
+    "shop_farm": (farm, (32, 32)),
+    "shop_saguaro": (shop_saguaro, (32, 32)),
+    "shop_skull": (shop_skull, (32, 32)),
+    "shop_driftwood": (shop_driftwood, (32, 32)),
+    "shop_pot": (shop_pot, (32, 32)),
+    "deco_saguaro": (deco_saguaro, (22, 48)),
+    "deco_skull": (deco_skull, (32, 18)),
+    "deco_driftwood": (deco_driftwood, (56, 16)),
+    "deco_pot": (deco_pot, (24, 28)),
 }
 
 
@@ -863,8 +1122,8 @@ def main():
         print(f"  {name}_terr.png")
     for name, (draw, size) in ICONS_TERR_ONLY.items():
         im = draw()
-        if im.size != (size, size):
-            raise SystemExit(f"{name}_terr: {im.size} but it should be {size}x{size}")
+        if im.size != size:
+            raise SystemExit(f"{name}_terr: {im.size} but it should be {size[0]}x{size[1]}")
         im.save(os.path.join(ICONS, name + "_terr.png"))
         print(f"  {name}_terr.png")
 

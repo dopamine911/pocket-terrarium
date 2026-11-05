@@ -996,7 +996,7 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
         /* the live tank with a stripe over the piece's footprint: drag it
            anywhere on the water; the layer row picks its depth (the tank
            under the page redraws with it, so the fish and grass show the choice) */
-        char title[40]; snprintf(title, sizeof title, "PLACE THE %s", SD_ITEMS[s_item].name);
+        char title[40]; snprintf(title, sizeof title, "PLACE THE %s", progression_item(s_item)->name);
         text_c(fb, stride, CX, SETUP_Y + 7, 2, C_CAPT, title);
         render_button(fb, stride, SETUP_TOP_DONE_X, SETUP_TOP_BTN_Y, SETUP_PL_BTN_W, SETUP_BTN_H, C_GO, C_GO_E, "DONE", 2);
         /* SELL, top left (2026-09-24): a tap arms it and names the refund, a
@@ -1016,8 +1016,10 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
            is named on the hint line ("UNDER THE CORAL"). At the ends of the
            DEPTH row since 0.3.9; the plant (no stack, three tiles) has none */
         int below = tank_decor_neighbor(t, s_item, -1), above = tank_decor_neighbor(t, s_item, 1);
-        ord_arrow(fb, stride, SETUP_ORD_X0, SETUP_ORD_Y, false, below >= 0);   /* (the sword plant too since 0.3.9.4: a piece in the stack like the rest) */
-        ord_arrow(fb, stride, SETUP_ORD_X1, SETUP_ORD_Y, true, above >= 0);
+        if (tank_decor_slot(s_item) >= 0) {                   /* (a terrarium decoration has no stack: no arrows) */
+            ord_arrow(fb, stride, SETUP_ORD_X0, SETUP_ORD_Y, false, below >= 0);   /* (the sword plant too since 0.3.9.4: a piece in the stack like the rest) */
+            ord_arrow(fb, stride, SETUP_ORD_X1, SETUP_ORD_Y, true, above >= 0);
+        }
         /* the relation, in the depth bar's own words (Strato 2026-10-17: "behind
            the coral" / "in front of the coral"); "THE" goes when the line is too
            long for where it sits (the hint line, or beside COLOR / LOOK) */
@@ -1099,15 +1101,18 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
                 render_rect_edge(fb, stride, x, SETUP_COL_Y, SETUP_COL_W, SETUP_COL_H, on ? C_TEXT : C_DIM);
                 if (on) render_rect_edge(fb, stride, x + 1, SETUP_COL_Y + 1, SETUP_COL_W - 2, SETUP_COL_H - 2, C_TEXT);
             }
-        } else text_c(fb, stride, CX, SETUP_DEPTH_HINT_Y, 2, C_CAPT, rel[0] ? rel : s_item == 2 || s_item == 8 || s_item == 9 ? castle_hint[z] : hint[z]);
+        } else text_c(fb, stride, CX, SETUP_DEPTH_HINT_Y, 2, C_CAPT, rel[0] ? rel : tank_deco_index(s_item) >= 0 ? "IT KEEPS CLEAR OF THE HIDES"   /* (tank_deco_slide: a
+                                                                       hide, the dish, a ramp's foot or the basking spot is never covered) */
+                                                                   : s_item == 2 || s_item == 8 || s_item == 9 ? castle_hint[z] : hint[z]);
         float x0 = tank_decor_x(t, s_item) - tank_decor_half_w(s_item) - 10, x1 = tank_decor_x(t, s_item) + tank_decor_half_w(s_item) + 10, top = TANK_BOT - 16 - 40;
         if (s_item == 0) tank_veg_bed(t, 3, NULL, NULL, &top, NULL);   /* the leaves' reach */
         else top = tank_decor_fy(t, s_item) - tank_decor_height(s_item);   /* its highest pixel on its depth's floor line (0.3.9) */
         x0 -= PAGE_X; x1 -= PAGE_X; top -= PAGE_Y;                     /* the piece is in the tank; the stripe is drawn on the page */
         int sy = (int)top - 8; if (sy < place_y()) sy = place_y();
-        render_rect_blend(fb, stride, (int)x0, sy, (int)(x1 - x0), FLOOR - sy + 4, C_EDGE, 46);
-        chevron(fb, stride, (int)((x0 + x1) * 0.5f), FLOOR - 34, true, C_EDGE);
-        text_c(fb, stride, CX, 296, 2, C_CAPT, "DRAG IT LEFT OR RIGHT");
+        const bool deco = tank_deco_index(s_item) >= 0;                /* a terrarium decoration (P5b): small, on the floor line - the */
+        render_rect_blend(fb, stride, (int)x0, sy, (int)(x1 - x0), (deco ? (int)(tank_decor_fy(t, s_item) - PAGE_Y) : FLOOR) - sy + 4, C_EDGE, 46);
+        if (!deco) chevron(fb, stride, (int)((x0 + x1) * 0.5f), FLOOR - 34, true, C_EDGE);   /* stripe to its feet, no chevron over it, the line above it */
+        text_c(fb, stride, CX, deco && (int)top - 26 < 296 ? (int)top - 26 : 296, 2, C_CAPT, "DRAG IT LEFT OR RIGHT");
     } else if (page_is_name() && s_kbd) {
         /* the two rejected designs, drawn as they were: a panel over the tank,
            the name as underlined slots (the next free one blinks; an untouched

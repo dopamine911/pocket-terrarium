@@ -1396,11 +1396,11 @@ static void tank_task(void *arg) {
           if (r >= SHOP_TAP_PLACE) {                                    /* back from the shelf (0.3.9): the placement page, its old spot in place */
               int item = r - SHOP_TAP_PLACE;
               if (progression_unshelve(&tank, item)) { audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE); touch_port_show_shop(false); setup_begin_place(&tank, item);
-                  ESP_LOGI(TAG, "shop: %s back from the shelf - placement page up", SD_ITEMS[item].name); }
+                  ESP_LOGI(TAG, "shop: %s back from the shelf - placement page up", progression_item(item)->name); }
           } else if (r >= SHOP_TAP_SHELVE) {                            /* put away (0.3.9): the shop stays up, the row says ON THE SHELF */
               int item = r - SHOP_TAP_SHELVE;
               if (progression_shelve(&tank, item)) { audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE);
-                  ESP_LOGI(TAG, "shop: %s on the shelf (PUT BACK returns it)", SD_ITEMS[item].name); }
+                  ESP_LOGI(TAG, "shop: %s on the shelf (PUT BACK returns it)", progression_item(item)->name); }
           } else if (r >= SHOP_TAP_FRY) {                                      /* a fry bought (0.3.5): the shop closes, the birth flow welcomes it */
               int k = r - SHOP_TAP_FRY;
               if (progression_buy_fry(&tank, k)) { touch_port_show_shop(false);
@@ -1409,18 +1409,18 @@ static void tank_task(void *arg) {
           } else if (r >= SHOP_TAP_SELL) {                              /* sold back: the refund, the piece gone, the row for sale again */
               int item = r - SHOP_TAP_SELL;
               if (progression_sell(&tank, item)) { audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE);
-                  ESP_LOGI(TAG, "shop: %s sold back for %d, balance %d", SD_ITEMS[item].name, progression_sell_value(item), (int)tank.sd_balance); }
+                  ESP_LOGI(TAG, "shop: %s sold back for %d, balance %d", progression_item(item)->name, progression_sell_value(item), (int)tank.sd_balance); }
           } else if (r >= SHOP_TAP_MOVE) {                              /* a piece already in the tank: place it again */
               int item = r - SHOP_TAP_MOVE;
               touch_port_show_shop(false); setup_begin_place(&tank, item);
-              ESP_LOGI(TAG, "shop: MOVE %s - placement page up (drag, DEPTH, DONE)", SD_ITEMS[item].name);
+              ESP_LOGI(TAG, "shop: MOVE %s - placement page up (drag, DEPTH, DONE)", progression_item(item)->name);
           } else if (r >= SHOP_TAP_BUY) {
               int item = r - SHOP_TAP_BUY;
               if (progression_buy(&tank, item)) { audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE);
                   ESP_LOGI(TAG, "shop: %s unlocked, %d sand dollars left", progression_item(item)->name, (int)tank.sd_balance);   /* (any item: the terrarium's past the fish's, P5) */
                   if (tank_decor_placeable(item)) {                     /* a placeable piece: the page opens over the live tank */
                       touch_port_show_shop(false); setup_begin_place(&tank, item);
-                      ESP_LOGI(TAG, "shop: placement page up for the %s", SD_ITEMS[item].name); } }
+                      ESP_LOGI(TAG, "shop: placement page up for the %s", progression_item(item)->name); } }
               else if (progression_item(item)) ESP_LOGI(TAG, "shop: %s refused (balance %d, price %d)", progression_item(item)->name, (int)tank.sd_balance, progression_item(item)->price); } }
         brightness_apply(tank.night);
         { static int64_t last_bat; if (now - last_bat > 5LL * 60 * 1000000) {   /* battery log: awake sample every 5 min */

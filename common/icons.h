@@ -7,6 +7,10 @@
 
 typedef struct { uint8_t w, h; const uint16_t *rgb; const uint8_t *a; } icon_t;
 
+extern const icon_t icon_deco_driftwood_terr;
+extern const icon_t icon_deco_pot_terr;
+extern const icon_t icon_deco_saguaro_terr;
+extern const icon_t icon_deco_skull_terr;
 extern const icon_t icon_foot_close;
 extern const icon_t icon_foot_my_tanks;
 extern const icon_t icon_foot_my_tanks_terr;
@@ -74,16 +78,20 @@ extern const icon_t icon_shop_castle;
 extern const icon_t icon_shop_cluster;
 extern const icon_t icon_shop_coral;
 extern const icon_t icon_shop_crab;
+extern const icon_t icon_shop_driftwood_terr;
 extern const icon_t icon_shop_farm_terr;
 extern const icon_t icon_shop_moss_terr;
 extern const icon_t icon_shop_plant;
+extern const icon_t icon_shop_pot_terr;
 extern const icon_t icon_shop_pumpkin;
+extern const icon_t icon_shop_saguaro_terr;
 extern const icon_t icon_shop_sand_dollar_16;
 extern const icon_t icon_shop_sand_dollar_16_terr;
 extern const icon_t icon_shop_sand_dollar_64;
 extern const icon_t icon_shop_sand_dollar_64_terr;
 extern const icon_t icon_shop_seahorse;
 extern const icon_t icon_shop_shrimp;
+extern const icon_t icon_shop_skull_terr;
 extern const icon_t icon_shop_snail;
 extern const icon_t icon_shop_urchin;
 extern const icon_t icon_shop_volcano;
@@ -104,8 +112,10 @@ extern const icon_t icon_tool_sponge;
  *   icon_ms_first_play_session icon_ms_first_quiet_night icon_ms_first_sale icon_ms_first_seagrass
  *   icon_ms_tank_changed_someone icon_shop_sand_dollar_16 icon_shop_sand_dollar_64
  * The terrarium's own art, defined in its bin alone (name it in terrarium-only code):
+ *   icon_deco_driftwood_terr icon_deco_pot_terr icon_deco_saguaro_terr icon_deco_skull_terr
  *   icon_ms_clean_run_terr icon_ms_first_adult_terr icon_ms_first_shed_terr icon_ms_shed_helped_terr
- *   icon_shop_bulb_terr icon_shop_farm_terr icon_shop_moss_terr
+ *   icon_shop_bulb_terr icon_shop_driftwood_terr icon_shop_farm_terr icon_shop_moss_terr
+ *   icon_shop_pot_terr icon_shop_saguaro_terr icon_shop_skull_terr
  */
 #define WORLD_ICON(name) (PT_TERRARIUM ? &name##_terr : &name)
 

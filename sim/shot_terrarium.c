@@ -569,3 +569,108 @@ int selftest_terr_setup(void) {
     printf("selftest-terr-setup: WELCOME, MORPH, NAME, MORPH, NAME, CARE; %s and %s kept across a reboot\n", sp->morphs[pick[0]].name, sp->morphs[pick[1]].name);
     return 0;
 }
+
+/* ---- the terrarium's decorations (P5b, tank.h THE TERRARIUM's DECORATIONS) ----
+ *   ./fishsim --terr-deco-shot <prefix>   _shop, _shop2 (the shop's two pages), _shop_item (a decoration's modal, for
+ *     sale), _shop_owned (one bought: MOVE | SHELVE), _place (the saguaro's placement page, dragged onto a hide: slid clear),
+ *     _day, _night (all four placed, two lizards about) */
+int terr_deco_shot(const char *prefix) {
+    if (!PT_TERRARIUM) { printf("terr-deco-shot: the terrarium's bin only\n"); return 1; }
+    const int st[2] = { STAGE_ADULT, STAGE_JUV }; const uint32_t bd[2] = { YELLOW, CORAL };
+    fresh(35, 2, st, bd); tank_ensure_ids(&s_t);
+    const terrain_t *tr = tank_terrain(&s_t);
+    stand(0, 0, TANK_W * 0.52f, -1); force(&s_t, 0, GOAL_LZ_REST); stand(1, tr->bask_path, tr->bask_x, 1); force(&s_t, 1, GOAL_LZ_BASK);
+    run(1.0f);
+    s_t.sd_balance = 412;
+    render_shop_leave(); render_tank(&s_t, s_fb, TANK_W); render_shop(&s_t, s_fb, TANK_W); ppm(prefix, "shop");
+    render_shop_tap(&s_t, PAGE_X + SHP_ARROW_X1 + SHP_ARROW_W / 2, PAGE_Y + SHP_ARROW_Y + SHP_ARROW_H / 2);
+    render_tank(&s_t, s_fb, TANK_W); render_shop(&s_t, s_fb, TANK_W); ppm(prefix, "shop2");
+    render_shop_tap(&s_t, PAGE_X + 120, PAGE_Y + SHP_ROW_Y0 + 10);       /* the skull's row */
+    render_tank(&s_t, s_fb, TANK_W); render_shop(&s_t, s_fb, TANK_W); ppm(prefix, "shop_item");
+    render_shop_leave();
+    for (int d = 0; d < TERR_DECO_N; d++) { s_t.sd_balance = 1000; progression_buy(&s_t, TERR_DECO_ITEM0 + d); }
+    s_t.sd_balance = 412;
+    s_t.clock += 2;                                                       /* (past the shop's double-tap wait) */
+    render_shop_tap(&s_t, PAGE_X + 120, PAGE_Y + SHP_ROW_Y0 + 3 * SHP_ROW_DY + 10);   /* the saguaro's row, owned */
+    render_tank(&s_t, s_fb, TANK_W); render_shop(&s_t, s_fb, TANK_W); ppm(prefix, "shop_owned");
+    render_shop_leave();
+    /* the placement page: the saguaro dragged onto the first hide - it stands clear of it */
+    { float hx, hy; tank_hide_point(&s_t, 0, &hx, &hy);
+      setup_begin_place(&s_t, TERR_DECO_ITEM0);
+      setup_touch(&s_t, hx, PLACE_Y - 30, true); run(0.3f);
+      setup_touch(&s_t, hx, PLACE_Y - 30, true); run(0.1f);
+      render_tank(&s_t, s_fb, TANK_W); render_setup(&s_t, s_fb, TANK_W, s_t.clock); ppm(prefix, "place");
+      setup_touch(&s_t, hx, PLACE_Y - 30, false); setup_cancel(&s_t); }
+    for (int d = 0; d < TERR_DECO_N; d++)                               /* each back at a purchase's home: spread over the free sand */
+        tank_decor_set(&s_t, TERR_DECO_ITEM0 + d, tank_deco_home(&s_t, TERR_DECO_ITEM0 + d), DECOR_Z_BACK);
+    run(1.0f); ppm(prefix, "day");
+    s_t.light_on = false; run(2.5f); ppm(prefix, "night");
+    return 0;
+}
+
+/* --selftest-terr-deco (P5b): a decoration buys at its price; each one's own spot is clear on this glass; set over a hide,
+ * the dish, a ramp's foot or the basking spot it slides to a clear x off it (and a clear x stays put); its spot and the
+ * piece survive a save and a reboot; it shelves (off the glass, its spot kept) and comes back; it sells back for
+ * SD_SELL_PCT of its price - gone, the spot forgotten */
+#define TDF(...) do { printf("FAIL: terr-deco: "); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
+int selftest_terr_deco(void) {
+    const char *sav = sim_tmp("pocket-terrarium-selftest-terr-deco.sav");
+    setenv("POCKET_TANK_SAVE", sav, 1); remove(sav);
+    tank_init(&s_t, 51); progression_wake(&s_t, 0); s_t.trickle_off = true;
+    for (int d = 0; d < TERR_DECO_N; d++) {                          /* bought: the price taken, in the terrarium, at a clear spot */
+        const int item = TERR_DECO_ITEM0 + d; const sd_item_t *it = progression_item(item);
+        if (!it || !tank_decor_placeable(item) || tank_deco_index(item) != d) TDF("item %d is no decoration", item);
+        s_t.sd_balance = it->price - 1;
+        if (progression_buy(&s_t, item) || tank_decor_owned(&s_t, item)) TDF("the %s sold a rose short", it->name);
+        s_t.sd_balance = it->price + 5;
+        if (!progression_buy(&s_t, item) || s_t.sd_balance != 5 || !tank_decor_in(&s_t, item)) TDF("the %s not bought at %d (balance %d)", it->name, it->price, (int)s_t.sd_balance);
+        if (!tank_deco_clear(&s_t, item, tank_decor_x(&s_t, item))) TDF("the %s's own spot x %.0f is not clear on this glass", it->name, tank_decor_x(&s_t, item));
+    }
+    /* what a decoration never covers: each hide, the dish, each ramp's foot, the basking spot (their x, the half-width kept clear) */
+    const habitat_t *h = tank_habitat(&s_t); const terrain_t *tr = tank_terrain(&s_t);
+    float at[24], keep[24]; const char *what[24]; int n = 0;
+    for (int k = 0; k < h->n_hides; k++) { float hx, hy; tank_hide_point(&s_t, k, &hx, &hy); at[n] = hx; keep[n] = TERRAIN_HIDE_HW; what[n++] = "a hide"; }
+    if (tank_dish_here(&s_t)) { float dx, dy; tank_dish_point(&s_t, &dx, &dy); at[n] = dx; keep[n] = HABITAT_DISH_HW; what[n++] = "the dish"; }
+    for (int k = 0; k < tr->n_links && n < 22; k++) if (tr->link[k].a == 0 || tr->link[k].b == 0) { at[n] = tr->link[k].x; keep[n] = 8; what[n++] = "a ramp's foot"; }
+    if (tr->bask_path >= 0) { at[n] = tr->bask_x; keep[n] = 10; what[n++] = "the basking spot"; }
+    int slid = 0;
+    for (int d = 0; d < TERR_DECO_N; d++) {
+        const int item = TERR_DECO_ITEM0 + d; const float half = tank_decor_half_w(item);
+        for (int k = 0; k < n; k++) {
+            tank_decor_set(&s_t, item, at[k], DECOR_Z_BACK);
+            const float x = tank_decor_x(&s_t, item);
+            for (int j = 0; j < n; j++)
+                if (fabsf(x - at[j]) < half + keep[j]) TDF("the %s set on %s (x %.0f) stands at %.0f, over %s (x %.0f)", progression_item(item)->name, what[k], at[k], x, what[j], at[j]);
+            if (x - half < tank_glass_x0(TERR_DECO_FY) || x + half > tank_glass_x1(TERR_DECO_FY)) TDF("the %s at %.0f is out of the glass", progression_item(item)->name, x);
+            slid++;
+        }
+        tank_decor_reset(&s_t, item);
+        const float x0 = tank_decor_x(&s_t, item);                    /* a clear spot is kept as set (to the save's 2 px) */
+        tank_decor_set(&s_t, item, x0, DECOR_Z_BACK);
+        if (fabsf(tank_decor_x(&s_t, item) - x0) > 1.01f) TDF("the %s set on a clear x %.0f moved to %.0f", progression_item(item)->name, x0, tank_decor_x(&s_t, item));
+    }
+    /* saved and rebooted: each piece and its spot */
+    const int sag = TERR_DECO_ITEM0, skull = TERR_DECO_ITEM0 + 1;
+    tank_decor_set(&s_t, sag, tank_decor_x(&s_t, sag) - 9, DECOR_Z_BACK);
+    float xs[TERR_DECO_N]; for (int d = 0; d < TERR_DECO_N; d++) xs[d] = tank_decor_x(&s_t, TERR_DECO_ITEM0 + d);
+    progression_save(&s_t);
+    tank_init(&s_t, 52); progression_wake(&s_t, 0);
+    for (int d = 0; d < TERR_DECO_N; d++) {
+        const int item = TERR_DECO_ITEM0 + d;
+        if (!tank_decor_in(&s_t, item)) TDF("the %s is gone after a reboot", progression_item(item)->name);
+        if (fabsf(tank_decor_x(&s_t, item) - xs[d]) > 0.01f) TDF("the %s came back at %.0f, not %.0f", progression_item(item)->name, tank_decor_x(&s_t, item), xs[d]);
+    }
+    /* the shelf: off the glass (no hold finds it), owned, its spot kept; back where it stood */
+    if (!progression_shelve(&s_t, skull) || tank_decor_in(&s_t, skull) || !tank_decor_owned(&s_t, skull)) TDF("the skull did not go on the shelf");
+    if (tank_decor_hit(&s_t, xs[1], TERR_DECO_FY - 8) == skull) TDF("a hold found the shelved skull");
+    if (!progression_unshelve(&s_t, skull) || !tank_decor_in(&s_t, skull) || fabsf(tank_decor_x(&s_t, skull) - xs[1]) > 0.01f) TDF("the skull did not come back from the shelf where it stood");
+    /* sold back: SD_SELL_PCT of the price, gone, the spot forgotten (bought again it stands at its own) */
+    const int32_t b0 = s_t.sd_balance; const int back = progression_item(sag)->price * SD_SELL_PCT / 100;
+    if (progression_sell_value(sag) != back || !progression_sell(&s_t, sag) || s_t.sd_balance != b0 + back || tank_decor_owned(&s_t, sag) || s_t.deco_x[0])
+        TDF("the saguaro's sale: balance %d -> %d (want +%d), owned %d", (int)b0, (int)s_t.sd_balance, back, tank_decor_owned(&s_t, sag));
+    tank_init(&s_t, 53); progression_wake(&s_t, 0);
+    if (tank_decor_owned(&s_t, sag) || !tank_decor_in(&s_t, skull)) TDF("after the sale and a reboot: the saguaro owned %d, the skull in %d", tank_decor_owned(&s_t, sag), tank_decor_in(&s_t, skull));
+    remove(sav);
+    printf("selftest-terr-deco: four decorations bought and kept clear of %d spots (%d placements), through a reboot, the shelf and a sale back (+%d)\n", n, slid, back);
+    return 0;
+}

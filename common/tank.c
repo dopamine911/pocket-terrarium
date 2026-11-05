@@ -696,6 +696,7 @@ void tank_init(tank_t *t, uint32_t seed) {
     t->algae_acc = 0; t->trims = 0; t->cells_cleaned = 0;
     t->algae_colonies = 0; t->trim_px = 0;
     t->sd_balance = t->sd_earned = 0; t->sd_unlocks = 0; t->sd_shelved = 0; t->sd_locked = 0;
+    memset(t->deco_x, 0, sizeof t->deco_x);                  /* (the terrarium's decorations, P5b: none placed) */
     for (int i = 0; i < N_FISH_MAX; i++) t->sd_paid_fish[i] = 0;
     t->sd_colonies_paid = t->sd_inches_paid = 0;
     t->snail_x = -1; t->snail_y = -1; t->snail_heading = 0; t->snail_cell = -1; t->snail_graze = 0;
@@ -2826,22 +2827,95 @@ static void cluster_grow(tank_t *t, float seconds) {
     t->cluster_growth = fminf(CLUSTER_FULL, t->cluster_growth + seconds / CLUSTER_GROW_S);
 }
 void     tank_coral_set_rgb(tank_t *t, uint32_t rgb) { t->coral_rgb = rgb & 0xffffff; }
+/* THE TERRARIUM's DECORATIONS (tank.h, P5b): their art's size (render.c draws them from these), the floor fraction each
+   stands at until placed (slid clear), their bits */
+static const float    DECO_HW[TERR_DECO_N]  = { 11, 16, 28, 12 };            /* the saguaro, the skull, the driftwood, the pot */
+static const float    DECO_H[TERR_DECO_N]   = { 48, 18, 16, 28 };
+static const float    DECO_U[TERR_DECO_N]   = { 0.86f, 0.60f, 0.38f, 0.14f };
+static const uint32_t DECO_BIT[TERR_DECO_N] = { SD_ITEM_SAGUARO, SD_ITEM_SKULL, SD_ITEM_DRIFTWOOD, SD_ITEM_POT };
+_Static_assert(TERR_DECO_N == sizeof ((tank_t *)0)->deco_x, "a saved x for every decoration");
+int tank_deco_index(int item) { return PT_TERRARIUM && item >= TERR_DECO_ITEM0 && item < TERR_DECO_ITEM0 + TERR_DECO_N ? item - TERR_DECO_ITEM0 : -1; }
+#define DECO_GAP 6.0f      /* the sand kept clear past a hide's or the dish's edge */
+/* the spans a piece of half-width `half` may not be centred in: over a hide or the dish, on a ramp's foot (its way on and
+   off the floor: the ramp's link with the floor, terrain.h) or under the basking spot - all where this glass has them */
+static int deco_bars(const tank_t *t, float half, float a[], float b[]) {
+    int n = 0;
+    const habitat_t *h = tank_habitat(t);
+    for (int k = 0; k < h->n_hides && n < 8; k++) { float hx, hy; tank_hide_point(t, k, &hx, &hy); a[n] = hx - TERRAIN_HIDE_HW - half - DECO_GAP; b[n] = hx + TERRAIN_HIDE_HW + half + DECO_GAP; n++; }
+    if (tank_dish_here(t)) { float dx, dy; tank_dish_point(t, &dx, &dy); a[n] = dx - HABITAT_DISH_HW - half - DECO_GAP; b[n] = dx + HABITAT_DISH_HW + half + DECO_GAP; n++; }
+    const terrain_t *tr = tank_terrain(t);
+    for (int k = 0; k < tr->n_links && n < 20; k++)
+        if (tr->link[k].a == 0 || tr->link[k].b == 0) { a[n] = tr->link[k].x - half - 14; b[n] = tr->link[k].x + half + 14; n++; }
+    if (tr->bask_path >= 0) { a[n] = tr->bask_x - half - 16; b[n] = tr->bask_x + half + 16; n++; }
+    return n;
+}
+static void deco_span(float half, float *lo, float *hi) {      /* the sand it may stand on, inside the glass */
+    *lo = fmaxf(TANK_FX0 + DECOR_MARGIN, tank_glass_x0(TERR_DECO_FY) + 6) + half;
+    *hi = fminf(TANK_FX1 - DECOR_MARGIN, tank_glass_x1(TERR_DECO_FY) - 6) - half;
+}
+bool tank_deco_clear(const tank_t *t, int item, float x) {
+    const int d = tank_deco_index(item);
+    if (d < 0) return true;
+    float lo, hi, a[24], b[24]; deco_span(DECO_HW[d], &lo, &hi);
+    if (x < lo - 0.5f || x > hi + 0.5f) return false;
+    const int n = deco_bars(t, DECO_HW[d], a, b);
+    for (int k = 0; k < n; k++) if (x > a[k] && x < b[k]) return false;
+    return true;
+}
+float tank_deco_slide(const tank_t *t, int item, float x) {
+    const int d = tank_deco_index(item);
+    if (d < 0) return x;
+    float lo, hi, a[24], b[24]; deco_span(DECO_HW[d], &lo, &hi);
+    x = clampf(x, lo, hi);
+    if (tank_deco_clear(t, item, x)) return x;
+    const int n = deco_bars(t, DECO_HW[d], a, b);
+    float best = x, bd = 1e9f;
+    for (int k = 0; k <= n; k++)
+        for (int e = 0; e < 2; e++) {                              /* a bar's edge, 2 px past it (the save keeps x to 2 px); the sand's ends */
+            const float c = k == n ? (e ? hi : lo) : e ? b[k] + 2 : a[k] - 2;
+            if (fabsf(c - x) < bd && tank_deco_clear(t, item, c)) { bd = fabsf(c - x); best = c; }
+        }
+    return best;
+}
+float tank_deco_home(const tank_t *t, int item) {
+    const int d = tank_deco_index(item);
+    if (d < 0) return 0;
+    float lo, hi; deco_span(DECO_HW[d], &lo, &hi);
+    const float want = tank_floor_x(DECO_U[d]);
+    float best = tank_deco_slide(t, item, want), bs = 1e9f;
+    for (float x = lo; x <= hi; x += 2) {                          /* every clear x: the overlap with the others first, then the way off its own */
+        if (!tank_deco_clear(t, item, x)) continue;
+        float over = 0;
+        for (int e = 0; e < TERR_DECO_N; e++) {
+            if (e == d || !tank_decor_in(t, TERR_DECO_ITEM0 + e)) continue;
+            const float gap = fabsf(x - tank_decor_x(t, TERR_DECO_ITEM0 + e)) - DECO_HW[d] - DECO_HW[e] - 4;
+            if (gap < 0) over -= gap;
+        }
+        const float s = over * 8 + fabsf(x - want);
+        if (s < bs) { bs = s; best = x; }
+    }
+    return best;
+}
 /* the decor's spot and layer (see tank.h): item 0 is the plant, item 2 the castle, item 3 the coral, item 4 the cluster, item 8 the pumpkin, item 9 the volcano */
-bool  tank_decor_placeable(int item) { return item == 0 || item == 2 || item == 3 || item == 4 || item == 8 || item == 9; }
-float tank_decor_half_w(int item) { return item == 0 ? PLANT_HALF_W : item == 2 ? CASTLE_HALF_W : item == 3 ? CORAL_HALF_W : item == 4 ? CLUSTER_HALF_W : item == 8 ? PUMPKIN_HALF_W : item == 9 ? VOLCANO_HALF_W : 0; }
+bool  tank_decor_placeable(int item) { return item == 0 || item == 2 || item == 3 || item == 4 || item == 8 || item == 9 || tank_deco_index(item) >= 0; }
+float tank_decor_half_w(int item) { return item == 0 ? PLANT_HALF_W : item == 2 ? CASTLE_HALF_W : item == 3 ? CORAL_HALF_W : item == 4 ? CLUSTER_HALF_W : item == 8 ? PUMPKIN_HALF_W : item == 9 ? VOLCANO_HALF_W
+                                        : tank_deco_index(item) >= 0 ? DECO_HW[tank_deco_index(item)] : 0; }
 /* every piece BEHIND or IN FRONT - the plant too since 0.3.9.3 (Strato: "we can let the weaving go ... either grass is
    in front or behind"): its AMONG, the fronds woven with the fish, is gone; a saved AMONG loads BEHIND */
 /* ... except the sword plant since 0.4 (Strato 11-02, on the watch: BEHIND THE SEAGRASS never drew behind it - the plant
    was always over the grass): ONE depth, the back lane it is baked in with the grass loop (no frame cost), drawn over the
    seagrass. A saved IN FRONT loads BEHIND. Its order among the pieces (the ORDER arrows) stays. Behind the grass for real:
    0.4.1+ (the back passes draw bed 3 last - draw it first) */
-int   tank_decor_z_count(int item) { return item == 0 ? 1 : 2; }
-int   tank_decor_z_at(int item, int i) { return item == 0 || i <= 0 ? DECOR_Z_BACK : DECOR_Z_FRONT; }
-int   tank_decor_z_index(int item, int z) { return item != 0 && z == DECOR_Z_FRONT ? 1 : 0; }
+int   tank_decor_z_count(int item) { return item == 0 || tank_deco_index(item) >= 0 ? 1 : 2; }   /* (a decoration: one depth, behind the lizards) */
+int   tank_decor_z_at(int item, int i) { return item == 0 || tank_deco_index(item) >= 0 || i <= 0 ? DECOR_Z_BACK : DECOR_Z_FRONT; }
+int   tank_decor_z_index(int item, int z) { return item != 0 && tank_deco_index(item) < 0 && z == DECOR_Z_FRONT ? 1 : 0; }
 /* the seagrass stays BEHIND the fish, where the keeper cannot move it (Strato 0.3.9.3: a held page for the beds would bring
    back the edits the decoration LOCK just quieted, "to support something no one has asked for"); the sword plant is a piece */
 int   tank_bed_z(const tank_t *t, int b) { return b == 3 && t->plant_z == DECOR_Z_FRONT ? DECOR_Z_FRONT : DECOR_Z_BACK; }
 float tank_decor_x(const tank_t *t, int item) {
+    { const int d = tank_deco_index(item);                     /* a decoration: its saved spot, or its own; either slid clear (a save
+                                                                  from another glass keeps the rule too) */
+      if (d >= 0) return tank_deco_slide(t, item, t->deco_x[d] ? t->deco_x[d] * 2.0f : tank_floor_x(DECO_U[d])); }
     if (item == 2) return t->castle_x > 0 ? t->castle_x : CASTLE_X_DEFAULT;
     if (item == 3) return t->coral_x > 0 ? t->coral_x : CORAL_X_DEFAULT;
     if (item == 4) return t->cluster_x > 0 ? t->cluster_x : CLUSTER_X_DEFAULT;
@@ -2850,14 +2924,29 @@ float tank_decor_x(const tank_t *t, int item) {
     if (item != 0) return 0;
     return t->plant_x > 0 ? t->plant_x : PLANT_X_DEFAULT;
 }
-int tank_decor_z(const tank_t *t, int item) { return item == 0 ? t->plant_z : item == 2 ? t->castle_z : item == 3 ? t->coral_z : item == 4 ? t->cluster_z : item == 8 ? t->pumpkin_z : item == 9 ? t->volcano_z : DECOR_Z_MIDDLE; }
-float tank_decor_fy(const tank_t *t, int item) { return (float)DECOR_FY(tank_decor_z(t, item)); }   /* the floor line it stands on: by its depth (0.3.9) */
-float tank_decor_height(int item) { return item == 2 ? 146 : item == 3 ? 92 : item == 4 ? 120 : item == 8 ? 82 : item == 9 ? 200 : 0; }   /* its highest pixel over that line */
+int tank_decor_z(const tank_t *t, int item) { return item == 0 ? t->plant_z : item == 2 ? t->castle_z : item == 3 ? t->coral_z : item == 4 ? t->cluster_z : item == 8 ? t->pumpkin_z : item == 9 ? t->volcano_z
+                                                     : tank_deco_index(item) >= 0 ? DECOR_Z_BACK : DECOR_Z_MIDDLE; }
+float tank_decor_fy(const tank_t *t, int item) { return tank_deco_index(item) >= 0 ? TERR_DECO_FY : (float)DECOR_FY(tank_decor_z(t, item)); }   /* the floor line it stands on: by its depth (0.3.9) */
+float tank_decor_height(int item) { return item == 2 ? 146 : item == 3 ? 92 : item == 4 ? 120 : item == 8 ? 82 : item == 9 ? 200
+                                           : tank_deco_index(item) >= 0 ? DECO_H[tank_deco_index(item)] : 0; }   /* its highest pixel over that line */
 static float decor_top(const tank_t *t, int item) {         /* the piece's highest pixel */
     if (item == 0) { float top; tank_veg_bed(t, 3, NULL, NULL, &top, NULL); return top; }
     return tank_decor_fy(t, item) - tank_decor_height(item);
 }
 int tank_decor_hit(const tank_t *t, float x, float y) {
+    static const int8_t DRAW[TERR_DECO_N] = TERR_DECO_DRAW;
+    for (int k = TERR_DECO_N - 1; PT_TERRARIUM && k >= 0; k--) {    /* a decoration (the last drawn first): its own box, above its feet - the
+                                                                       hand on the sand under it stays the hand, and so does a hold on a
+                                                                       lizard in front of it (the hand hold is the trust's, P2c) */
+        const int d = DRAW[k], item = TERR_DECO_ITEM0 + d;
+        if (!tank_decor_in(t, item) || tank_decor_locked(t, item)) continue;
+        const float cx = tank_decor_x(t, item), half = DECO_HW[d] + 6;
+        if (x >= cx - half && x <= cx + half && y >= TERR_DECO_FY - DECO_H[d] - 6 && y <= TERR_DECO_FY - 2) {
+            for (int i = 0; i < t->n_fish; i++)
+                if (tank_swims(t, i) && tank_tap_d2(t, i, t->fish[i].x, t->fish[i].y, x, y) < 16.0f * 16.0f) return -1;
+            return item;
+        }
+    }
     static const int order[6] = { 3, 0, 8, 2, 4, 9 };         /* the coral, the plant, the pumpkin, the castle, the cluster, the volcano */
     for (int k = 0; k < 6; k++) {
         int item = order[k];
@@ -2883,7 +2972,7 @@ void tank_poof(tank_t *t, float x, float y) {
 /* the shelf's plume (0.3.9): the free bubbles across the piece's footprint,
  * from its top to the floor, rising fast - the piece pops away into them */
 void tank_decor_poof(tank_t *t, int item) {
-    if (!tank_decor_placeable(item)) return;
+    if (!tank_decor_placeable(item) || tank_deco_index(item) >= 0) return;   /* (a terrarium's decoration: no water to bubble - it just goes) */
     float cx = tank_decor_x(t, item), hw = tank_decor_half_w(item) * 0.8f, top = decor_top(t, item);
     int n = 0;
     for (int i = 0; i < MAX_BUBBLE && n < 16; i++) {
@@ -2899,9 +2988,13 @@ static const int DECOR_SLOT_ITEM[DECOR_SLOTS] = { 2, 3, 4, 8, 0, 9 };           
 static const uint32_t DECOR_SLOT_BIT[DECOR_SLOTS] = { SD_ITEM_CASTLE, SD_ITEM_CORAL, SD_ITEM_CLUSTER, SD_ITEM_PUMPKIN, SD_ITEM_PLANT, SD_ITEM_VOLCANO };
 int  tank_decor_slot(int item) { for (int s = 0; s < DECOR_SLOTS; s++) if (DECOR_SLOT_ITEM[s] == item) return s; return -1; }
 int  tank_decor_slot_item(int slot) { return slot >= 0 && slot < DECOR_SLOTS ? DECOR_SLOT_ITEM[slot] : -1; }
-bool tank_decor_owned(const tank_t *t, int item) { int s = tank_decor_slot(item); return s >= 0 && (t->sd_unlocks & DECOR_SLOT_BIT[s]); }
-bool tank_decor_in(const tank_t *t, int item)    { int s = tank_decor_slot(item); return s >= 0 && (t->sd_unlocks & DECOR_SLOT_BIT[s]) && !(t->sd_shelved & DECOR_SLOT_BIT[s]); }
-bool tank_decor_locked(const tank_t *t, int item) { int s = tank_decor_slot(item); return s >= 0 && (t->sd_unlocks & DECOR_SLOT_BIT[s]) && (t->sd_locked & DECOR_SLOT_BIT[s]) != 0; }
+static uint32_t decor_bit(int item) {                           /* a piece's sd_unlocks bit: its slot's, or a decoration's */
+    const int s = tank_decor_slot(item), d = tank_deco_index(item);
+    return s >= 0 ? DECOR_SLOT_BIT[s] : d >= 0 ? DECO_BIT[d] : 0;
+}
+bool tank_decor_owned(const tank_t *t, int item) { const uint32_t b = decor_bit(item); return b && (t->sd_unlocks & b); }
+bool tank_decor_in(const tank_t *t, int item)    { const uint32_t b = decor_bit(item); return b && (t->sd_unlocks & b) && !(t->sd_shelved & b); }
+bool tank_decor_locked(const tank_t *t, int item) { const uint32_t b = decor_bit(item); return b && (t->sd_unlocks & b) && (t->sd_locked & b) != 0; }
 static bool decor_before(const tank_t *t, int ia, int ib) {       /* a is painted before (under) b at one depth */
     int sa = tank_decor_slot(ia), sb = tank_decor_slot(ib);
     return t->decor_rank[sa] != t->decor_rank[sb] ? t->decor_rank[sa] < t->decor_rank[sb] : sa < sb;
@@ -2932,7 +3025,7 @@ void tank_decor_raise(tank_t *t, int item) {
     t->decor_rank[s] = (uint8_t)(top + 1);
 }
 int  tank_decor_neighbor(const tank_t *t, int item, int dir) {
-    if (!tank_decor_in(t, item) || tank_decor_z(t, item) == DECOR_Z_MIDDLE) return -1;      /* the woven plant has no stack; nor has the shelf */
+    if (tank_decor_slot(item) < 0 || !tank_decor_in(t, item) || tank_decor_z(t, item) == DECOR_Z_MIDDLE) return -1;      /* the woven plant has no stack; nor has the shelf, nor a decoration */
     int items[DECOR_SLOTS], n = tank_decor_order(t, items), at = -1;
     for (int i = 0; i < n; i++) if (items[i] == item) at = i;
     for (int i = at + dir; i >= 0 && i < n; i += dir) if (tank_decor_z(t, items[i]) == tank_decor_z(t, item)) return items[i];
@@ -2953,9 +3046,16 @@ void tank_decor_reset(tank_t *t, int item) {
     if (item == 4) { t->cluster_x = 0; t->cluster_z = DECOR_Z_FRONT; t->cluster_scheme = 0; t->cluster_growth = 0; t->cluster_acc = 0; }
     if (item == 8) tank_pumpkin_place(t);
     if (item == 9) tank_volcano_place(t);
+    if (tank_deco_index(item) >= 0) t->deco_x[tank_deco_index(item)] = 0;   /* (a decoration: its own clear spot again) */
 }
 void tank_decor_set(tank_t *t, int item, float x, int z) {
     if (!tank_decor_placeable(item)) return;
+    { const int d = tank_deco_index(item);                     /* a decoration: slid to the nearest clear spot, kept to 2 px - a clear one */
+      if (d >= 0) {
+          int v = (int)lroundf(tank_deco_slide(t, item, x) * 0.5f);
+          if (!tank_deco_clear(t, item, v * 2.0f)) v += tank_deco_clear(t, item, (v - 1) * 2.0f) ? -1 : 1;
+          t->deco_x[d] = (uint8_t)(v < 1 ? 1 : v > 255 ? 255 : v); (void)z; return;
+      } }
     float half = tank_decor_half_w(item), lo = TANK_FX0 + DECOR_MARGIN + half, hi = TANK_FX1 - DECOR_MARGIN - half;
     if (x < lo) x = lo;
     if (x > hi) x = hi;

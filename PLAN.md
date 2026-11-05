@@ -297,8 +297,13 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
       WELCOME names the pack, then a MORPH page (the gecko's five; the pick is the saved body colour) and a NAME page per
       hatchling, with no FORM page and no bubbles (`--selftest-terr-setup`). Strings go through `WORLD_STR` (world.h); currency
       DESERT ROSES; the next arrival is a NEW EGG; the card, trait, rose and MY TANKS art is `_terr`; `--terr-ui-shot`.
-      Open: art for the shed/clean-run/first-adult badges and for the moss/bulb/farm shop pieces (fallback terrarium icons
-      for now); MY TANKS' title and default names, the library rows and the loading screen still say tank
+      The badge and shop art, MY TANKS' title and default names (MY DESERT), the library rows and the loading screen:
+      done in the rough-edges pass (b56e2c6)
+- [x] Decorations (P5b, `docs/progression.md`): SAGUARO CACTUS 120, COW SKULL 160, DRIFTWOOD 60, SUCCULENT POT 90 -
+      items 14..17, cosmetic, the fish's piece machinery (placement page, hold, shelf, LOCK, sell back 20%); one depth just
+      behind the walking band, drawn live in the lamp/moon light; never over a hide, the dish, a ramp's foot or the
+      basking spot (`tank_deco_clear`/`slide`, every glass); save 2099..2102 their spots (`--selftest-terr-deco`,
+      `--terr-deco-shot`)
 
 ### P6 — Integrate and accept
 - [x] Ship the model + tokenizer, delete the temporary goal map (2026-11-05): `model/out/model_q4_lizard.bin` (`lizard_v1`,
