@@ -4,7 +4,7 @@ A proof-of-concept port of [pocket-tank](https://github.com/mediacutlet/pocket-t
 (v0.4.0, by StratoBuilds) from an aquarium to a lizard terrarium: leopard geckos
 first, then more species as packs. The plan and its status: [PLAN.md](PLAN.md).
 
-Today it is still the fish tank, with these differences from upstream:
+Differences from upstream:
 
 - **No networking** (`PT_NET 0` in `common/version.h`): no Wi-Fi updates, no
   provisioning, no tank link, gifts, passports or visitors.
@@ -15,6 +15,53 @@ Today it is still the fish tank, with these differences from upstream:
 
 pocket-tank is licensed under the PolyForm Noncommercial License 1.0.0
 ([LICENSE](LICENSE), [NOTICE](NOTICE)); so is this port.
+
+## Run the simulator in Docker (Linux desktop)
+
+Docker builds the simulator with SDL2, pinned LVGL v9.2.2, the trained model and
+sounds. No compiler, SDL development package or local LVGL checkout is needed
+on the host. Run from the repository root:
+
+```bash
+./tools/sim_docker.sh --board round
+# Other shapes: --board rect (default), watch, square
+# Original fish world:
+./tools/sim_docker.sh --world aquarium --board round
+# Pass simulator options after --:
+./tools/sim_docker.sh --board round -- --zoom 2 --narrate
+```
+
+The launcher rebuilds through Docker's cache, then opens a native SDL window
+through X11 (XWayland on a Wayland desktop), with your existing authorization
+cookie. It never runs `xhost +`, privileged mode, or host networking. Sound uses
+the local PulseAudio/PipeWire-Pulse socket when available, otherwise it is muted.
+This is a desktop window, not a browser-based simulator.
+
+Each world and board keeps its saves in
+`~/.cache/pocket-terrarium/docker/<world>/<board>/`, separate from the native
+simulator. Set `PT_SIM_DATA=/absolute/path` to choose another directory. The
+container runs as your UID/GID, so saves remain owned by you; deleting/rebuilding
+the image does not delete them. Avoid running two simulators on the same save.
+
+The launcher uses Docker's selected context. If Docker Desktop is selected but
+not running, use the system daemon without changing the selection:
+
+```bash
+DOCKER_CONTEXT=default ./tools/sim_docker.sh --board round
+```
+
+Headless checks and image builds:
+
+```bash
+./tools/sim_docker.sh --board round --headless -- --selftest-terr-deco
+./tools/sim_docker.sh --board round --build-only
+# Equivalent image build without the launcher:
+docker build -f sim/Dockerfile --build-arg BOARD=round \
+  --build-arg WORLD=terrarium -t pocket-terrarium-sim:terrarium-round .
+```
+
+In the window, use the mouse as the device's finger. Click a lizard for its
+card; drag down from the top to feed. **N** toggles the light and **Q** quits.
 
 Everything below is upstream's README, unchanged.
 
