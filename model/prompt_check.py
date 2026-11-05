@@ -204,44 +204,56 @@ def panel_l1(rng, n):
     return P
 
 
-def report_l1(results):
-    """results: [(case, state, goal or None)]; rows whose cases did not run print n/a"""
-    by = {}
-    for case, st, g in results:
-        if g is not None:
-            by.setdefault(case, []).append((st, g))
+L1_CASE_ORDER = ("starving", "starvecold", "cold", "hot", "shedyes", "sleep", "stress", "bored9", "bored0",
+                 "bored0any", "bold9", "bold0", "social0", "social9near", "content", "hatch5", "adult5", "elder4",
+                 "adult4", "shedsoon", "shedno", "satedprey")
 
+
+def l1_last(state):
+    return state.split(" last ")[1].split()[0]
+
+
+def l1_mean_dist(by, case):
+    """the case's goals as shares of all its weight (a teacher's answer mix, a student's mean distribution)"""
+    rows = by.get(case, [])
+    tot = sum(w for _, d in rows for w in d.values())
+    out = {}
+    for _, d in rows:
+        for g, w in d.items():
+            out[g] = out.get(g, 0.0) + w / tot
+    return out
+
+
+def l1_table(by):
+    """THE L1 ROWS, for the teacher (report_l1) and the trained student (probe_l1.py) alike.
+    by: case -> [(state, {goal: weight})] - a teacher's answers carry weight 1 on the goal it
+    gave, a student's states its goal distribution - and a row's value is the share of the
+    weight on the row's goals: the teacher's rate, the student's expected rate. Returns
+    [(row, value, n, want, ok)], ok None for a report row without a threshold; rows whose
+    cases did not run are left out."""
     def rate(case, pred):
         rows = by.get(case, [])
-        return (sum(1 for st, g in rows if pred(st, g)) / len(rows) if rows else float("nan")), len(rows)
+        tot = sum(w for _, d in rows for w in d.values())
+        hit = sum(w for st, d in rows for g, w in d.items() if pred(st, g))
+        return (hit / tot if tot else float("nan")), len(rows)
 
     def diff(case_a, case_b, pred):
         (a, na), (b, nb) = rate(case_a, pred), rate(case_b, pred)
         return a - b, min(na, nb)
 
-    def last(st):
-        return st.split(" last ")[1].split()[0]
-
-    def top(case, k=3):
-        d = {}
-        for _, g in by.get(case, []):
-            d[g] = d.get(g, 0) + 1
-        n = sum(d.values()) or 1
-        return ", ".join(f"{g} {c / n:.2f}" for g, c in sorted(d.items(), key=lambda kv: -kv[1])[:k])
-
     def goal_is(*goals):
         return lambda st, g: g in goals
-    checks = [
-        ("A2  P(hunt | hunger 9, prey near/mid, heat 3-7)", *rate("starving", goal_is("hunt")), ">= 0.86", lambda v: v >= 0.86),
+    rows = [
+        ("A2  P(hunt | active, hunger 9, prey near/mid, heat 3-7, calm, shed no)", *rate("starving", goal_is("hunt")), ">= 0.86", lambda v: v >= 0.86),
         ("A3  P(bask | active, hunger 9, prey none, heat 0-2)", *rate("starvecold", goal_is("bask")), ">= 0.60", lambda v: v >= 0.60),
         ("A4  P(bask | active, heat 0-2, hunger <= 5, stress <= 4)", *rate("cold", goal_is("bask")), ">= 0.80", lambda v: v >= 0.80),
         ("A5  P(hide | heat 9)", *rate("hot", goal_is("hide")), ">= 0.80", lambda v: v >= 0.80),
         ("A6  P(hide | shed yes, hunger <= 6)", *rate("shedyes", goal_is("hide")), ">= 0.60", lambda v: v >= 0.60),
         ("A7  P(rest or hide | sleep, hunger <= 7)", *rate("sleep", goal_is("rest", "hide")), ">= 0.85", lambda v: v >= 0.85),
         ("A8  P(hide | stress 8-9)", *rate("stress", goal_is("hide")), ">= 0.70", lambda v: v >= 0.70),
-        ("A9  P(goal != last | active, bored 8-9)", *rate("bored9", lambda s, g: g != last(s)), ">= 0.60", lambda v: v >= 0.60),
-        ("A10 P(last kept | active, bored 0-1, last still fits)", *rate("bored0", lambda s, g: g == last(s)), ">= 0.40", lambda v: v >= 0.40),
-        ("    P(last kept | active, bored 0-1, any last) (report)", *rate("bored0any", lambda s, g: g == last(s)), "-", lambda v: True),
+        ("A9  P(goal != last | active, bored 8-9)", *rate("bored9", lambda s, g: g != l1_last(s)), ">= 0.60", lambda v: v >= 0.60),
+        ("A10 P(last kept | active, bored 0-1, last still fits)", *rate("bored0", lambda s, g: g == l1_last(s)), ">= 0.40", lambda v: v >= 0.40),
+        ("    P(last kept | active, bored 0-1, any last) (report)", *rate("bored0any", lambda s, g: g == l1_last(s)), "-", None),
         ("A11 P(explore+investigate) bold 9 - bold 0 (paired)", *diff("bold9", "bold0", goal_is("explore", "investigate")),
          ">= 0.15", lambda v: v >= 0.15),
         ("A12 P(investigate | social 0, other near)", *rate("social0", goal_is("investigate")), "<= 0.05", lambda v: v <= 0.05),
@@ -251,25 +263,38 @@ def report_l1(results):
         ("r8  P(rest) elder - adult, energy 3-6 (paired)", *diff("elder4", "adult4", goal_is("rest")), "> 0", lambda v: v > 0),
         ("r3  P(hide) shed soon - shed no (paired)", *diff("shedsoon", "shedno", goal_is("hide")), "> 0", lambda v: v > 0),
     ]
-    for name, v, n, want, ok in checks:
-        if n:
-            val = f"{v:+.2f}" if "(paired)" in name else f"{v:5.2f}"
-            print(f"  {'OK ' if ok(v) else 'BAD'}  {name:55s} = {val}  (n={n}, want {want})")
-    d = {}
-    for _, g in by.get("content", []):
-        d[g] = d.get(g, 0) + 1
-    if d:
-        mx = max(d.values()) / sum(d.values())
-        print(f"  {'OK ' if mx < 0.45 else 'BAD'}  {'max single goal | content':55s} = {mx:.2f}  (want < 0.45)   [{top('content')}]")
-    v, n = rate("satedprey", goal_is("hunt"))
-    if n:
-        print(f"       {'P(hunt | hunger 0-2, prey near) (a snap is allowed)':55s} = {v:.2f}  (n={n})")
+    content = l1_mean_dist(by, "content")
+    if content:
+        g, mx = max(content.items(), key=lambda kv: kv[1])
+        rows.append((f"max single goal | content ({g})", mx, len(by["content"]), "< 0.45", lambda v: v < 0.45))
+    rows.append(("    P(hunt | hunger 0-2, prey near) (a snap is allowed)", *rate("satedprey", goal_is("hunt")), "-", None))
+    return [(name, v, n, want, ok(v) if ok else None) for name, v, n, want, ok in rows if n]
+
+
+def l1_value(name, v):
+    return f"{v:+.2f}" if "(paired)" in name else f"{v:5.2f}"
+
+
+def l1_tops(by, case, k=4):
+    d = l1_mean_dist(by, case)
+    return ", ".join(f"{g} {p:.2f}" for g, p in sorted(d.items(), key=lambda kv: -kv[1])[:k])
+
+
+def report_l1(results):
+    """results: [(case, state, goal or None)] - the teacher's answers, scored by l1_table"""
+    by = {}
+    for case, st, g in results:
+        if g is not None:
+            by.setdefault(case, []).append((st, {g: 1.0}))
+    for name, v, n, want, ok in l1_table(by):
+        if ok is None:
+            print(f"       {name:55s} = {l1_value(name, v)}  (n={n})")
+        else:
+            print(f"  {'OK ' if ok else 'BAD'}  {name:55s} = {l1_value(name, v)}  (n={n}, want {want})")
     print("\n  per case:")
-    for case in ("starving", "starvecold", "cold", "hot", "shedyes", "sleep", "stress", "bored9", "bored0", "bored0any",
-                 "bold9", "bold0", "social0", "social9near", "content", "hatch5", "adult5", "elder4", "adult4",
-                 "shedsoon", "shedno", "satedprey"):
+    for case in L1_CASE_ORDER:
         if case in by:
-            print(f"    {case:11s} {top(case, 4)}")
+            print(f"    {case:11s} {l1_tops(by, case)}")
 
 
 def main():

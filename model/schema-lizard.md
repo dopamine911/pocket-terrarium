@@ -151,7 +151,7 @@ sampling as on the device (temperature 1.0). A model ships only if every row hol
 | # | Check | Pass |
 |---|---|---|
 | A1 | Teacher agreement (`eval.py --teacher`, n ≥ 60) | ≥ 72% |
-| A2 | hunger 9, prey near or mid, heat 3–7 → `hunt` | ≥ 0.86 |
+| A2 | `phase active`, hunger 9, prey near or mid, heat 3–7, stress ≤ 7, `shed no` → `hunt` | ≥ 0.86 |
 | A3 | `phase active`, hunger 9, prey none, heat 0–2 → `bask` | ≥ 0.6 |
 | A4 | `phase active`, heat 0–2, hunger ≤ 5, stress ≤ 4 → `bask` | ≥ 0.8 |
 | A5 | heat 9 → `hide` | ≥ 0.8 |
@@ -170,3 +170,9 @@ sampling as on the device (temperature 1.0). A model ships only if every row hol
 A16 is the check on R6 (PLAN.md). The model only ever sees normalised lines, so
 the test is on the whole loop: the pack's normalisation plus the same model must
 keep a differently built lizard inside its own comfort band.
+
+A2 is defined on clean states (2026-11-04). On the first night's sim states the
+teacher hunted 0.79 overall but 0.93 once shedding, panicked and night-time
+lizards are left out: a shedding gecko refusing even a starving meal is real
+behaviour, and rows A6–A8 own those states. This changes the measurement, not the
+frozen line.

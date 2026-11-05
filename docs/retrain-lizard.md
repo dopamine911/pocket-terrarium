@@ -295,12 +295,21 @@ python3 train_tokenizer.py --schema L1 --verify out/l1_clean.jsonl
 fold drops off-vocabulary words, any state that is not a well-formed L1 line
 (field order and values) and any goal that is not `<goal> urgency <0-9>`.
 
+Fold's L1 coverage block gives the teacher's rate on each acceptance slice of the night's
+(sim) states. Those slices are wider than the panel's: on the first 27,196 clean pairs
+(2026-11-04, mid-run) the A2 slice (hunger 9, prey near/mid, heat 3–7, anything else) read
+0.79 hunt. Of the 124 misses (hide 82, rest 27, bask 15), 74 had `shed yes`, 22 stress 8–9 and
+21 sleep/settle (overlapping).
+On the same slice cut to active, stress < 8 and shed no, the rate was 0.93 (306 states).
+prompt_check's and probe_l1's A2 is that clean case (see 5).
+
 ## 3. Train (CPU)
 
 ```bash
 POCKET_SCHEMA=L1 .venv/bin/python train.py --data out/l1_clean.jsonl --device cpu --iters 100 \
     --dim 384 --n-layers 8 --n-heads 8 --max-seq-len 64 --batch 64 --lr 6e-4 --out /tmp/ckpt_probe.pt
-# time those 100 iters first (PLAN: 1-3 h for 5000 on marvin or zaphod) [INFERENCE until measured]
+# time those 100 iters first. PLAN: 1-3 h for 5000 on marvin or zaphod. This workstation
+# (12 threads, 2026-11-04, the night run going) took ~1.3 s an iteration: 5000 ≈ 2 h.
 POCKET_SCHEMA=L1 .venv/bin/python train.py --data out/l1_clean.jsonl --device cpu --iters 5000 \
     --dim 384 --n-layers 8 --n-heads 8 --max-seq-len 64 --batch 64 --lr 6e-4 --out out/ckpt_l1.pt
 ```
@@ -316,14 +325,39 @@ cc -O3 -o runw runw.c -lm
 
 ## 5. Acceptance (`model/schema-lizard.md`, every row before shipping)
 
+```bash
+.venv/bin/python probe_l1.py --ckpt out/ckpt_l1.pt --strict         # A2-A12, rules 3/7/8, content: the checkpoint, no C
+python3 eval.py --schema L1 --count 60 --teacher --api openai \
+    --model-bin out/model_l1.bin --tok-bin out/tokenizer_l1.bin     # A1: needs section 4's export and runw
+python3 make_l1_parity.py --check                                   # R4, Python side (the C side runs in make check)
+```
+
 | Row | Script | State |
 |---|---|---|
-| A1 teacher agreement ≥ 72% | `eval.py --schema L1 --count 60 --teacher --api openai --model-bin out/model_l1.bin --tok-bin out/tokenizer_l1.bin` | built |
-| A2–A12 on the student (sampling at temperature 1.0) | an L1 `probe_dist.py` (the same sweeps as prompt_check's L1 panel, on the checkpoint) | **not built** |
-| A2–A12 on the teacher (what the student inherits) | `prompt_check.py --schema L1` | built |
-| A13 heat 4–7 share ≥ 0.7, A14 zones/min ≥ 1.0, A15 crickets/h ≥ 4 | `./fishsim --selftest-llm` census with the L1 model | **not built** (P2b/P6) |
-| A16 the A13 census on test pack 250 | the same census, pack 250 | **not built** (pack 250 exists in Python; C in P2a) |
-| R4 C/Python encoder parity | `make_l1_parity.py --check` + `./fishsim --selftest-l1-encode` | built (Python); C by P2a |
+| A1 teacher agreement ≥ 72% | `eval.py --teacher` (above; the key in `$LAB_API_KEY`) | built |
+| A2–A12, rules 3/7/8 and the content attractor, on the student | `probe_l1.py --ckpt out/ckpt_l1.pt` | built |
+| the same rows on the teacher (what the student inherits) | `prompt_check.py --schema L1` | built |
+| A13 heat 4–7 share ≥ 0.7, A14 zones/min ≥ 1.0, A15 crickets/h ≥ 4 | a `./fishsim --selftest-llm` census with the L1 model | **not built**: needs sim work (P2b/P6) |
+| A16 the A13 census on test pack 250 | the same census, pack 250 | **not built** (the census; the pack is in C, `SPECIES_PACK_TEST_WARM`, and in Python) |
+| R4 C/Python encoder parity | `make_l1_parity.py --check`; `./fishsim --selftest-l1-encode` (in `make check`) | built |
+
+`probe_l1.py` reads train.py's PyTorch checkpoint directly (llama2.c's `Transformer`: no export,
+no C build) on prompt_check's L1 panel. It uses the same 464 lines (`panel_l1`, seed 11, `--n 40`)
+and the same table code (`prompt_check.l1_table`), so teacher and student are scored on the same
+states. Each line gets the device's decision distribution. That is BOS, the words and `->`, then
+a softmax over the seven goal tokens only at temperature 1.0, as `q4_model_decide_follow`
+samples. A row's value is therefore the expected rate of the device's sampled decisions, with no
+sampling noise. A11 also gets its whole sweep: the bold-9 lines at bold 0..9, slope > 0, beside
+the paired ends ≥ 0.15. The script prints row, value, threshold and PASS/FAIL. It writes
+`out/probe_l1_<checkpoint>.json` with the rows, the sweep, the per-case mean distributions and
+the goal-token mass after `->` (a sanity check: ~1 for a trained model). `--strict` exits 1 on
+a FAIL. `--n 200` reads 2320 states (~15 s on CPU). `python3 probe_l1.py --selftest` checks the
+arithmetic against a hand-made fake model (no torch). On the 100-iteration throwaway
+(`/tmp/ckpt_probe.pt`, 542 pairs) it ran end to end in ~4 s and FAILed 11 rows (explore ≈ 0.5
+everywhere). That proves the plumbing, not a model.
+
+The schema measures A2–A12 "on synthetic and sim states". probe_l1 covers the synthetic half,
+the panel. On sim states only the teacher's rates exist so far, in fold's coverage block (see 2).
 
 The rows as `model/schema-lizard.md` states them since 2026-11-04 (and as the pilot,
 prompt_check and fold's coverage block pin them): A2 for heat 3–7, A3/A4/A9/A10 in
