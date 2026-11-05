@@ -106,7 +106,8 @@ heat < 3 slows movement (× 0.5 at heat 0, rising straight to × 1 at heat 3) an
 stress. As built in P2a (`tank.h` HEAT_*): the engine's stress settles by itself at ~0.18 a second, so the
 stress is a pull toward 4 + 2 × (heat − 8) at 0.15 a second (it settles near 3 at heat 8, 7 at heat 10).
 `T_env` is the habitat's (`common/habitat.h`: the enclosure is a pack of its own, apart from the species - the
-floor's profile, the basking spot, the hides, the humid hide's moisture; the desert's numbers are in
+floor's profile and the air's rise toward the lamp, the ground (its rocks and ramps, `docs/habitat-pack.md` "The
+ground"), the basking spot up on the high rock, the hides, the humid hide's moisture; the desert's numbers are in
 `common/habitat/desert.c`), and a species lists the habitats it lives in (`species_t.habitats`, same `world`).
 
 ### Phase

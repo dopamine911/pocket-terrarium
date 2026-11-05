@@ -1,5 +1,6 @@
 /* habitat.c - the habitat registry and its rules (habitat.h) */
 #include "habitat.h"
+#include "terrain.h"
 #include <stdio.h>
 
 const char *const HIDE_KIND_NAMES[HIDE_KINDS] = { "warm", "humid", "cool" };
@@ -21,6 +22,13 @@ bool habitat_fits(const habitat_t *h, const species_t *s) {
 /* two hides this far apart along the floor: two HIDE_R (tank.h) on the narrowest floor, the watch's ~280 px */
 #define HIDE_GAP_U 0.2f
 
+/* u on surface s (0 the floor, k rock k): within its ends */
+static bool on_surface(const habitat_t *h, int s, float u) {
+    if (s == 0) return u >= 0 && u <= 1;
+    const rock_t *r = &h->rocks[s - 1];
+    return r->n >= 2 && u >= r->u[0] && u <= r->u[r->n - 1];
+}
+
 bool habitat_check(const habitat_t *h, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
     if (!h->name || !h->name[0]) REFUSE("no name");
@@ -30,12 +38,28 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
     if (terr ? !(h->floor_warm_c > h->floor_cool_c) : !(h->floor_warm_c >= h->floor_cool_c))
         REFUSE("the floor's warm end (%.1f C) is not warmer than its cool end (%.1f C)", h->floor_warm_c, h->floor_cool_c);
     if (!(h->night_drop_c >= 0)) REFUSE("the night warms the floor (drop %.1f C)", h->night_drop_c);
-    if (!(h->bask_u >= 0 && h->bask_u <= 1)) REFUSE("the basking spot at %.2f is off the floor", h->bask_u);
-    if (terr || h->bask_r_px != 0) {                         /* a lamp: the terrarium's always, an aquarium's if it has one */
-        if (!(h->bask_r_px > 0)) REFUSE("the lamp's pool has no size (%.0f px)", h->bask_r_px);
-        float under = h->floor_warm_c + (h->floor_cool_c - h->floor_warm_c) * h->bask_u;
-        if (!(h->bask_c > under)) REFUSE("the lamp does not warm its spot (%.1f C over a %.1f C floor)", h->bask_c, under);
+    if (!(h->rise_c >= 0)) REFUSE("the air cools toward the lamp (rise %.1f C)", h->rise_c);
+    /* the ground (P2c, terrain.h): rocks and ramps well formed here, walkable on every board below */
+    if (h->n_rocks > HABITAT_ROCKS_MAX || h->n_ramps > HABITAT_RAMPS_MAX)
+        REFUSE("%d rocks and %d ramps, past %d and %d", h->n_rocks, h->n_ramps, HABITAT_ROCKS_MAX, HABITAT_RAMPS_MAX);
+    for (int k = 0; k < h->n_rocks; k++) {
+        const rock_t *r = &h->rocks[k];
+        if (r->n < 2 || r->n > ROCK_PTS_MAX) REFUSE("rock %d has %d points, not 2..%d", k + 1, r->n, ROCK_PTS_MAX);
+        for (int i = 0; i < r->n; i++) {
+            if (!(r->u[i] >= 0 && r->u[i] <= 1 && r->v[i] > 0 && r->v[i] < 1)) REFUSE("rock %d's point %d (%.2f, %.2f) is off the glass", k + 1, i, r->u[i], r->v[i]);
+            if (i && !(r->u[i] > r->u[i - 1])) REFUSE("rock %d runs back on itself at its point %d (u %.2f after %.2f)", k + 1, i, r->u[i], r->u[i - 1]);
+        }
     }
+    for (int k = 0; k < h->n_ramps; k++) {
+        const ramp_t *m = &h->ramps[k];
+        if (m->lo > h->n_rocks || m->hi > h->n_rocks || m->lo == m->hi) REFUSE("ramp %d joins surfaces %d and %d (two of 0..%d)", k + 1, m->lo, m->hi, h->n_rocks);
+        if (!on_surface(h, m->lo, m->u_lo) || !on_surface(h, m->hi, m->u_hi))
+            REFUSE("ramp %d ends off its surfaces (%.2f on %d, %.2f on %d)", k + 1, m->u_lo, m->lo, m->u_hi, m->hi);
+    }
+    if (h->bask_surf > h->n_rocks || !on_surface(h, h->bask_surf, h->bask_u))
+        REFUSE("the basking spot at %.2f is off its surface (%d)", h->bask_u, h->bask_surf);
+    const bool lamp = terr || h->bask_r_px != 0;            /* a lamp: the terrarium's always, an aquarium's if it has one */
+    if (lamp && !(h->bask_r_px > 0)) REFUSE("the lamp's pool has no size (%.0f px)", h->bask_r_px);
     if (h->n_hides < (terr ? 1 : 0) || h->n_hides > HABITAT_HIDES_MAX) REFUSE("%d hides, not %d..%d", h->n_hides, terr ? 1 : 0, HABITAT_HIDES_MAX);
     int humid = 0;
     for (int k = 0; k < h->n_hides; k++) {
@@ -55,6 +79,16 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
         if (!(h->moist_dry_per_s > 0)) REFUSE("a humid hide never dries (%g a second)", h->moist_dry_per_s);
     }
     if (!(h->humidity >= 0 && h->humidity <= 1)) REFUSE("humidity %.2f is outside 0..1", h->humidity);
+    /* on every board: the ground walkable (terrain.h THE RULES), and the lamp warming its spot over the air there */
+    for (int b = 0; b < GLASS_BOARDS; b++) {
+        const glass_t g = glass_of(b);
+        if (!terrain_check(h, &g, why, n)) return false;
+        if (lamp) {
+            terrain_t tr; terrain_lay(h, &g, &tr);
+            const float under = terrain_air_open_c(&tr, h, tr.bask_x, tr.bask_y);
+            if (!(h->bask_c > under)) REFUSE("on the %s: the lamp does not warm its spot (%.1f C over %.1f C air)", g.name, h->bask_c, under);
+        }
+    }
     return true;
     #undef REFUSE
 }

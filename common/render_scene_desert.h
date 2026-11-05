@@ -1,39 +1,29 @@
-/* render_scene_desert.h - the desert terrarium's static scene (pocket-terrarium P3a), for the scene cache.
+/* render_scene_desert.h - the desert terrarium's static scene (pocket-terrarium P3a, P2c), for the scene cache.
  *
- * The back wall (layered sandstone), the sand, the warm end's warmth and the cool end's cool, the basking lamp's
- * glow and pool, the habitat's hides (common/habitat/desert.c: the warm cave, the humid box with its moisture
- * darkening the sand at its door, the cool cave) and the basking rock - at the habitat's places on whichever
- * glass (tank.h PLACE_*: the same rule as tank_floor_x, on a board given at run time, so one build draws all four
- * glasses for the sheets; scene_board_here is this build's).
+ * The back wall (layered sandstone), the sand, the warm end's warmth and the cool end's cool, the habitat's GROUND
+ * (terrain.h: its rocks - sandstone terraces standing on the sand, or shelves on the back wall - and the flagstone ramps
+ * between them), the basking lamp's glow, cone and pool over the basking spot up on the high rock, and the habitat's
+ * hides on the floor (common/habitat/desert.c: the warm cave, the humid box with its moisture darkening the sand at its
+ * door, the cool cave) - all where the engine has them on whichever glass (terrain_lay on a glass given at run time, so
+ * one build draws all four glasses for the sheets; glass_here is this build's).
  *
  * Standalone so far: render_tank's bake does not call it yet (P3b). It paints the whole frame (black outside the
  * glass) with the night's dim and an optional vignette LUT (render.c's g_vig), ordered-dithered to RGB565 in the
  * frame's byte order like render.c bake_scene. Rebake it when the light switches or a humid hide's moisture
- * changes its step (scene_desert_moist_step). */
+ * changes its step (scene_desert_moist_step).
+ *
+ * A LIZARD ON IT (P3b): the engine has its middle at (fish_t.x, fish_t.y) on its path (fish_t.surf) of the same ground
+ * (tank_terrain): draw_lizard's feet line is fish_t.y + TERRAIN_FEET_DY - the sand, a rock's top or a ramp's, as the
+ * scene draws them - and its body's pitch is fish_t.slope (+ the ground rising to the right). What stands lower on the
+ * glass is in front: a lizard on a rock is drawn after the scene, so over the rocks behind it. */
 #ifndef RENDER_SCENE_DESERT_H
 #define RENDER_SCENE_DESERT_H
 #include <stdbool.h>
 #include <stdint.h>
 #include "habitat.h"
+#include "terrain.h"
 
-/* a board's glass at run time (tank.h's TANK_* for this build) */
-enum { SCENE_GLASS_RECT, SCENE_GLASS_ROUND, SCENE_GLASS_CORNERS };
-typedef struct {
-    const char *name;
-    int   w, h;                 /* the frame: TANK_W x TANK_H */
-    int   glass;                /* SCENE_GLASS_*: the rectangle, the bowl (centre w/2, h/2), round corners */
-    float r;                    /* the bowl's radius, or the corners' */
-    int   bot;                  /* TANK_BOT */
-} scene_board_t;
-#define SCENE_BOARDS 4
-scene_board_t scene_board_here(void);                 /* this build's */
-scene_board_t scene_board_of(int k);                  /* 0 the 1.8's rectangle, 1 the round pendant, 2 the watch, 3 the square */
-float scene_glass_x0(const scene_board_t *b, float y);   /* the side glass at height y (tank_glass_x0's rule) */
-float scene_glass_x1(const scene_board_t *b, float y);
-float scene_place_y(const scene_board_t *b);          /* tank.h PLACE_Y */
-float scene_floor_x(const scene_board_t *b, float u); /* tank_floor_x(u) on board b */
-
-/* where the scene's things stand on a board (scene_desert_layout) */
+/* where the scene's things stand on a glass (scene_desert_layout) */
 typedef struct {
     int   kind;                 /* HIDE_* */
     float point_x;              /* the habitat's place (tank_hide_point) */
@@ -43,17 +33,40 @@ typedef struct {
     float door_hw, door_h;
     int   opens;                /* ... facing this way (+1 right, -1 left): toward the open floor */
 } scene_hide_t;
+#define SCENE_ROCKS_MAX (HABITAT_ROCKS_MAX + HABITAT_RAMPS_MAX)
+#define SCENE_BEDS      32
+typedef struct {                /* a drawn piece of the ground: a rock (a terrace or a shelf) or a ramp's slab */
+    int   path;                 /* its path in the terrain (terrain_t.path: 1.. the rocks, then the ramps) */
+    bool  slab;                 /* a ramp's flagstone slab, else a sandstone rock ... */
+    bool  shelf;                /* ... a shelf on the back wall (rock_t.shelf), else a terrace standing on the sand */
+    float l, r;                 /* its top face's ends: the walking line's, and a rock's lip past either end */
+    float foot;                 /* a terrace: where its front face meets the sand; a shelf: its underside */
+    float x0, x1, y0, k;        /* its top (the feet's line) from its walking line: y0 + (x - x0) k, x clamped to x0..x1, when ... */
+    bool  straight;             /* ... the line is one straight piece (else terrain_y) */
+    int   salt;
+    /* the drawing's own (scene_desert_layout): a rock's front face in beds - each one's top under the top face (its seam
+       sways a little along x), a hard one's bit, its edges past the top face's - and a few cracks (x, from, length, slant) */
+    int      n_beds;
+    uint32_t hard;
+    float    bed_y[SCENE_BEDS + 1], ext_l[SCENE_BEDS], ext_r[SCENE_BEDS];
+    float    crack[4][4];
+} scene_rock_t;
 typedef struct {
-    scene_hide_t hide[HABITAT_HIDES_MAX];
-    int   n_hides;
-    float bask_x;               /* the basking spot (tank_bask_point) and the rock under it */
-    float rock_x0, rock_x1, rock_top, rock_lift;   /* its flat top: a lizard there stands rock_lift px up (scene_desert_lift) */
-    float wall_y;               /* the sand's back edge, where it meets the wall */
-    float sand_y;               /* the middle lane's feet (TANK_BOT - 16; tank.h PLACE_Y + LIZARD_FLOOR_DY) */
+    glass_t        glass;
+    terrain_t      tr;          /* the ground on this glass (terrain_lay): a lizard's line and feet (above) */
+    scene_hide_t   hide[HABITAT_HIDES_MAX];
+    int            n_hides;
+    scene_rock_t   rock[SCENE_ROCKS_MAX];   /* the ground's pieces as drawn: of two over a pixel, the one whose top stands lower is in front */
+    int            n_rocks;
+    float          bask_x, bask_y;          /* the basking spot (tank_bask_point): a lizard's middle on it; the lamp is over it */
+    float          wall_y;                  /* the sand's back edge, where it meets the wall */
+    float          sand_y;                  /* the middle lane's feet on the floor (tank.h PLACE_Y + TERRAIN_FEET_DY) */
 } scene_desert_t;
-void  scene_desert_layout(const scene_board_t *b, const habitat_t *h, scene_desert_t *d);
-/* how far up a lizard's feet stand with its middle at x: the rock's top, easing to 0 at its rims (a step up) */
-float scene_desert_lift(const scene_desert_t *d, float x);
+void  scene_desert_layout(const glass_t *b, const habitat_t *h, scene_desert_t *d);
+/* the piece of the ground drawn at a pixel - its path (terrain_t.path's index), or 0 for the wall, the sand and the hides
+ * (what the scene paints there before the hides): the sheet's check that every rock's and ramp's walking line has its own
+ * top under the feet */
+int   scene_desert_ground_at(const scene_desert_t *d, float x, float y);
 /* a lizard peeking out of hide k: its middle and its feet's line for draw_lizard, and its yaw (out of the door) -
  * half_len its lizard_half_len, peek the pose's (how much of it shows from the nose) */
 void  scene_desert_peek_at(const scene_desert_t *d, int k, float half_len, float peek, float *x, float *floor_y, float *yaw);
@@ -62,6 +75,6 @@ void  scene_desert_peek_at(const scene_desert_t *d, int k, float half_len, float
 int   scene_desert_moist_step(float moisture);
 /* the scene into fb (stride in pixels, b->w x b->h): lit = the lamp on; moisture[k] for hide k (NULL: the habitat's
  * moist_start); dim the night's (render_tank: 0.45 dark, 1 lit); vig a w x h vignette LUT (render.c) or NULL */
-void  scene_desert_draw(uint16_t *fb, int stride, const scene_board_t *b, const habitat_t *h, bool lit, const float *moisture,
+void  scene_desert_draw(uint16_t *fb, int stride, const glass_t *b, const habitat_t *h, bool lit, const float *moisture,
                         float dim, const uint8_t *vig);
 #endif

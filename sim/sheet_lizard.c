@@ -1,4 +1,4 @@
-/* sheet_lizard.c - `fishsim --lizard-sheet <prefix>` (pocket-terrarium P3a): the lizard and the desert, standalone.
+/* sheet_lizard.c - `fishsim --lizard-sheet <prefix>` (pocket-terrarium P3a, P2c): the lizard and the desert, standalone.
  *
  * Writes PPM contact sheets at 1x (the screen's own pixels; each lizard on a strip of the desert's wall and sand):
  *   <prefix>_morphs.ppm   every morph (rows) x stage (columns), standing
@@ -7,14 +7,17 @@
  *   <prefix>_motion.ppm   the walk's cycle in eight frames (an adult, a hatchling); the blink; the tongue; the fat
  *                         reserve; the dig's scrabble; the lunge; the stalking tail tip; the standoff's tail; the breath
  *   <prefix>_shed.ppm     the shed: normal, soon, shedding (three steps), stuck, clean - an adult and a juvenile
- *   <prefix>_scene_<board>.ppm and _night: the desert on each glass (the rectangle, the round pendant, the watch, the
- *                         square), a gecko basking on the rock, one peeking out of the humid box, one walking; dark,
- *                         asleep (one hidden)
+ *   <prefix>_scene_<glass>.ppm and _night: the desert on each glass (rect, round, watch, square) with its terraces, its
+ *                         shelf and its ramps (terrain.h), geckos on every level - basking on the high rock under the
+ *                         lamp, flicking on the shelf, walking the low ledge, peeking out of the humid box, walking the
+ *                         floor, a hatchling by the warm cave; dark, asleep up on the rocks and on the floor, one hidden
  *   <prefix>_moist.ppm    the humid box at moisture 0, 0.25, 0.5, 0.75, 1
- * and measures the cost (<prefix>_cost.txt, and stdout): a body's build per pose, a cached draw, three lizards
- * living a minute, the scene's bake per glass - in microseconds on this machine, and scaled to the board by the
- * --bench convention (the stage ratios carry over): the urchin's per-pixel spines as render.c drew them before
- * 2026-10-03 cost 1.8 ms a frame on the 1.8 (PLAN.md R5), and are timed here beside the lizard. */
+ * checks the ground as drawn against the engine's (every point of every rock's and ramp's walking line stands on that
+ * piece's own top, on all four glasses: the exit status), and measures the cost (<prefix>_cost.txt, and stdout): a
+ * body's build per pose, a cached draw, three lizards living a minute, the scene's bake per glass - in microseconds on
+ * this machine, and scaled to the board by the --bench convention (the stage ratios carry over): the urchin's per-pixel
+ * spines as render.c drew them before 2026-10-03 cost 1.8 ms a frame on the 1.8 (PLAN.md R5), and are timed here beside
+ * the lizard. */
 #include "render_lizard.h"
 #include "render_scene_desert.h"
 #include "render.h"
@@ -56,16 +59,16 @@ static void sh_label(int x, int y, uint32_t rgb, const char *s) {   /* at sheet 
 }
 static lz_canvas_t sh_canvas(void) { lz_canvas_t c = { g_sheet, SH_W, 0, 0, g_sw, g_sh, 1.0f, NULL, NULL }; return c; }
 
-/* the cells' backdrop: the desert's wall and sand without its hides or rock (the lamp off-glass), lit */
+/* the cells' backdrop: the desert's wall and sand without its hides or its ground's rocks (the lamp off-glass), lit */
 static uint16_t g_strip[TANK_W * TANK_H];
 static float g_strip_sand;
 static void strip_make(void) {
     static uint16_t fb[480 * 480];
-    habitat_t h = HABITAT_PACK_DESERT; h.n_hides = 0; h.bask_u = 3.0f;
-    scene_board_t b = scene_board_of(0);
+    habitat_t h = HABITAT_PACK_DESERT; h.n_hides = 0; h.n_rocks = 0; h.n_ramps = 0; h.bask_surf = 0; h.bask_u = 3.0f;
+    glass_t b = glass_of(0);
     scene_desert_draw(fb, b.w, &b, &h, true, NULL, 1.0f, NULL);
     for (int y = 0; y < TANK_H && y < b.h; y++) for (int x = 0; x < TANK_W && x < b.w; x++) g_strip[y * TANK_W + x] = fb[y * b.w + x];
-    g_strip_sand = b.bot - 16.0f;
+    g_strip_sand = glass_place_y(&b) + TERRAIN_FEET_DY;
 }
 /* a cell at (x, y) w x h whose sand line (the feet in the middle lane) is `foot` px from its top */
 static void sh_cell(int x, int y, int w, int h, int foot) {
@@ -210,10 +213,12 @@ static void sheet_shed(const char *prefix) {
     sl_ppm(path, g_sheet, g_sw, g_sh, SH_W);
 }
 
-/* the scene on board k with three geckos (lit: basking, peeking out of the humid box, walking; dark: asleep) */
+/* the scene on glass b with geckos on every level (lit: basking on the high rock, flicking on the shelf, walking along the
+   low ledge, peeking out of the humid box, walking the floor, a hatchling by the warm cave; dark: asleep up on the high
+   rock and on the shelf, one hidden, one resting on the floor) - each one's feet on its path's line + TERRAIN_FEET_DY */
 static uint16_t g_frame[502 * 480];
 static uint8_t  g_vig[502 * 480];
-static void vig_fill(const scene_board_t *b) {                                  /* render.c vig_alpha on board b */
+static void vig_fill(const glass_t *b) {                                        /* render.c vig_alpha on glass b */
     for (int y = 0; y < b->h; y++)
         for (int x = 0; x < b->w; x++) {
             float dx = (x - b->w * 0.5f) * (2.0f / b->w), dy = (y - b->h * 0.5f) * (2.0f / b->h), d2 = dx * dx + dy * dy;
@@ -221,18 +226,37 @@ static void vig_fill(const scene_board_t *b) {                                  
             g_vig[y * b->w + x] = (uint8_t)(a > 255 ? 255 : a);
         }
 }
-static void scene_with_geckos(const scene_board_t *b, bool lit, const float *moist, float clock) {
+/* a gecko standing on path s at share k of its walking line (0 its left end .. 1 its right) */
+static void gecko_on(const lz_canvas_t *cv, const scene_desert_t *d, int s, float k, const lizard_look_t *lk, const lizard_pose_t *p, float scale) {
+    const terrain_path_t *q = &d->tr.path[s];
+    const float x = q->x[0] + (q->x[q->n - 1] - q->x[0]) * k;
+    draw_lizard(cv, lk, p, x, terrain_y(q, x) + TERRAIN_FEET_DY, scale);
+}
+static void scene_with_geckos(const glass_t *b, bool lit, const float *moist, float clock) {
     const habitat_t *h = &HABITAT_PACK_DESERT;
     vig_fill(b);
     scene_desert_draw(g_frame, b->w, b, h, lit, moist, lit ? 1.0f : 0.45f, g_vig);
     scene_desert_t d; scene_desert_layout(b, h, &d);
     lz_canvas_t cv = { g_frame, b->w, 0, 0, b->w, b->h, lit ? 1.0f : 0.45f, NULL, NULL };
-    const float place = scene_place_y(b), dy = LIZARD_FLOOR_DY;
-    /* one on the rock, basking (or asleep there) */
+    int other = 0, low = 0;                                                     /* a shelf (else a second rock), and another rock: off the basking one */
+    for (int k = 0; k < d.n_rocks; k++) if (d.rock[k].shelf && d.rock[k].path != d.tr.bask_path) other = d.rock[k].path;
+    for (int s = 1; s <= d.tr.n_rocks; s++) if (s != d.tr.bask_path && s != other) { if (!low) low = s; else if (!other) other = s; }
+    /* one on the high rock at the basking spot, basking (or asleep there) */
     lizard_look_t a = sl_look(0, STAGE_ADULT, 0x1001u);
     lizard_pose_t pa = lizard_pose(lit ? LZ_POSE_BASK : LZ_POSE_REST, 1); pa.fat = 0.7f; pa.clock = clock;
-    float ax = d.bask_x - 6;
-    draw_lizard(&cv, &a, &pa, ax, place + dy - scene_desert_lift(&d, ax), 1.0f);
+    draw_lizard(&cv, &a, &pa, d.bask_x - 6, d.bask_y + TERRAIN_FEET_DY, 1.0f);
+    /* one on the shelf, flicking its tongue (dark: asleep there) */
+    if (other) {
+        lizard_look_t o = sl_look(1, STAGE_ADULT, 0x5005u);
+        lizard_pose_t po = lizard_pose(lit ? LZ_POSE_FLICK : LZ_POSE_REST, -1); po.tongue = 0.7f; po.fat = 0.55f; po.clock = clock;
+        gecko_on(&cv, &d, other, 0.62f, &o, &po, 0.95f);
+    }
+    /* a juvenile walking along the low ledge (lit only) */
+    if (low && lit) {
+        lizard_look_t l = sl_look(3, STAGE_JUV, 0x6006u);
+        lizard_pose_t pl = lizard_pose(LZ_POSE_WALK, -1); pl.phase = 0.6f; pl.clock = clock;
+        gecko_on(&cv, &d, low, 0.45f, &l, &pl, lizard_stage_scale(STAGE_JUV));
+    }
     /* one peeking out of the humid box (dark: in it, hidden) */
     lizard_look_t j = sl_look(1, STAGE_JUV, 0x2002u);
     lizard_pose_t pj = lizard_pose(lit ? LZ_POSE_PEEK : LZ_POSE_HIDDEN, 1); pj.peek = 0.30f;
@@ -243,31 +267,30 @@ static void scene_with_geckos(const scene_board_t *b, bool lit, const float *moi
         pj.yaw = pj.yaw_tail = yaw;
         draw_lizard(&cv, &j, &pj, px, py, sc);
     }
-    /* one walking in the front lane toward the warm end (dark: resting by the cool cave) */
+    /* one walking the floor's front lane toward the warm end (dark: resting by the cool cave) */
     lizard_look_t m = sl_look(4, STAGE_ADULT, 0x3003u);
     lizard_pose_t pm = lizard_pose(lit ? LZ_POSE_WALK : LZ_POSE_REST, -1); pm.phase = 0.3f; pm.fat = 0.45f; pm.clock = clock;
     float mx = 0.5f * (d.hide[1].cx + d.hide[2].cx) + 8;
-    draw_lizard(&cv, &m, &pm, mx, place + LZ_LANE_FRONT + dy, 1.0f);
+    draw_lizard(&cv, &m, &pm, mx, d.sand_y + LZ_LANE_FRONT, 1.0f);
     /* a hatchling in the back lane by the warm cave, flicking its tongue */
     if (lit) {
         lizard_look_t hl = sl_look(2, STAGE_FRY, 0x4004u);
         lizard_pose_t ph = lizard_pose(LZ_POSE_FLICK, 1); ph.tongue = 0.8f;
-        draw_lizard(&cv, &hl, &ph, d.hide[0].cx + d.hide[0].half_w + 18, place + LZ_LANE_BACK + dy, lizard_stage_scale(STAGE_FRY));
+        draw_lizard(&cv, &hl, &ph, d.hide[0].cx + d.hide[0].half_w + 18, d.sand_y + LZ_LANE_BACK, lizard_stage_scale(STAGE_FRY));
     }
 }
 static void sheet_scenes(const char *prefix) {
-    static const char *const NAME[SCENE_BOARDS] = { "rect", "round", "watch", "square" };
     char path[512];
-    for (int k = 0; k < SCENE_BOARDS; k++) {
-        scene_board_t b = scene_board_of(k);
+    for (int k = 0; k < GLASS_BOARDS; k++) {
+        glass_t b = glass_of(k);
         for (int lit = 1; lit >= 0; lit--) {
             scene_with_geckos(&b, lit != 0, NULL, 2.0f);
-            snprintf(path, sizeof path, "%s_scene_%s%s.ppm", prefix, NAME[k], lit ? "" : "_night");
+            snprintf(path, sizeof path, "%s_scene_%s%s.ppm", prefix, b.name, lit ? "" : "_night");
             sl_ppm(path, g_frame, b.w, b.h, b.w);
         }
     }
     /* the humid box, moisture 0 .. 1 */
-    scene_board_t b = scene_board_of(0);
+    glass_t b = glass_of(0);
     const habitat_t *h = &HABITAT_PACK_DESERT;
     scene_desert_t d; scene_desert_layout(&b, h, &d);
     int hk = 1; for (int k = 0; k < d.n_hides; k++) if (d.hide[k].kind == HIDE_HUMID) hk = k;
@@ -282,6 +305,30 @@ static void sheet_scenes(const char *prefix) {
     }
     snprintf(path, sizeof path, "%s_moist.ppm", prefix);
     sl_ppm(path, g_sheet, g_sw, g_sh, SH_W);
+}
+/* the ground drawn where the engine walks: on every glass, under every point of every rock's and ramp's walking line, the
+   feet stand on that path's own top as the scene draws it (or, by a ramp's end, on the piece it lands on); the misses */
+static int ground_misses(void) {
+    int bad = 0, pts = 0;
+    for (int k = 0; k < GLASS_BOARDS; k++) {
+        glass_t b = glass_of(k);
+        static scene_desert_t d; scene_desert_layout(&b, &HABITAT_PACK_DESERT, &d);
+        for (int s = 1; s < d.tr.n_paths; s++) {
+            const terrain_path_t *q = &d.tr.path[s];
+            for (float x = q->x[0]; x <= q->x[q->n - 1]; x += 1) {
+                const int at = scene_desert_ground_at(&d, x, terrain_y(q, x) + TERRAIN_FEET_DY + 1);
+                bool ok = at == s;
+                for (int l = 0; l < d.tr.n_links && !ok; l++) {
+                    const terrain_link_t *n = &d.tr.link[l];
+                    ok = fabsf(n->x - x) <= TERRAIN_JUNCTION_PX / 3 && ((n->a == s && n->b == at) || (n->b == s && n->a == at));
+                }
+                if (!ok && bad++ < 8) printf("lizard-sheet: on the %s, path %d at x %.0f: the feet stand on piece %d as drawn\n", b.name, s, x, at);
+                pts++;
+            }
+        }
+    }
+    printf("lizard-sheet: the ground as drawn under the engine's walking lines, all four glasses: %d of %d points on their own top%s\n", pts - bad, pts, bad ? " - MISSES" : "");
+    return bad;
 }
 
 /* ---- the cost ---- */
@@ -439,8 +486,8 @@ static void cost(const char *prefix) {
     SAY("  the worst build (%s) on a frame that builds:     ~%5.0f us on the board\n", wname, worst * k);
     SAY("  scratch (cached bodies + the build's): %u bytes (PSRAM on the board: lizard_set_scratch); bodies cut to the grid: %d\n",
         (unsigned)lizard_scratch_bytes(), lizard_cache_clipped());
-    for (int b = 0; b < SCENE_BOARDS; b++) {
-        scene_board_t sb = scene_board_of(b);
+    for (int b = 0; b < GLASS_BOARDS; b++) {
+        glass_t sb = glass_of(b);
         int64_t t0 = sl_now_us();
         for (int i = 0; i < 10; i++) scene_desert_draw(g_frame, sb.w, &sb, &HABITAT_PACK_DESERT, true, NULL, 1.0f, NULL);
         double us = (double)(sl_now_us() - t0) / 10;
@@ -457,11 +504,7 @@ int lizard_sheet(const char *prefix) {
     sheet_motion(prefix);
     sheet_shed(prefix);
     sheet_scenes(prefix);
-    /* the places: the scene's rule against the engine's on this build */
-    scene_board_t here = scene_board_here();
-    float worst = 0;
-    for (int i = 0; i <= 20; i++) { float u = i / 20.0f, e = fabsf(scene_floor_x(&here, u) - tank_floor_x(u)); if (e > worst) worst = e; }
-    printf("lizard-sheet: the scene's places against tank_floor_x on this board: %s (worst %.3f px)\n", worst < 0.01f ? "the same" : "DIFFERENT", worst);
+    const int misses = ground_misses();                                        /* the ground as drawn against the engine's paths */
     cost(prefix);
-    return worst < 0.01f ? 0 : 1;
+    return misses ? 1 : 0;
 }

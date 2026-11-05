@@ -1846,7 +1846,7 @@ void progression_tick(tank_t *t, float dt) {
         if (f->goal.id == G_PLAY && f->goal_age > 1.0f) set_ms(f, MS_FIRST_DART);
         if (PT_TERRARIUM) {
             float bx, by; tank_bask_point(t, &bx, &by);
-            if (f->goal.id == GOAL_LZ_BASK && fabsf(f->x - bx) < 20) set_ms(f, MS_FIRST_BUBBLES);   /* on the spot */
+            if (f->goal.id == GOAL_LZ_BASK && tank_dist(f->x, f->y, bx, by) < 20) set_ms(f, MS_FIRST_BUBBLES);   /* on the spot (up on its rock) */
             if (f->goal.id == GOAL_LZ_INVESTIGATE && f->goal_age > 2.0f) set_ms(f, MS_INSPECTED);
             if (f->hide >= 0 && (f->goal_age > 2.0f || f->stress >= 5.0f)) set_ms(f, MS_FIRST_GRASS);   /* safe in a hide */
         } else {

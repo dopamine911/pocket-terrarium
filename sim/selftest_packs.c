@@ -3,13 +3,15 @@
  * sim (tank_tick, progression_tick, progression_slept, the touch calls), never by reading a constant back:
  *
  *   ./fishsim --selftest-packs    every species and habitat of both worlds against its rules (docs/species-pack.md
- *                                 "Validation", habitat.h), the rules refusing what they must, every fitting pair of
- *                                 this build's world held and the other world's refused (P2b: another bin's), every
- *                                 pair a tank can hold fitting and this world's, every habitat's lit floor reaching
- *                                 each fitting species' band
+ *                                 "Validation", habitat.h; a habitat's ground on all four boards, terrain.h THE RULES),
+ *                                 the rules refusing what they must, every fitting pair of this build's world held and
+ *                                 the other world's refused (P2b: another bin's), every pair a tank can hold fitting and
+ *                                 this world's, every habitat's lit ground (the floor, its rocks and ramps) reaching each
+ *                                 fitting species' band
  *   ./fishsim --selftest-heat     the heat field and the body's heat: a cold lizard warms into its band on the basking
- *                                 spot at its tau's pace and overheats past it, the cool side cools it, cold slows it,
- *                                 the digits at every pack's thresholds, the test pack 6 C warmer, the body asleep
+ *                                 spot (up on its rock) at its tau's pace and overheats past it, the air warmer up the
+ *                                 rocks while lit, the cool side cools it, cold slows it, the digits at every pack's
+ *                                 thresholds, the test pack 6 C warmer, the body asleep
  *   ./fishsim --selftest-shed     docs/shed.md "Tests (P2)": growth sheds (at once, mid-cycle, gating the stage), a dry
  *                                 hide sticking, both cures, the moisture awake and asleep, a sleep across a cycle, and
  *                                 the gecko's own timeline
@@ -104,9 +106,9 @@ int selftest_packs(void) {
         printf("selftest-packs: habitat %3d %-15s ok: %s, floor %.0f -> %.0f C (dark -%.0f), basking spot %.0f C at %.2f, %d hides, humidity %.2f\n",
                h->id, h->name, h->world == WORLD_TERRARIUM ? "terrarium" : "aquarium", h->floor_warm_c, h->floor_cool_c, h->night_drop_c, h->bask_c, h->bask_u, h->n_hides, h->humidity);
     }
-    /* the pairs: a habitat a species lists is of its world, and its lit floor reaches the species' band somewhere; a
-     * tank holds a fitting pair of this build's world and refuses the other world's (P2b: that pair is another bin's -
-     * its floor is still checked here, staged straight into the tank as that bin holds it) */
+    /* the pairs: a habitat a species lists is of its world, and its lit ground (the floor, its rocks, its ramps) reaches the
+     * species' band somewhere; a tank holds a fitting pair of this build's world and refuses the other world's (P2b: that
+     * pair is another bin's - its ground is still checked here, staged straight into the tank as that bin holds it) */
     int fit_ours = 0;
     for (int i = 0; i < ns; i++) for (int j = 0; j < nh; j++) {
         const species_t *p = species_at(i); const habitat_t *h = habitat_at(j);
@@ -121,16 +123,21 @@ int selftest_packs(void) {
             s_t.habitat_id = h->id; s_t.pack_id = p->id;
         }
         fit_ours += ours;
-        float lo = 1e9f, hi = -1e9f, at = -1;
-        for (float x = tank_glass_x0(PLACE_Y) + 1; x < tank_glass_x1(PLACE_Y) - 1; x += 0.5f) {
-            if (tank_hide_at(&s_t, x, PLACE_Y) >= 0) continue;          /* the floor itself, not a hide */
-            float c = tank_env_c_lit(&s_t, x, PLACE_Y, true);
-            lo = fminf(lo, c); hi = fmaxf(hi, c);
-            if (at < 0 && c >= p->t_lo && c <= p->t_hi) at = x;
+        float lo = 1e9f, hi = -1e9f, at = -1, at_y = 0;
+        const terrain_t *tr = tank_terrain(&s_t);
+        for (int s = 0; s < tr->n_paths; s++) {
+            const terrain_path_t *q = &tr->path[s];
+            for (float x = fmaxf(q->x[0], tank_glass_x0(q->y[0]) + 1); x < fminf(q->x[q->n - 1], tank_glass_x1(q->y[q->n - 1]) - 1); x += 0.5f) {
+                const float y = terrain_y(q, x);
+                if (tank_hide_at(&s_t, x, y) >= 0) continue;          /* the ground itself, not a hide */
+                float c = tank_env_c_lit(&s_t, x, y, true);
+                lo = fminf(lo, c); hi = fmaxf(hi, c);
+                if (at < 0 && c >= p->t_lo && c <= p->t_hi) { at = x; at_y = y; }
+            }
         }
-        if (at < 0) PF("the %s's lit floor (%.1f..%.1f C) never reaches %s's band %.0f-%.0f C", h->name, lo, hi, p->name, p->t_lo, p->t_hi);
-        printf("selftest-packs: %s in the %s: %s; the lit floor runs %.1f..%.1f C and is in its band (%.0f-%.0f C) first at x %.0f\n",
-               p->name, h->name, ours ? "held" : "refused (another world's)", lo, hi, p->t_lo, p->t_hi, at);
+        if (at < 0) PF("the %s's lit ground (%.1f..%.1f C) never reaches %s's band %.0f-%.0f C", h->name, lo, hi, p->name, p->t_lo, p->t_hi);
+        printf("selftest-packs: %s in the %s: %s; the lit ground runs %.1f..%.1f C and is in its band (%.0f-%.0f C) first at (%.0f, %.0f)\n",
+               p->name, h->name, ours ? "held" : "refused (another world's)", lo, hi, p->t_lo, p->t_hi, at, at_y);
     }
     /* every pair a tank can hold fits and is this world's - each fitting one of this world, no other; a fresh tank holds
      * the world's default pair; A16's test pack lives in the desert (the terrarium's) */
@@ -159,6 +166,7 @@ int selftest_packs(void) {
     species_t b; habitat_t hb; int refused = 0;
     #define REFUSE_S(stmt, what) do { b = SPECIES_PACK_GECKO; stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
     #define REFUSE_H(stmt, what) do { hb = HABITAT_PACK_DESERT; stmt; if (habitat_check(&hb, why, sizeof why)) PF("a desert with %s passed its rules", what); refused++; } while (0)
+    #define REFUSE_HW(stmt, what, word) do { REFUSE_H(stmt, what); if (!strstr(why, word)) PF("a desert with %s was refused for another reason: %s", what, why); } while (0)
     REFUSE_S(b.t_lo = b.t_hi + 1, "its band out of order");
     REFUSE_S(b.t_hi = b.t_lo + 1.5f, "a comfort band 1.5 C wide");
     REFUSE_S(b.tau_s[2] = 0, "no tau for an adult");
@@ -177,10 +185,23 @@ int selftest_packs(void) {
     REFUSE_H(hb.hides[1].u = hb.hides[0].u + 0.05f, "two hides on one spot");
     REFUSE_H(hb.bask_c = hb.floor_warm_c - 5, "a lamp that does not warm its spot");
     REFUSE_H(hb.moist_start = 1.5f, "moisture past 1");
+    /* ... and its ground (terrain.h THE RULES, on all four boards): each refused for its own reason */
+    REFUSE_HW(hb.ramps[0].u_lo = 0.46f, "a ramp too steep to walk (a step)", "steeper");
+    REFUSE_HW(hb.n_ramps = 2, "the high rock without a ramp", "out of reach");
+    REFUSE_HW(hb.rocks[0].v[0] = hb.rocks[0].v[1] = 0.05f, "a ledge on the floor", "raised rock");
+    REFUSE_HW(hb.rocks[2].v[0] = hb.rocks[2].v[1] = 0.25f, "a rock with no room under it", "apart");
+    REFUSE_HW(hb.bask_surf = 1, "the basking spot under the high rock", "over the basking spot");
+    REFUSE_HW(hb.hides[1].u = 0.6f, "a ramp low over the humid hide", "hides the hide");
+    REFUSE_HW(hb.ramps[0].u_lo = 1.0f, "a ramp's foot at the glass", "could not reach");
+    REFUSE_HW(hb.ramps[1].u_lo = 0.9f, "a ramp ending off its ledge", "off its surfaces");
+    REFUSE_HW(hb.rise_c = -1, "air colder up toward the lamp", "cools toward the lamp");
     b = SPECIES_PACK_GECKO; b.world = WORLD_AQUARIUM;
     if (habitat_fits(&HABITAT_PACK_DESERT, &b)) PF("a fish of the aquarium fits the desert");
     printf("selftest-packs: the rules refuse %d broken packs (band, rates, stages, shed cycle, cap, morphs, a climber, a dusk schedule, no home; "
-           "the desert reversed, without a humid hide, hides on one spot, a cold lamp, wet past 1), and a pair of two worlds\n", refused);
+           "the desert reversed, without a humid hide, hides on one spot, a cold lamp, wet past 1; its ground with a step, a rock out of reach, "
+           "a ledge on the floor, no room under a rock, the basking spot under a rock, a hide under a ramp, a ramp at the glass, a ramp off its "
+           "ledge, the air cooler up), and a pair of two worlds\n", refused);
+    #undef REFUSE_HW
     #undef REFUSE_S
     #undef REFUSE_H
     printf("selftest-packs OK\n");
@@ -203,11 +224,32 @@ int selftest_heat(void) {
     /* the habitat is set for its species' thermoregulation: the spot hotter than the band, the cool hide under it */
     if (!(bask > sp->t_hi)) PF("the basking spot (%.1f C) is not above %s's t_hi (%.1f C)", bask, sp->name, sp->t_hi);
     if (!(cool_c < sp->t_lo)) PF("the cool hide (%.1f C) is not below %s's t_lo (%.1f C)", cool_c, sp->name, sp->t_lo);
-    const float dark_floor = hb->floor_warm_c + (hb->floor_cool_c - hb->floor_warm_c) * hb->bask_u - hb->night_drop_c;   /* the floor's own there, dark */
+    const float x0 = tank_floor_x(0), x1 = tank_floor_x(1), bu = fminf(fmaxf((bx - x0) / (x1 - x0), 0), 1);
+    const float dark_floor = hb->floor_warm_c + (hb->floor_cool_c - hb->floor_warm_c) * bu - hb->night_drop_c;   /* the floor's own under it, dark */
     if (fabsf(bask - hb->bask_c) > 0.01f || fabsf(tank_env_c_lit(t, bx, by, false) - dark_floor) > 0.01f)
         PF("the basking spot reads %.2f C lit (its habitat says %.1f) and %.2f C dark (the dark floor's %.2f: the lamp goes out with the light)", bask, hb->bask_c, tank_env_c_lit(t, bx, by, false), dark_floor);
-    printf("selftest-heat: the %s for the %s: the basking spot %.1f C (over t_hi %.0f), the cool hide %.1f C (under t_lo %.0f); dark, the spot %.1f C\n",
-           hb->name, sp->name, bask, sp->t_hi, cool_c, sp->t_lo, tank_env_c_lit(t, bx, by, false));
+    printf("selftest-heat: the %s for the %s: the basking spot %.1f C up on its rock (%.0f px over the floor; over t_hi %.0f), the cool hide %.1f C (under t_lo %.0f); dark, the spot %.1f C\n",
+           hb->name, sp->name, bask, PLACE_Y - by, sp->t_hi, cool_c, sp->t_lo, tank_env_c_lit(t, bx, by, false));
+    /* the air rises toward the lamp while lit: along each rock, past the lamp's pool, rise_c x its height's share warmer than
+       the floor under it - and no warmer dark */
+    {
+        const terrain_t *tr = tank_terrain(t);
+        int probes = 0; float most = 0;
+        for (int s = 1; s <= tr->n_rocks; s++) {
+            const terrain_path_t *q = &tr->path[s];
+            for (float x = q->x[0]; x <= q->x[q->n - 1]; x += 4) {
+                const float y = terrain_y(q, x);
+                if (tank_dist(x, y, bx, by) <= hb->bask_r_px || tank_hide_at(t, x, PLACE_Y) >= 0) continue;
+                const float up = tank_env_c_lit(t, x, y, true) - tank_env_c_lit(t, x, PLACE_Y, true), want = hb->rise_c * (PLACE_Y - y) / PLACE_Y;
+                const float up_dark = tank_env_c_lit(t, x, y, false) - tank_env_c_lit(t, x, PLACE_Y, false);
+                if (fabsf(up - want) > 0.01f || fabsf(up_dark) > 0.01f)
+                    PF("rock %d at (%.0f, %.0f): %.2f C over the floor under it lit (want %.2f: %.1f C x its height) and %.2f dark (want 0)", s, x, y, up, want, hb->rise_c, up_dark);
+                probes++; most = fmaxf(most, up);
+            }
+        }
+        if (!probes) PF("no rock clear of the lamp's pool to probe the air's rise");
+        printf("selftest-heat: the air rises toward the lamp: up on the rocks, past its pool, up to %.1f C over the floor under them lit (%d probes); dark, none\n", most, probes);
+    }
     /* 1. a cold lizard parked on the basking spot warms into its band, at its tau's pace, and on past it */
     fish_t *f = &t->fish[0];
     for (int i = 0; i < t->n_fish; i++) s_parked[i] = false;

@@ -8,7 +8,7 @@
  *   - the packs a tank may hold and a new tank's pair (species.h SPECIES_DEFAULT, habitat.h HABITAT_DEFAULT;
  *     tank_set_packs refuses another world's - every pack is compiled into both bins, only this world's are held),
  *   - the goal set (tank.h GOAL_FIRST / GOAL_N: the fish's eight or the lizard's seven),
- *   - the locomotion (tank.c: the swim, or THE WALK on the floor),
+ *   - the locomotion (tank.c: the swim, or THE WALK on the habitat's ground - terrain.h),
  *   - the selftest list (sim/Makefile SELFTESTS_SHARED + SELFTESTS_AQUARIUM / SELFTESTS_TERRARIUM).
  * Values 1 and 2, never 0: an #if on a header that was not included reads 0 and matches neither. */
 #ifndef WORLD_H

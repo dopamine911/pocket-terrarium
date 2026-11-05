@@ -111,9 +111,12 @@ int selftest_heat(void);                /* ... the heat field and the body's hea
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
 int selftest_mister(void);              /* ... the third tool */
 int selftest_l1_encode(void);           /* selftest_l1.c: the L1 encoder against the Python fixture (R4) */
-int selftest_walk(void);                /* selftest_walk.c (P2b): the lizards stay on the floor - the band, the glass, every board; turns, stops, paces */
-int selftest_goals(void);               /* ... each of the seven goals reaches its place (the hide by its need, humid in a shed), the night */
-int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper */
+int selftest_walk(void);                /* selftest_walk.c (P2b, P2c): the lizards stay on the ground - its paths, the floor's band, the glass, every
+                                           board; a path changed only at a ramp's end; the ramps climbed, the slope's pace and pitch; turns, stops, paces */
+int selftest_goals(void);               /* ... each of the seven goals reaches its place on the ground (bask up on the high rock, the hide by its need
+                                           down from any rock), every place from every path, the night */
+int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper; the
+                                           share above the floor and the zone rows */
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
 

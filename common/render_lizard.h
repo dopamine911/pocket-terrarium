@@ -65,9 +65,10 @@ lizard_pose_t lizard_pose(int kind, float yaw);
 /* the stage's size: the pack's geom.length_px is the adult's (scale 1) */
 float lizard_stage_scale(int stage);
 
-/* where the engine's lizard stands to where it is drawn: (x, y) is its middle on the floor (tank.h PLACE_Y and the
- * lanes); its feet stand LIZARD_FLOOR_DY below that, on the sand line (TANK_BOT - 16) in the middle lane */
-#define LIZARD_FLOOR_DY 8.0f
+/* where the engine's lizard stands to where it is drawn: (fish_t.x, fish_t.y) is its middle on its path of the ground
+ * (fish_t.surf: the floor's band, a rock's top, a ramp - tank_terrain); its feet stand TERRAIN_FEET_DY (terrain.h) below
+ * that - draw_lizard's floor_y is fish_t.y + TERRAIN_FEET_DY - and the ground under it slopes fish_t.slope (radians, +
+ * rising to the right: its nose-up pitch is slope x yaw; P3b pitches the body by it) */
 /* nose to tail tip, drawn: x is the middle of its length - half of it on either side when it faces sideways */
 static inline float lizard_half_len(const lizard_geom_t *g, float scale) { return 0.5f * g->length_px * scale; }
 

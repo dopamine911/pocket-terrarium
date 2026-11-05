@@ -58,6 +58,7 @@ APP_SRCS  := main.c selftest_link.c advisor_llm.c persist_port_sim.c net_port_si
 
 APP_SRCS  += selftest_coll.c   # the visitor collection's pages (0.4)
 APP_SRCS  += ../common/species.c ../common/species/gecko.c ../common/species/fish.c ../common/habitat.c ../common/habitat/desert.c ../common/habitat/freshwater.c   # the packs, both worlds' (P2a, P2b)
+APP_SRCS  += ../common/terrain.c   # a habitat's ground laid out on a glass: the walk, the heat, the scene, the rules (P2c)
 APP_SRCS  += selftest_packs.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the L1 encoder against the Python fixture (R4)
 APP_SRCS  += selftest_walk.c  # the terrarium's walk, its goals and a free-running census (P2b)
 APP_SRCS  += ../common/render_lizard.c ../common/render_scene_desert.c sheet_lizard.c   # the lizard and the desert, standalone; --lizard-sheet (P3a)

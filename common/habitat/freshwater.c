@@ -1,7 +1,8 @@
 /* habitat/freshwater.c - the aquarium's water (PLAN.md D11, P2b): pocket-tank's tank as a habitat pack. A heater
- * holds it at 25 C everywhere, lit or dark (the fish pack's band is 22..28 C: heat 6, never a pull either way);
- * no lamp, no hides, no humid hide to keep damp - the fish do not shed. Its grass, decor and critters are the
- * engine's as they always were (tank.c); the humidity is the water's. */
+ * holds it at 25 C everywhere, lit or dark, at every depth (the fish pack's band is 22..28 C: heat 6, never a pull
+ * either way); no lamp, no hides, no humid hide to keep damp - the fish do not shed - and no rocks: its ground is the
+ * floor alone (terrain.h; the fish swim). Its grass, decor and critters are the engine's as they always were (tank.c);
+ * the humidity is the water's. */
 #include "habitat.h"
 
 const habitat_t HABITAT_PACK_FRESHWATER = {

@@ -66,6 +66,9 @@ as `tank_env_c_lit` reads it, the body following it as `body_follow` does, the
 zone grid and the wall's contact point as `advisor_core_l1_snap` builds them. A16's
 test pack (15% of terrariums) lives in the same desert, so it is cold but in the
 pool. The lizards roam the whole glass as P2a's do (P2b brings walking).
+Since P2c the C desert differs from this mirror: its basking spot is on the high rock (v 0.58, 0.20 along it), the
+humid hide is at 0.40, lit air rises 4 °C toward the glass's top, and the lizards walk the floor, the terraces and the
+ramps (`docs/habitat-pack.md` "The ground"); the mirror still has P2a's floor-level desert.
 
 `--stats` on that dry run (2000 lines, seed 41; the rule stand-in moves the
 lizards, so the shares are indicative - the teacher's decisions shape the real

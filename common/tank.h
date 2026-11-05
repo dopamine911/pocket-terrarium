@@ -22,6 +22,7 @@
 #include <math.h>
 #include "species.h"
 #include "habitat.h"
+#include "terrain.h"
 
 #ifdef TANK_ROUND               /* the round 466 px glass (Waveshare 1.75C, 2026-10-01): the frame is the square around a bowl */
 #define TANK_W 466
@@ -491,14 +492,18 @@ typedef struct {
     /* THE WALK (P2b, the terrarium's locomotion; tank.h below): hide - the hide it is IN (the habitat's index; -1 out):
      * it goes in on purpose and comes out on purpose, never by walking past one; pose - what its body is doing
      * (LZ_POSE_*: HIDDEN or PEEK while in a hide - P3 draws it, the L1 line's `shelter near 12` reads `hide`);
-     * pose_s - seconds in that pose; lane - the floor's depth it walks at, px off PLACE_Y; to_x - where this walk is
-     * going; walk_s / pause_s - the stop-and-go: seconds left of this bout of walking, or of this stop; turn_s - a
-     * turn about on the spot under way (seconds left: it stands meanwhile); strike_s - the hunt's freeze before a
-     * lunge, then the lunge's own; peek_s - in a hide, seconds to its next look out (or back in). None saved: a boot
-     * finds it on the floor, out. A fish (the aquarium) keeps hide -1 and pose STAND */
-    int8_t   hide;
+     * pose_s - seconds in that pose; lane - the floor's depth it walks at, px off PLACE_Y (on the floor only: a rock or
+     * a ramp is one lane); surf - the PATH it is on (P2c, tank_terrain: 0 the floor, then the rocks, then the ramps): its
+     * middle is on that path's walking line at x (+ the lane on the floor); to_surf / to_x - where this walk is going;
+     * explore_surf - the path explore_x is on; slope - the ground's angle under it, radians, + rising to the right, eased
+     * (LZ_SLOPE_RATE: never a snap at a ramp's foot) - its nose-up pitch is slope x yaw; walk_s / pause_s - the
+     * stop-and-go: seconds left of this bout of walking, or of this stop; turn_s - a turn about on the spot under way
+     * (seconds left: it stands meanwhile); strike_s - the hunt's freeze before a lunge, then the lunge's own; peek_s - in
+     * a hide, seconds to its next look out (or back in). None saved: a boot finds it on the floor, out. A fish (the
+     * aquarium) keeps hide -1, surf 0 and pose STAND */
+    int8_t   hide, surf, to_surf, explore_surf;
     uint8_t  pose;
-    float    pose_s, lane, to_x, walk_s, pause_s, turn_s, strike_s, peek_s;
+    float    pose_s, lane, to_x, slope, walk_s, pause_s, turn_s, strike_s, peek_s;
 } fish_t;
 enum { DOOR_NONE, DOOR_HEADING, DOOR_ASKED, DOOR_PASSING, DOOR_ENTERING };
 
@@ -1133,31 +1138,35 @@ void  tank_tick_sleep(tank_t *t, float seconds);
  * The species (species.h) and its habitat (habitat.h) are the tank's two packs (tank_t.pack_id, habitat_id):
  * tank_set_packs takes a pair only when it fits (habitat_fits) and is of this build's world (PT_WORLD_ID) - false
  * otherwise, the tank as it was.
- * PLACES: the habitat's hides and its basking spot are logical points on the floor, laid out on every board
- * from TANK_BOT and the glass at the floor: the floor's span is the glass at PLACE_Y inset PLACE_MARGIN, a
- * place's fraction u runs along it from the warm (left, 0) end to the cool (right, 1) end, all at PLACE_Y
- * (an animal's middle standing on the sand). A hide's FOOTPRINT is HIDE_R round its point (tank_hide_at: where it
- * stands - the mister's aim, the heat field's probe); an animal is INSIDE a hide only when it went in (fish_t.hide,
- * P2b: THE WALK below) - a lizard walking past one is not in it. */
-#define PLACE_Y      (TANK_BOT - 24.0f)
-#define PLACE_MARGIN 30.0f
+ * PLACES: the habitat's hides stand on the floor, laid out on every board from TANK_BOT and the glass at the floor:
+ * the floor's span is the glass at PLACE_Y inset PLACE_MARGIN, a hide's fraction u runs along it from the warm (left,
+ * 0) end to the cool (right, 1) end, at PLACE_Y (an animal's middle standing on the sand). The basking spot is on its
+ * surface (habitat_t.bask_surf: P2c, the top of the high rock under the lamp in the desert) - THE GROUND is the
+ * habitat's terrain laid out on this board (tank_terrain, terrain.h: the floor, the rocks, the ramps, as PATHS). A
+ * hide's FOOTPRINT is HIDE_R round its point (tank_hide_at: where it stands - the mister's aim, the heat field's probe);
+ * an animal is INSIDE a hide only when it went in (fish_t.hide, P2b: THE WALK below) - a lizard walking past one is not
+ * in it. */
+#define PLACE_Y      (TANK_BOT - TERRAIN_FLOOR_DY)
+#define PLACE_MARGIN TERRAIN_MARGIN
 #define HIDE_R       28.0f              /* a hide's footprint: this close to its point (a lizard's half length; the engine's, every pack's) */
 const species_t *tank_species(const tank_t *t);           /* the tank's species pack (SPECIES_DEFAULT's for an unknown id) */
 const habitat_t *tank_habitat(const tank_t *t);           /* ... and its habitat (HABITAT_DEFAULT's for an unknown id) */
+const terrain_t *tank_terrain(const tank_t *t);           /* ... its ground on this board (terrain_lay on glass_here; laid out once a habitat) */
 bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id);   /* a new pair: both known, it fits and it is this world's, else false */
 float tank_floor_x(float u);                              /* the x a floor fraction stands at on this board */
 void  tank_hide_point(const tank_t *t, int k, float *x, float *y);      /* the habitat's hide k */
-void  tank_bask_point(const tank_t *t, float *x, float *y);             /* its basking spot */
+void  tank_bask_point(const tank_t *t, float *x, float *y);             /* its basking spot (on its rock: terrain_t.bask_*) */
 int   tank_hide_at(const tank_t *t, float x, float y);    /* the hide (its index) whose footprint the point is in, -1 none */
 int   tank_nearest_hide(const tank_t *t, float x, float y, float *dist);   /* the nearest hide (its point's distance), -1 none */
-/* THE HEAT FIELD (degrees C at a point), all from the habitat: lit, the floor runs straight from floor_warm_c
- * at its warm end to floor_cool_c at its cool end, and the lamp's pool round the basking spot rises to bask_c
- * at its middle from the floor's own at bask_r_px; in a hide's footprint, the hide's own (t_lit_c). Dark, the lamp
- * is out, the floor is night_drop_c cooler and a hide is at its t_dark_c. (The desert: 31 -> 25 C, the spot 35 C,
- * the warm / humid / cool hides 30 / 28 / 24 C; dark 26 -> 20 C and 30 / 25 / 21 C. Freshwater: 25 C, all of it,
- * always.) tank_env_c reads the light as it is, tank_env_c_lit as given (asleep: off). What an animal FEELS is
- * tank_animal_env_c: the air of the hide it is in, else the open floor where it stands (a hide's footprint walked
- * past is the floor's). */
+/* THE HEAT FIELD (degrees C at a point), all from the habitat (terrain_air_c): lit, the floor runs straight from
+ * floor_warm_c at its warm end to floor_cool_c at its cool end, the air rises rise_c with height toward the lamp (v: the
+ * floor's line 0 .. the glass's top 1), and the lamp's pool round the basking spot rises to bask_c at its middle from the
+ * air's own at bask_r_px; in a hide's footprint, the hide's own (t_lit_c). Dark, the lamp is out, the air is the floor's
+ * night_drop_c cooler at every height and a hide is at its t_dark_c. (The desert: 31 -> 25 C, + 4 C at the glass's top,
+ * the spot 35 C on the high rock, the warm / humid / cool hides 30 / 28 / 24 C; dark 26 -> 20 C and 30 / 25 / 21 C.
+ * Freshwater: 25 C, all of it, always.) tank_env_c reads the light as it is, tank_env_c_lit as given (asleep: off). What
+ * an animal FEELS is tank_animal_env_c: the air of the hide it is in, else the open air where it stands - on the floor or
+ * up on a rock (a hide's footprint walked past is the floor's). */
 float tank_env_c(const tank_t *t, float x, float y);
 float tank_env_c_lit(const tank_t *t, float x, float y, bool lit);
 float tank_animal_env_c(const tank_t *t, const fish_t *f, bool lit);
@@ -1198,35 +1207,48 @@ int   tank_humid_hide(const tank_t *t);            /* the habitat's first humid 
 void  tank_mist_pass(tank_t *t, int k);            /* a mister pass over hide k: + MIST_PASS, up to 1 */
 bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on animal i done: a stuck shed comes off (stress +1, trust
                                                       +0.2 on a trusting one; true), anything else is sprayed (stress +1; false) */
-/* ---- THE WALK (pocket-terrarium P2b, tank.c): the terrarium's locomotion - a lizard walks the floor; the swim
- * (buoyancy, depth picking, the school, the doors) is the aquarium's alone, kept whole in tank.c update_fish ----
- * Its middle stays in the floor's band, LZ_LANE_BACK..LZ_LANE_FRONT px about PLACE_Y - the back and the front lane a
- * walk takes, so two can pass; a place is at PLACE_Y itself - and its body inside the glass at its height: its
- * middle at least LZ_GLASS_M in, and LZ_HALF_LEN x its size (the bowl's floor narrows toward its ends, the watch's
- * corners close in). It walks at its pack's pace for its stage (species_t.walk_px_s) x the urgency's 0.8..1.25, x
- * the cold's HEAT_SLOW, x 0.45 spent (energy under 1.2) - STOP-AND-GO: a bout of walking, then a stop (the pack's
- * bout_s, pause_s; an explorer's stops longer, with tongue flicks) - and it TURNS ABOUT ON THE SPOT (turn_s: it
- * stands while its yaw swings through head-on, its lane held too). Every goal resolves to a point on the floor and
- * what it does there:
- *   hunt         the prey (the nearest pellet, until P2c's crickets): to it, a freeze (STALK) within LZ_STRIKE_PX,
- *                then a LUNGE at LZ_LUNGE_X its pace that misses LZ_MISS of the time (LZ_MISS_COLD more cold); a
- *                pellet still falling: it waits under it; none: a slow walk to where food came last
- *   bask         to the basking spot, then flat on it (BASK) until the goal changes - heat rises
+/* ---- THE WALK (pocket-terrarium P2b, P2c; tank.c): the terrarium's locomotion - a lizard walks the GROUND, the habitat's
+ * terrain on this board (tank_terrain, terrain.h: the floor, the rocks up the back wall, the ramps between them); the
+ * swim (buoyancy, depth picking, the school, the doors) is the aquarium's alone, kept whole in tank.c update_fish ----
+ * A lizard is ON A PATH (fish_t.surf) at an x on it: its middle on the path's walking line - on the floor in the floor's
+ * band, LZ_LANE_BACK..LZ_LANE_FRONT px about PLACE_Y (the back and the front lane a walk takes, so two can pass; a place
+ * is on the line itself); a rock or a ramp is one lane - and its body inside the glass at its height: its middle at least
+ * LZ_GLASS_M in, and LZ_HALF_LEN x its size (the bowl narrows toward its ends, the watch's corners close in). It steps
+ * from one path onto another only where they meet (a ramp's end: a link), so it never drops, floats or passes through
+ * rock; off the floor its lane is 0 first (it takes a ramp from the middle of the floor). It walks at its pack's pace for
+ * its stage (species_t.walk_px_s) x the urgency's 0.8..1.25, x the cold's HEAT_SLOW, x 0.45 spent (energy under 1.2), x
+ * the slope's (terrain_pace: slower uphill, a little careful down) - along the slope, so a ramp's length is walked -
+ * and its body takes the ground's slope (fish_t.slope, eased at LZ_SLOPE_RATE: the renderer pitches it by that).
+ * STOP-AND-GO: a bout of walking, then a stop (the pack's bout_s, pause_s; an explorer's stops longer, with tongue
+ * flicks) - and it TURNS ABOUT ON THE SPOT (turn_s: it stands while its yaw swings through head-on, its lane held too) -
+ * at a switchback's corner too. Every goal resolves to a point on the ground (a path and an x) and what it does there;
+ * the way is THE ROUTE (terrain_route: along the paths, through the links, the quickest):
+ *   hunt         the prey (the nearest pellet, on the floor, until P2c's crickets): down to it, a freeze (STALK) within
+ *                LZ_STRIKE_PX, then a LUNGE at LZ_LUNGE_X its pace that misses LZ_MISS of the time (LZ_MISS_COLD more
+ *                cold); a pellet still falling: it waits under it; none: a slow walk to where food came last
+ *   bask         to the basking spot (the high rock's top under the lamp, in the desert), then flat on it (BASK) until
+ *                the goal changes - heat rises; with the lamp out, into the hide its need picks (the warm one's mat)
  *   hide         into the hide its need picks (tank_lizard_hide_for: the humid hide with a shed coming, on or stuck,
  *                the cool one when hot - heat LZ_HIDE_COOL_AT, there until under LZ_HIDE_COOL_TO - else the warm
- *                one); in, it is HIDDEN, and PEEKs out now and then (a bold one sooner); a need that changes moves it
- *   explore      to a point in the floor zone it has not seen for longest (the schema's bottom row), slowly, its
- *                stops tongue flicks (FLICK)
- *   investigate  the other lizard if there is one, else the nearest place it is not at (picked once: there it stays,
- *                flicking): up to LZ_CONTACT_PX of it - or, social under LZ_SOCIAL_LOW, a STANDOFF LZ_STANDOFF_PX off,
- *                facing it
- *   dig          scrabbles where it stands (DIG; out of a hide first)
- *   rest         lies still where it is (REST; in a hide it stays in)
+ *                one), from the floor; in, it is HIDDEN, and PEEKs out now and then (a bold one sooner); a need that
+ *                changes moves it
+ *   explore      to a point of the ground in the zone it has not seen for longest - any of the schema's six that the
+ *                ground reaches, the top row up on the rocks - slowly, its stops tongue flicks (FLICK)
+ *   investigate  the other lizard if there is one, on whatever ground it is, else the nearest place it is not at (picked
+ *                once: there it stays, flicking): up to LZ_CONTACT_PX of it - or, social under LZ_SOCIAL_LOW, a STANDOFF
+ *                LZ_STANDOFF_PX off, facing it
+ *   dig          scrabbles at the sand where it stands (DIG; out of a hide first) - up on the rocks, at the foot of the
+ *                way down first
+ *   rest         lies still where it is, on any ground (REST; in a hide it stays in)
  * The night: in its species' sleep phase every goal but hide is performed as rest (a starving lizard, hunger 8 and
  * up, still hunts). The spawning's pair walks to the nursery and stands there; the setup page's lizard to its spot.
  * Drives run on its pack's rates (species_t: hunger, energy spent walking or digging and back lying still, curiosity
  * up except exploring or investigating - LZ_CURIOSITY_SPEND_X its rise spent then); stress settles 0.18 a second,
- * twice that in a hide or lying still. */
+ * twice that in a hide or lying still.
+ * DRAWING ONE (P3b): its middle is (x, y); its feet stand at y + TERRAIN_FEET_DY on the ground under it (the floor's
+ * sand, a rock's top, a ramp); its body is pitched by fish_t.slope (+ = the ground rising to the right: nose up facing
+ * right, tail up facing left - slope x yaw is its nose-up pitch, 0 head-on); fish_t.surf is the path, tank_terrain's
+ * path[surf].kind says floor, rock or ramp. */
 enum { LZ_POSE_STAND = 0, LZ_POSE_WALK, LZ_POSE_TURN, LZ_POSE_FLICK, LZ_POSE_STALK, LZ_POSE_LUNGE, LZ_POSE_BASK,
        LZ_POSE_DIG, LZ_POSE_REST, LZ_POSE_HIDDEN, LZ_POSE_PEEK, LZ_POSE_STANDOFF, LZ_POSES };
 extern const char *const LZ_POSE_NAMES[LZ_POSES];
@@ -1234,6 +1256,7 @@ extern const char *const LZ_POSE_NAMES[LZ_POSES];
 #define LZ_LANE_FRONT    5.0f         /* ... and the front one: the floor's band */
 #define LZ_GLASS_M       24.0f        /* its middle keeps this far inside the glass at its height ... */
 #define LZ_HALF_LEN      20.0f        /* ... and its body this x its size (the fish body render.c draws it with until P3) */
+#define LZ_SLOPE_RATE    2.5f         /* rad/s: its body's slope eases to the ground's (a ramp's 37 deg in a quarter second) */
 #define LZ_ARRIVE_PX     6.0f         /* at a place: this close to it */
 #define LZ_STRIKE_PX     30.0f        /* the hunt: its snout this near the prey, it freezes, then lunges */
 #define LZ_LUNGE_X       3.0f
