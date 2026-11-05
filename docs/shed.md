@@ -121,11 +121,11 @@ As built (P5, `docs/progression.md` "The terrarium's long game", `--selftest-ter
 |---|---|
 | FIRST CLEAN SHED (a lizard's, MS_FIRST_SHED) | its first shed off clean without sticking |
 | FIRST STUCK SHED FIXED (TMS_SHED_HELPED) | a stuck shed cleared - by the mister's soak or a damp stay |
-| THREE CLEAN SHEDS IN A ROW (TMS_CLEAN_RUN) | CLEAN_RUN_N (3, was drafted as five) sheds in a row off clean, tank-wide; a shed sticking breaks the row |
+| THREE CLEAN SHEDS IN A ROW (TMS_CLEAN_RUN) | CLEAN_RUN_N (3) sheds in a row off clean, tank-wide; a shed sticking breaks the row |
 | FIRST ADULT (TMS_FIRST_ADULT) | a lizard grown to adult, at its clean growth shed |
 
-Not built: FIRST MIST (the keeper's first mister pass). The hatchling's gates count the lizards' clean sheds too (4 for
-the first).
+Later (not built, no badge): FIRST MIST, the keeper's first mister pass. The hatchling's gates count the lizards' clean
+sheds too (4 for the first).
 
 ## Saved
 

@@ -33,6 +33,7 @@
 #include "terrain.h"
 #include "sim_tmp.h"
 #include "setup.h"
+#include "shelf.h"                      /* (MY TANKS's default names, the --terr-ui-shot pages) */
 
 double lizard_board_k(void);            /* sheet_lizard.c */
 
@@ -503,12 +504,25 @@ int terr_ui_shot(const char *prefix) {
       uint16_t *pic = malloc((size_t)tw * th * sizeof *pic);
       if (pic) {
           render_tank(&s_t, s_fb, TANK_W); render_shelf_thumb(s_fb, pic);
-          shelf_slot_t sl[8] = { { SHELF_NOW, "MY DESERT", false, pic }, { SHELF_DORMANT, "DESERT 2", false, pic } };
+          shelf_slot_t sl[8] = { { SHELF_NOW, SHELF_NAME_FIRST, false, pic }, { SHELF_DORMANT, "DESERT 2", false, pic } };
           for (int i = 2; i < 8; i++) sl[i] = (shelf_slot_t){ SHELF_EMPTY, "", false, NULL };
-          render_shelf(s_fb, TANK_W, sl, 1, 1); ui_ppm(prefix, "shelf"); render_shelf_free();
+          render_shelf(s_fb, TANK_W, sl, 1, 1); ui_ppm(prefix, "shelf");
+          /* the firmware's own pages over it (firmware/main/main.c): a tank's card, REMOVE, RENAME, THE LIBRARY */
+          render_shelf(s_fb, TANK_W, sl, 1, 1); render_shelf_card(s_fb, TANK_W, &sl[1], "LEOPARD GECKOS", 3, 12); ui_ppm(prefix, "shelf_card");
+          render_shelf(s_fb, TANK_W, sl, 1, 1); render_shelf_card(s_fb, TANK_W, &sl[0], "LEOPARD GECKOS", 0, 12); ui_ppm(prefix, "shelf_card_glass");
+          render_shelf(s_fb, TANK_W, sl, 1, 1); render_shelf_remove(s_fb, TANK_W, &sl[1], 130, 0.4f, 3); ui_ppm(prefix, "shelf_remove");
+          { shelf_rename_t rn; render_shelf_rename_begin(&rn, sl[1].name); render_shelf(s_fb, TANK_W, sl, 1, 1); render_shelf_rename(s_fb, TANK_W, &sl[1], &rn, 3, 0.2); ui_ppm(prefix, "shelf_rename"); }
+          { library_row_t lib = { "LEOPARD GECKOS", "LIZARDS THAT THINK FOR THEMSELVES. FEED THEM, MIST THEIR HIDE, WATCH THEM GROW.", pic, false, true, 300 };
+            render_library(s_fb, TANK_W, &lib, 1, 124, "MORE KINDS OF TERRARIUM ARE COMING"); ui_ppm(prefix, "library"); }
+          render_shelf_free();
           free(pic);
       }
-      render_loading(s_fb, TANK_W, "MY DESERT", 0.3, NULL); ui_ppm(prefix, "loading"); }
+      render_loading(s_fb, TANK_W, SHELF_NAME_FIRST, 0.3, NULL); ui_ppm(prefix, "loading");
+      render_battery_warning(s_fb, TANK_W, 800, 500, false); ui_ppm(prefix, "battery_warning");
+      render_touch_intro(s_fb, TANK_W, false, NULL); ui_ppm(prefix, "touch_intro");
+      /* the shop's BASKING BULB: the lamp's pool on the high rock SD_BULB_R_X as wide - the scene baked again with it */
+      run(1.0f); ui_ppm(prefix, "bulb_off");
+      s_t.sd_unlocks |= SD_ITEM_BULB; run(3.0f); ui_ppm(prefix, "bulb_on"); s_t.sd_unlocks &= ~SD_ITEM_BULB; }
     return 0;
 }
 

@@ -805,9 +805,11 @@ static void shelf_render(uint16_t *fb) {
     if (!s_shelf_baked) {
         int64_t tb0 = esp_timer_get_time();
         if (s_sh_lib) {                                       /* the fish tank only, until the library downloads (step 5) */
-            library_row_t r = { "FISH TANK", "FISH THAT THINK FOR THEMSELVES. FEED THEM, TEND THE TANK, WATCH THEM GROW.",
+            library_row_t r = { WORLD_STR("FISH TANK", "LEOPARD GECKOS"),
+                                WORLD_STR("FISH THAT THINK FOR THEMSELVES. FEED THEM, TEND THE TANK, WATCH THEM GROW.",
+                                          "LIZARDS THAT THINK FOR THEMSELVES. FEED THEM, MIST THEIR HIDE, WATCH THEM GROW."),
                                 s_shelf_thumb, false, true, shelf_price() };
-            render_library(s_shelf_page, TANK_W, &r, 1, (int)tank.sd_balance, "MORE KINDS OF TANK ARE COMING");
+            render_library(s_shelf_page, TANK_W, &r, 1, (int)tank.sd_balance, WORLD_STR("MORE KINDS OF TANK ARE COMING", "MORE KINDS OF TERRARIUM ARE COMING"));
         } else {
             shelf_slot_t sl[8]; const uint16_t *card_thumb = NULL;
             for (int j = 0; j < 8; j++) {
@@ -834,11 +836,11 @@ static void shelf_render(uint16_t *fb) {
             else if (t && s_sh_rm) { s_shr_thumb = card_thumb; render_shelf_remove(s_shelf_page, TANK_W, NULL, 0, 0, 1); }   /* (REMOVE: the backdrop; the panel each frame) */
             else if (t && s_sh_card == SH_CARD_GLASS) {          /* the tank on the glass: its name, RENAME */
                 shelf_slot_t cs = { SHELF_NOW, t->name, false, card_thumb };
-                render_shelf_card(s_shelf_page, TANK_W, &cs, "FISH TANK", 0, -1);
+                render_shelf_card(s_shelf_page, TANK_W, &cs, WORLD_STR("FISH TANK", "LEOPARD GECKOS"), 0, -1);
             } else if (t) {
                 shelf_slot_t cs = { t->time_mode == SHELF_TIME_PAUSED ? SHELF_PAUSED : SHELF_DORMANT, t->name, false, card_thumb };
                 int64_t now = clock_port_now_unix(), d = now > t->shelved_unix ? (now - t->shelved_unix) / 86400 : 0;
-                render_shelf_card(s_shelf_page, TANK_W, &cs, t->save_len ? "FISH TANK" : "FISH TANK - NEW", (int)d, -1);
+                render_shelf_card(s_shelf_page, TANK_W, &cs, t->save_len ? WORLD_STR("FISH TANK", "LEOPARD GECKOS") : WORLD_STR("FISH TANK - NEW", "GECKOS - NEW"), (int)d, -1);
             }
         }
         s_shelf_baked = true;
@@ -1632,7 +1634,7 @@ static void tank_task(void *arg) {
                         else ESP_LOGI(TAG, "loading: the boot show is over, the tank is the tank after %lld ms (%d frames, %.1f fps; the grass drawn live, no loop)", (now - s_load_t0) / 1000,
                                       s_show_frames, s_show_frames * 1e6f / (float)(now - s_show_t0 + 1));
                     }
-                } else if (s_show_tried && render_grass_loop_warming()) render_loading(fb[cur], TANK_W, shelf_now()->name, tank.clock, s_load_swap ? NULL : "WAKING THE TANK");
+                } else if (s_show_tried && render_grass_loop_warming()) render_loading(fb[cur], TANK_W, shelf_now()->name, tank.clock, s_load_swap ? NULL : WORLD_STR("WAKING THE TANK", "WAKING THE TERRARIUM"));
                 else if (!s_show_tried) memset(fb[cur], 0, (size_t)TANK_W * TANK_H * sizeof(uint16_t));   /* (dark until the show starts; no show and no loop: the tank frame drawn above) */
                 if (USE_RESTORE) render_touch_all();
             }

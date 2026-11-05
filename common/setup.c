@@ -909,7 +909,8 @@ static const char *name_title(void) {
          : page_fish() == 0 ? WORLD_STR("NAME THE FIRST FISH", "NAME THE FIRST LIZARD") : WORLD_STR("NAME THE SECOND FISH", "NAME THE SECOND LIZARD");
 }
 /* THE MORPH PAGE (the terrarium's colors page; its tiles and taps above): NOW and GROWN UP on plates - a lizard on stage
-   walks the floor, under the tiles - then the pack's morphs as named tiles under a panel band, the hatchling's ringed */
+   walks the floor, under the tiles - then the pack's morphs as named tiles under a panel band, the hatchling's ringed. No
+   row label: the title says MORPH, and on the round glass a label crowded the NOW caption over it */
 static void morph_page(const tank_t *t, uint16_t *fb, int stride, double clock) {
 #if PT_TERRARIUM
     const int CX = PAGE_W / 2;
@@ -931,8 +932,6 @@ static void morph_page(const tank_t *t, uint16_t *fb, int stride, double clock) 
     text_c(fb, stride, (SETUP_ED_NOW_X + SETUP_ED_GROWN_X) / 2, SETUP_ED_PREVIEW_Y - 10, 3, C_CAPT, ">");
     text_c(fb, stride, SETUP_ED_NOW_X, SETUP_ED_CAPTION_Y, 2, C_CAPT, "NOW");
     text_c(fb, stride, SETUP_ED_GROWN_X, SETUP_ED_CAPTION_Y, 2, C_CAPT, "GROWN UP");
-    morph_tile(0, &x, &y);
-    render_text(fb, stride, x + 2, y - SETUP_LABEL_DY, 2, C_CAPT, "MORPH");
     for (int m = 0; m < s_morphs; m++) {
         morph_tile(m, &x, &y);
         const bool on = m == cur;

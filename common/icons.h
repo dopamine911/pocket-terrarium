@@ -34,7 +34,9 @@ extern const icon_t icon_stress;
 extern const icon_t icon_trust;
 extern const icon_t icon_unknown_16;
 extern const icon_t icon_unknown_24;
+extern const icon_t icon_ms_clean_run_terr;
 extern const icon_t icon_ms_crab_find;
+extern const icon_t icon_ms_first_adult_terr;
 extern const icon_t icon_ms_first_bubbles;
 extern const icon_t icon_ms_first_bubbles_terr;
 extern const icon_t icon_ms_first_dart;
@@ -59,16 +61,21 @@ extern const icon_t icon_ms_first_sale;
 extern const icon_t icon_ms_first_sale_terr;
 extern const icon_t icon_ms_first_seagrass;
 extern const icon_t icon_ms_first_seagrass_terr;
+extern const icon_t icon_ms_first_shed_terr;
 extern const icon_t icon_ms_first_trimming;
 extern const icon_t icon_ms_full_school;
 extern const icon_t icon_ms_sand_dollar;
 extern const icon_t icon_ms_seahorse_fed;
+extern const icon_t icon_ms_shed_helped_terr;
 extern const icon_t icon_ms_tank_changed_someone;
 extern const icon_t icon_ms_tank_changed_someone_terr;
+extern const icon_t icon_shop_bulb_terr;
 extern const icon_t icon_shop_castle;
 extern const icon_t icon_shop_cluster;
 extern const icon_t icon_shop_coral;
 extern const icon_t icon_shop_crab;
+extern const icon_t icon_shop_farm_terr;
+extern const icon_t icon_shop_moss_terr;
 extern const icon_t icon_shop_plant;
 extern const icon_t icon_shop_pumpkin;
 extern const icon_t icon_shop_sand_dollar_16;
@@ -97,6 +104,8 @@ extern const icon_t icon_tool_sponge;
  *   icon_ms_first_play_session icon_ms_first_quiet_night icon_ms_first_sale icon_ms_first_seagrass
  *   icon_ms_tank_changed_someone icon_shop_sand_dollar_16 icon_shop_sand_dollar_64
  * The terrarium's own art, defined in its bin alone (name it in terrarium-only code):
+ *   icon_ms_clean_run_terr icon_ms_first_adult_terr icon_ms_first_shed_terr icon_ms_shed_helped_terr
+ *   icon_shop_bulb_terr icon_shop_farm_terr icon_shop_moss_terr
  */
 #define WORLD_ICON(name) (PT_TERRARIUM ? &name##_terr : &name)
 

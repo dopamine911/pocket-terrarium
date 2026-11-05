@@ -189,8 +189,8 @@ void shelf_boot(int64_t now_unix) {
         s_now.magic = NOW_MAGIC; s_now.layout = SHELF_LAYOUT; s_now.id = s_n ? s_next++ : 1; s_now.type = 0;
         s_now.pos = 0;
         for (int p = 0; p < SHELF_POS_MAX; p++) { bool used = false; for (int i = 0; i < s_n && !used; i++) used = s_t[i].h.pos == p; if (!used) { s_now.pos = (uint8_t)p; break; } }
-        snprintf(s_now.name, sizeof s_now.name, "MY TANK");
-        for (unsigned n = 2; name_worn(s_now.name, s_now.id) && n < 1024; n++) snprintf(s_now.name, sizeof s_now.name, "TANK %u", n);
+        snprintf(s_now.name, sizeof s_now.name, "%s", SHELF_NAME_FIRST);
+        for (unsigned n = 2; name_worn(s_now.name, s_now.id) && n < 1024; n++) snprintf(s_now.name, sizeof s_now.name, SHELF_NAME_NTH, n);
         if (s_n) printf("shelf: no record of the tank on the glass - it is tank %u, %s\n", (unsigned)s_now.id, s_now.name);
         save_now();
     }
@@ -291,7 +291,7 @@ int shelf_new(int type, int64_t now_unix) {
     h.shelved_unix = h.clock_unix = now_unix;
     /* the lowest TANK n no tank wears (a count repeats a name once a tank is removed) */
     for (unsigned n = 2; n < 1024; n++) {
-        snprintf(h.name, sizeof h.name, "TANK %u", n);
+        snprintf(h.name, sizeof h.name, SHELF_NAME_NTH, n);
         bool used = !strcmp(s_now.name, h.name);
         for (int i = 0; i < s_n && !used; i++) used = !strcmp(s_t[i].h.name, h.name);
         if (!used) break;
@@ -379,8 +379,8 @@ bool shelf_rename(int i, const char *name) {
         memcpy(nm, ln[0], a); nm[a] = '\n'; memcpy(nm + a + 1, ln[1], b);
     } else if (ln[0][0] || ln[1][0]) memcpy(nm, ln[0][0] ? ln[0] : ln[1], strlen(ln[0][0] ? ln[0] : ln[1]));   /* (one line: up to 15, an old name) */
     else {                                                  /* its place's TANK n - or, when a MOVE left that on another tank, the lowest n none wears */
-        snprintf(nm, sizeof nm, "TANK %u", (unsigned)h.pos + 1);
-        for (unsigned n = 2; name_worn(nm, h.id) && n < 1024; n++) snprintf(nm, sizeof nm, "TANK %u", n);
+        snprintf(nm, sizeof nm, SHELF_NAME_NTH, (unsigned)h.pos + 1);
+        for (unsigned n = 2; name_worn(nm, h.id) && n < 1024; n++) snprintf(nm, sizeof nm, SHELF_NAME_NTH, n);
     }
     (void)nl;
     if (!memcmp(nm, h.name, sizeof nm)) return true;
@@ -449,7 +449,7 @@ float shelf_lived_h(void) { return s_lived_h; }
 #if PT_NET   /* (the name on its fish's passports: the networked bin's, version.h PT_NET) */
 void shelf_keeper_name(char *out) {
     unsigned n; char more;
-    if (!s_now.name[0] || !strcmp(s_now.name, "MY TANK") || sscanf(s_now.name, "TANK %u%c", &n, &more) == 1) { out[0] = 0; return; }
+    if (!s_now.name[0] || !strcmp(s_now.name, SHELF_NAME_FIRST) || sscanf(s_now.name, WORLD_STR("TANK %u%c", "DESERT %u%c"), &n, &more) == 1) { out[0] = 0; return; }
     passport_clean_tank_name(out, s_now.name);
 }
 #endif

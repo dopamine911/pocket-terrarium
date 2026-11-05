@@ -39,6 +39,16 @@ PAL = {
     "g": 0xa6d68e, "G": 0x63a85e, "v": 0x3a6e44, "p": 0xf08ca8,
     # the desert rose (gypsum): a glint, highlight, light, mid, shadow, the gaps between the blades
     "0": 0xfff2e2, "1": 0xf6dcb8, "2": 0xe9b98c, "3": 0xcf9466, "4": 0x9a6040, "5": 0x6a3c26,
+    # a cast skin: papery, pale
+    "e": 0xf4efe4, "h": 0xd6ccb8, "i": 0xa89c84,
+    # mist
+    "f": 0xc4ecf6, "F": 0xeefcff,
+    # sphagnum moss: pale green-yellow strands, a wet sheen
+    "j": 0xdce890, "J": 0xb4cc5a, "K": 0x7e9c3a, "V": 0x4e6a28, "X": 0xf0fcff,
+    # metal and plastic: the lamp's dome, the farm's tub
+    "M": 0xd0d6dc, "P": 0x8c96a0, "U": 0x525a64,
+    # a mealworm: yellow-brown bands, the head dark
+    "y": 0xe8bc52, "a": 0xb8862c, "d": 0x7a5418,
 }
 
 
@@ -607,6 +617,203 @@ def my_tanks():
     return im
 
 
+# ---- the terrarium's own badges and shop items (no aquarium original) ----
+def shed(rows, seed=0):
+    """a gecko's cast skin: its outline in papery tan, the inside pale and patchy, the eye holes empty"""
+    solid = {(i, j) for j, r in enumerate(rows) for i, c in enumerate(r) if c != "."}
+    out = []
+    for j, r in enumerate(rows):
+        s = ""
+        for i in range(max(len(q) for q in rows)):
+            c = r[i] if i < len(r) else "."
+            if c in ".EW":
+                s += "."
+            elif any((i + a, j + b) not in solid for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                s += "i"
+            elif (i * 3 + j * 5 + seed) % 7 in (0, 3):
+                s += "."                # worn through: the skin's thin
+            else:
+                s += "h" if c == "D" else "e"
+        out.append(s)
+    return out
+
+
+def widen(rows, cols):
+    """a character map stretched: each column in cols doubled"""
+    return ["".join(c * (2 if i in cols else 1) for i, c in enumerate(r)) for r in rows]
+
+
+def turtle(x, y, head, length, turn):
+    """a curve from (x, y), heading `head` degrees (0 right, 90 up), bending turn(s) degrees per px: t 0..1 -> (x, y)"""
+    pts, s, step = [(x, y)], 0.0, 0.25
+    while s < length:
+        head += turn(s) * step
+        x += math.cos(math.radians(head)) * step
+        y -= math.sin(math.radians(head)) * step
+        s += step
+        pts.append((x, y))
+    return lambda t: pts[min(len(pts) - 1, int(t * (len(pts) - 1)))]
+
+
+def put_worm(dst, curve, n=80):
+    """a mealworm along curve, tail (t=0) to head (t=1): 2 px thick, banded, the head dark, outlined"""
+    cells, length, prev, samples = {}, 0.0, None, []
+    for k in range(n + 1):
+        x, y = curve(k / n)
+        if prev:
+            length += math.hypot(x - prev[0], y - prev[1])
+        prev = (x, y)
+        samples.append((k / n, x, y, length))
+    for t, x, y, l in samples:
+        (x1, y1), (x2, y2) = curve(max(0, t - 0.01)), curve(min(1, t + 0.01))
+        m = math.hypot(x2 - x1, y2 - y1) or 1
+        nx, ny = -(y2 - y1) / m, (x2 - x1) / m
+        c = "d" if l > length - 1.5 else "y" if int(l / 1.5) % 2 == 0 else "a"
+        for px, py in ((x, y), (x + nx, y + ny)):
+            cells[(round(px), round(py))] = c
+    x0, y0 = min(p[0] for p in cells), min(p[1] for p in cells)
+    rows = [["."] * (max(p[0] for p in cells) - x0 + 1) for _ in range(max(p[1] for p in cells) - y0 + 1)]
+    for (x, y), c in cells.items():
+        rows[y - y0][x - x0] = c
+    put(dst, sprite(["".join(r) for r in rows]), x0 - 1, y0 - 1)
+
+
+GECKO_ADULT = widen(GECKO, {6, 12, 16, 19})     # 30 x 10: the walker grown long and heavy
+DOME = [                        # 22 x 12: the basking lamp's reflector, its cord, the dark lip under it
+    "..........UU..........",
+    "..........UU..........",
+    "........MMPPPP........",
+    ".....MMMMMPPPPPPP.....",
+    "...MWWMMMMPPPPPPPPU...",
+    "..MWMMMMMMPPPPPPPPUU..",
+    ".MWMMMMMMPPPPPPPPPUUU.",
+    ".MMMMMMMPPPPPPPPPPUUU.",
+    "MMMMMMMMPPPPPPPPPPUUUU",
+    "MMMMMMMPPPPPPPPPPUUUUU",
+    "MWWWWMMMMMMMPPPPPPPPPU",
+    ".UUUUqqqqqqqqqqqqUUUU.",
+]
+BULB = [                        # 8 x 6: the bulb, glowing
+    "..llll..",
+    ".lwwwlL.",
+    "lwwwwlLL",
+    "lwwllLLo",
+    ".lLLLLo.",
+    "..LLoo..",
+]
+TUB = [                         # 26 x 10: a plastic tub, its rim
+    "WMMMMMMMMMMMMMMMMMMMMMMMMP",
+    "PPPPPPPPPPPPPPPPPPPPPPPPPU",
+    ".MWMMMMMMMMMMMMMMMMMMMMPU.",
+    ".MWMMMMMMMMMMMMMMMMMMMMPU.",
+    ".MWMMMMMMMMMMMMMMMMMMMMPU.",
+    "..MWMMMMMMMMMMMMMMMMMMPU..",
+    "..MWMMMMMMMMMMMMMMMMMMPU..",
+    "..MWMMMMMMMMMMMMMMMMMMPU..",
+    "..MMMMMMMMMMMMMMMMMMMMPU..",
+    "...PPPPPPPPPPPPPPPPPPUU...",
+]
+BRAN = [                        # 28 x 4: the bran heaped over the rim
+    "......nnnnnn.......nnnn.....",
+    "..nnnnNNnnnnnnn.nnnnNNnnnn..",
+    ".nNNmNNNNnNNmNNNNNNmNNNNmNn.",
+    "nNNNNNNmNNNNNNNNmNNNNNNNNNNn",
+]
+
+
+def first_shed():                       # a clean shed: the bright gecko and its cast skin
+    im = canvas()
+    put(im, sprite(tilt(shed(GECKO), -0.12), outline=False), 1, 1)
+    put(im, sprite(GECKO), 3, 19)
+    put(im, sprite(SPARKLE, outline=False), 27, 12)
+    put(im, sprite(["w"], outline=False), 24, 17)
+    return im
+
+
+def shed_helped():                      # a stuck shed fixed: the mister's fine spray over a gecko
+    im = canvas()
+    put(im, sprite(GECKO_SMALL), 1, 22)
+    put(im, crop("tool_mister", (3, 2, 22, 23)), 13, 0)       # the bottle, its nozzle to the left
+    drops = ((11, 3), (10, 6), (12, 7), (8, 5), (7, 9), (10, 10), (5, 8), (4, 12), (8, 13), (11, 13),
+             (3, 15), (6, 16), (9, 17), (2, 19), (5, 20), (12, 16), (1, 13), (7, 19))
+    for k, (x, y) in enumerate(drops):
+        put(im, sprite(["F" if k % 3 == 0 else "f"], outline=False), x, y)
+    return im
+
+
+def clean_run():                        # three clean sheds in a row
+    im = canvas()
+    skin = sprite(shed(GECKO_SMALL), outline=False)
+    put(im, skin, 1, 22)
+    put(im, skin, 8, 13)
+    put(im, skin, 15, 4)
+    put(im, sprite(SPARKLE, outline=False), 3, 3)
+    put(im, sprite(["w"], outline=False), 9, 6)
+    return im
+
+
+def first_adult():                      # grown: a big spotted adult up on its rock
+    im = canvas()
+    put(im, sprite(ROCK), 5, 22)
+    put(im, sprite(GECKO_ADULT), 0, 12)
+    return im
+
+
+def moss():                             # sphagnum: a damp clump of pale strands, starry heads, a wet sheen
+    w, h = 30, 17
+    rows = []
+    for y in range(h):
+        row = ""
+        for x in range(w):
+            dx, dy = (x + 0.5 - 15) / 14.5, (y + 0.5 - h) / (h - 0.5)
+            if dx * dx + dy * dy > 1 + 0.08 * math.sin(x * 1.3) + 0.05 * math.sin(x * 2.9 + 1):
+                row += "."
+                continue
+            s = (x + 2.2 * math.sin(y * 0.8 + x * 0.35)) % 4      # the strands, wavering
+            c = "K" if s < 1 else "j" if s < 2 else "J"
+            depth = y / h + (x - 15) / 60
+            if depth > 0.7:
+                c = {"j": "J", "J": "K", "K": "V"}[c]
+            elif depth < 0.3 and c == "J":
+                c = "j"
+            row += c
+        rows.append(row)
+    im = canvas()
+    put(im, sprite(rows), 0, 12)
+    for x, y in ((6, 17), (12, 14), (19, 14), (25, 17), (10, 21), (17, 19)):
+        put(im, sprite([".j.", "jXj", ".j."], outline=False), x, y)
+    for x, y in ((8, 16), (9, 16), (14, 15), (15, 15), (21, 15)):
+        put(im, sprite(["X"], outline=False), x, y)
+    for strand in (((3, 17), (2, 16), (1, 15)), ((8, 14), (7, 13), (7, 12)), ((14, 12), (14, 11), (15, 10)),
+                   ((21, 12), (22, 11), (22, 10)), ((27, 15), (28, 14), (29, 13))):
+        for x, y in strand:
+            put(im, sprite(["J"], outline=False), x, y)
+    for x, y in ((1, 29), (30, 28)):    # drips
+        put(im, sprite(["f"]), x, y)
+    return im
+
+
+def bulb():                             # a basking bulb: the dome reflector, the bulb lit, warm rays
+    im = canvas()
+    for ray in (((15, 23), (15, 31)), ((16, 23), (16, 31)), ((12, 22), (8, 30)), ((19, 22), (23, 30)),
+                ((10, 20), (4, 26)), ((21, 20), (27, 26))):
+        line(im, list(ray), "L")
+    for ray in (((13, 26), (11, 31)), ((18, 26), (20, 31)), ((8, 19), (3, 21)), ((23, 19), (28, 21))):
+        line(im, list(ray), "o")
+    put(im, sprite(BULB), 11, 14)
+    put(im, sprite(DOME), 4, 1)
+    return im
+
+
+def farm():                             # a mealworm farm: a tub of bran, the worms curling out
+    im = canvas()
+    put_worm(im, turtle(6, 14, 95, 15, lambda s: 0 if s < 6 else 21))
+    put_worm(im, turtle(24, 14, 85, 14, lambda s: 0 if s < 5 else -24))
+    put_worm(im, turtle(15, 14, 90, 9, lambda s: 0 if s < 4 else 30))
+    put(im, sprite(BRAN), 1, 12)
+    put(im, sprite(TUB), 2, 17)
+    return im
+
 
 ICONS_TERR = {
     "ms_first_meal": first_meal,
@@ -634,6 +841,17 @@ ICONS_TERR = {
     "foot_my_tanks": my_tanks,
 }
 
+# the terrarium's own: no aquarium original to size against, so each carries its size
+ICONS_TERR_ONLY = {
+    "ms_first_shed": (first_shed, 32),
+    "ms_shed_helped": (shed_helped, 32),
+    "ms_clean_run": (clean_run, 32),
+    "ms_first_adult": (first_adult, 32),
+    "shop_moss": (moss, 32),
+    "shop_bulb": (bulb, 32),
+    "shop_farm": (farm, 32),
+}
+
 
 def main():
     for name, draw in ICONS_TERR.items():
@@ -641,6 +859,12 @@ def main():
         im = draw()
         if im.size != orig.size:
             raise SystemExit(f"{name}_terr: {im.size} but the original is {orig.size}")
+        im.save(os.path.join(ICONS, name + "_terr.png"))
+        print(f"  {name}_terr.png")
+    for name, (draw, size) in ICONS_TERR_ONLY.items():
+        im = draw()
+        if im.size != (size, size):
+            raise SystemExit(f"{name}_terr: {im.size} but it should be {size}x{size}")
         im.save(os.path.join(ICONS, name + "_terr.png"))
         print(f"  {name}_terr.png")
 

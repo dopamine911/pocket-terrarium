@@ -6022,7 +6022,7 @@ int render_debug_piece_grass(int item, int *bands, int *fines, void *(*alloc)(si
 #define TS_PATCH_FRAMES 3               /* a moisture step's box, copied into this many frames primed with the scene as it was (the
                                            platform's two buffers and one in flight) */
 typedef struct { short x0, y0, x1, y1; } ts_rect_t;
-typedef struct { bool ok; uint8_t lit, hab, moist[HABITAT_HIDES_MAX]; } ts_key_t;
+typedef struct { bool ok; uint8_t lit, hab, bulb, moist[HABITAT_HIDES_MAX]; } ts_key_t;   /* (bulb: the shop's BASKING BULB, its wider pool) */
 static uint16_t *g_ts_scene0, *g_ts_spare;      /* the platform's scene cache, the second buffer (render_set_scene_spare) */
 static bool      g_ts_spare_own, g_ts_swapped;  /* (the sim's own spare); the spare is the one shown (g_scene) */
 static ts_key_t  g_ts_show, g_ts_other;         /* what the scene shown holds, and the other buffer (whole) */
@@ -6065,10 +6065,19 @@ static void ts_swap(void) {
     g_scene_epoch++;
 }
 static inline bool ts_eq(const ts_key_t *a, const ts_key_t *b) { return a->ok && b->ok && !memcmp(a, b, sizeof *a); }
-static inline bool ts_light_eq(const ts_key_t *a, const ts_key_t *b) { return a->ok && b->ok && a->lit == b->lit && a->hab == b->hab; }
+static inline bool ts_light_eq(const ts_key_t *a, const ts_key_t *b) { return a->ok && b->ok && a->lit == b->lit && a->hab == b->hab && a->bulb == b->bulb; }
+/* the habitat as the scene draws it: the tank's, its lamp's pool SD_BULB_R_X as wide with the shop's BASKING BULB - the
+   engine's own number (tank.c lamp_x: the warmth the lizards feel) - so the pool drawn is the pool felt; the key's bulb
+   bakes the scene again once one is bought */
+static habitat_t g_ts_hab;
+static const habitat_t *ts_habitat(const tank_t *t) {
+    g_ts_hab = *tank_habitat(t);
+    if (t->sd_unlocks & SD_ITEM_BULB) g_ts_hab.bask_r_px *= SD_BULB_R_X;
+    return &g_ts_hab;
+}
 static ts_key_t ts_want(const tank_t *t, const habitat_t *h) {
     ts_key_t k; memset(&k, 0, sizeof k);
-    k.ok = true; k.lit = !t->night; k.hab = h->id;
+    k.ok = true; k.lit = !t->night; k.hab = h->id; k.bulb = (t->sd_unlocks & SD_ITEM_BULB) != 0;
     for (int i = 0; i < h->n_hides && i < HABITAT_HIDES_MAX; i++)   /* (only a humid hide shows its moisture) */
         k.moist[i] = h->hides[i].kind == HIDE_HUMID ? (uint8_t)scene_desert_moist_step(t->moist[i]) : 0;
     return k;
@@ -6098,7 +6107,9 @@ static void ts_begin(const tank_t *t, const ts_key_t *k) {
     float m[HABITAT_HIDES_MAX];
     for (int i = 0; i < HABITAT_HIDES_MAX; i++) m[i] = k->moist[i] / 8.0f;
     const glass_t g = glass_here();
-    scene_desert_begin(&g, tank_habitat(t), k->lit, m, k->lit ? 1.0f : 0.45f, g_vig_filled ? g_vig : NULL);
+    static habitat_t hb; hb = *tank_habitat(t);                       /* (the key's pool: a bake in flight keeps the light it began with) */
+    if (k->bulb) hb.bask_r_px *= SD_BULB_R_X;
+    scene_desert_begin(&g, &hb, k->lit, m, k->lit ? 1.0f : 0.45f, g_vig_filled ? g_vig : NULL);
     g_ts_ctx = *k; g_ts_ctx_n = scene_desert_begun();
 }
 /* rows of scene k into buf from y0 - until the budget (the clock's, or the rows') is spent, at least one - the next row */
@@ -6137,7 +6148,8 @@ static bool ts_moist(const tank_t *t, uint16_t *buf, const ts_key_t *from, const
 static void ts_scene(const tank_t *t, const habitat_t *h, bool tick) {
     const ts_key_t want = ts_want(t, h);
     ts_vig();
-    if (!g_ts_show.ok || g_ts_show.hab != want.hab) {                 /* the first scene: whole, now */
+    if (!g_ts_show.ok || g_ts_show.hab != want.hab || g_ts_show.bulb != want.bulb) {   /* the first scene - or the BASKING BULB just bought, its
+                                                                          wider pool on both lights: whole, now (once; the other light again behind it) */
         ts_rows(t, g_scene, &want, 0, INT64_MAX, TANK_H);
         g_ts_show = want; g_ts_other.ok = g_ts_job.ok = false; g_scene_epoch++;
         return;
@@ -6325,7 +6337,7 @@ static void ts_vignette(ctx_t *c, const ts_rect_t *r, int n) {
 }
 static double g_ts_clock = -1; static int g_ts_left = 1;   /* the tank clock last drawn, and its builds left (render_terrarium) */
 static void render_terrarium(const tank_t *t, uint16_t *fb, int stride) {
-    const habitat_t *h = tank_habitat(t);
+    const habitat_t *h = ts_habitat(t);                                /* (the bulb's wider pool, if bought) */
     g_keep_on = false; g_fbg_on = g_fbg_used = false; g_bedm_on = false;
     int64_t p0 = PROF_MARK();
     const bool tick = t->clock != g_ts_clock;                         /* (a new tank tick: the bake's slice and a body build are its) */
@@ -8412,12 +8424,12 @@ typedef struct { uint32_t bit; const icon_t *icon; } badge_t;
 static const badge_t FISH_BADGES[6] = {
     { MS_FIRST_MEAL_FROM_YOU, &icon_ms_first_meal_terr },  { MS_FIRST_HOLD_APPROACH, &icon_ms_first_hold_approach_terr },
     { MS_FIRST_CATCH, &icon_ms_first_feeding_terr },       { MS_FIRST_BUBBLES, &icon_ms_first_bubbles_terr },   /* crickets; a bask */
-    { MS_FIRST_SHED, &icon_ms_tank_changed_someone_terr }, { MS_FIRST_DART, &icon_ms_first_dart_terr },         /* the shed skin; a dig */
+    { MS_FIRST_SHED, &icon_ms_first_shed_terr },           { MS_FIRST_DART, &icon_ms_first_dart_terr },         /* the shed skin; a dig */
 };
 #define TANK_BADGE_N 8
 static const badge_t TANK_BADGES[TANK_BADGE_N] = {
-    { TMS_FIRST_FULL_NIGHT, &icon_ms_first_quiet_night_terr }, { TMS_SHED_HELPED, &icon_ms_first_seagrass_terr },
-    { TMS_CLEAN_RUN, &icon_ms_first_follow_terr },          { TMS_FIRST_ADULT, &icon_ms_first_meal_terr },
+    { TMS_FIRST_FULL_NIGHT, &icon_ms_first_quiet_night_terr }, { TMS_SHED_HELPED, &icon_ms_shed_helped_terr },     /* the mister on a gecko */
+    { TMS_CLEAN_RUN, &icon_ms_clean_run_terr },             { TMS_FIRST_ADULT, &icon_ms_first_adult_terr },       /* three skins; a big one */
     { TMS_FIRST_PLAY_SESSION, &icon_ms_first_play_session_terr }, { TMS_FIRST_CLEANING, &icon_ms_first_glass_cleaning_terr },
     { TMS_CHANGED_SOMEONE, &icon_ms_tank_changed_someone_terr }, { TMS_FIRST_SALE, &icon_ms_first_sale_terr },   /* (once earned) */
 };
@@ -8909,7 +8921,7 @@ static const icon_t *fry_req_icon(int kind) {
     case FRY_REQ_GRASS:  return &icon_ms_first_trimming;
     case FRY_REQ_GLASS:  return WORLD_ICON(icon_ms_first_glass_cleaning);
 #if PT_TERRARIUM
-    case FRY_REQ_SHED:   return &icon_ms_tank_changed_someone_terr;
+    case FRY_REQ_SHED:   return &icon_ms_first_shed_terr;      /* (the clean-shed badge's own art) */
 #endif
     default:             return NULL;
     }
@@ -9859,9 +9871,9 @@ static double g_shp_open_clock;      /* the tank clock when a row opened its mod
 static bool shp_fresh(const tank_t *t) { double d = t->clock - g_shp_open_clock; return d >= 0 && d < MSP_SELL_WAIT_S; }
 static const icon_t *shop_icon(int item) {
 #if PT_TERRARIUM   /* the terrarium's own items (progression.h SD_TERR_FIRST): the moss for the humid hide, the basking bulb, the worm farm */
-    if (item == SD_TERR_FIRST) return &icon_ms_first_seagrass_terr;
-    if (item == SD_TERR_FIRST + 1) return &icon_ms_first_bubbles_terr;
-    if (item >= SD_TERR_FIRST + 2) return &icon_ms_first_meal_terr;
+    if (item == SD_TERR_FIRST) return &icon_shop_moss_terr;
+    if (item == SD_TERR_FIRST + 1) return &icon_shop_bulb_terr;
+    if (item >= SD_TERR_FIRST + 2) return &icon_shop_farm_terr;
 #endif
     return item == 0 ? &icon_shop_plant : item == 1 ? &icon_shop_snail : item == 2 ? &icon_shop_castle : item == 3 ? &icon_shop_coral : item == 4 ? &icon_shop_cluster : item == 5 ? &icon_shop_shrimp : item == 6 ? &icon_shop_urchin : item == 7 ? &icon_shop_seahorse : item == 8 ? &icon_shop_pumpkin : item == 9 ? &icon_shop_volcano : &icon_shop_crab;
 }
@@ -10833,7 +10845,7 @@ void render_battery_warning(uint16_t *fb, int stride, int cell_mah, int charge_m
     }
     int y = SET_TITLE_Y + 42;
     text_centre(&c, y, 2, 0xffffff, "ONLY FOR A BIGGER BATTERY."); y += 30;
-    snprintf(txt, sizeof txt, "THE TANK WILL CHARGE AT %d MA.", charge_ma);
+    snprintf(txt, sizeof txt, WORLD_STR("THE TANK WILL CHARGE AT %d MA.", "IT WILL CHARGE AT %d MA."), charge_ma);
     text_centre(&c, y, 2, MSP_TEAL, txt); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "A SMALLER BATTERY CHARGED THIS"); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "FAST CAN GET HOT, SWELL UP"); y += 22;
@@ -10875,7 +10887,7 @@ void render_touch_intro(uint16_t *fb, int stride, bool own_in_use, const char *m
     rect_fill(&c, -PAGE_X, -PAGE_Y, TANK_W, TANK_H, MSP_INK);
     text_centre(&c, SET_TITLE_Y, 3, 0xffffff, "TOUCH");
     int y = SET_TITLE_Y + 46;
-    text_centre(&c, y, 2, MSP_TEAL, "HOLD THE TANK THE WAY"); y += 22;
+    text_centre(&c, y, 2, MSP_TEAL, WORLD_STR("HOLD THE TANK THE WAY", "HOLD THE TERRARIUM THE WAY")); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "YOU USUALLY DO."); y += 34;
     text_centre(&c, y, 2, MSP_TEAL, "NINE CROSSES COME UP."); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "TAP THE MIDDLE OF EACH ONE.");
@@ -11215,9 +11227,13 @@ static void sh_lock_btn(ctx_t *c, int x, int y, bool locked) {
     else        button(c, x, y, SH_LOCK_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, "", 2);
     sh_padlock(c, x + SH_LOCK_W / 2, y + MSP_CLOSE_H / 2 + 1, locked, locked ? MSP_INK : MSP_TEAL, locked ? MSP_TEAL : 0x1c2f36);
 }
+/* MY TANKS's title: the terrarium's is longer - in the round glass's narrow cap, beside the padlock, it is drawn a size down */
+#define SH_TITLE   WORLD_STR("MY TANKS", "MY TERRARIUMS")
+#define SH_TITLE_S (PT_TERRARIUM && PAGE_BOWL ? 2 : 3)
+#define SH_TITLE_DY (SH_TITLE_S == 2 ? 4 : 0)
 static void sh_lock_xy(int *x, int *y) {                   /* by the title: at the shelves' right edge, or beside the title on the round glass and the watch */
 #if PAGE_BOWL || defined(TANK_WATCH)
-    *x = (TANK_W - text_w("MY TANKS", 3) - 14 - SH_LOCK_W) / 2 + text_w("MY TANKS", 3) + 14;   /* (the title and the button centered as one group) */
+    *x = (TANK_W - text_w(SH_TITLE, SH_TITLE_S) - 14 - SH_LOCK_W) / 2 + text_w(SH_TITLE, SH_TITLE_S) + 14;   /* (the title and the button centered as one group) */
 #else
     *x = SH_X0 + SH_ROW_W - SH_LOCK_W;
 #endif
@@ -11253,9 +11269,9 @@ void render_shelf(uint16_t *fb, int stride, const shelf_slot_t slot[8], int page
         draw_text(&c, (TANK_W - text_w(t, 2)) / 2, SH_TITLE_Y + 4, 2, 0xffffff, t);
     } else {
 #if PAGE_BOWL || defined(TANK_WATCH)
-    draw_text(&c, (TANK_W - text_w("MY TANKS", 3) - 14 - SH_LOCK_W) / 2, SH_TITLE_Y, 3, 0xffffff, "MY TANKS");   /* (beside the padlock) */
+    draw_text(&c, (TANK_W - text_w(SH_TITLE, SH_TITLE_S) - 14 - SH_LOCK_W) / 2, SH_TITLE_Y + SH_TITLE_DY, SH_TITLE_S, 0xffffff, SH_TITLE);   /* (beside the padlock) */
 #else
-    draw_text(&c, (TANK_W - text_w("MY TANKS", 3)) / 2, SH_TITLE_Y, 3, 0xffffff, "MY TANKS");
+    draw_text(&c, (TANK_W - text_w(SH_TITLE, SH_TITLE_S)) / 2, SH_TITLE_Y + SH_TITLE_DY, SH_TITLE_S, 0xffffff, SH_TITLE);
 #endif
     }
     for (int row = 0; row < 2; row++)
@@ -11499,7 +11515,7 @@ void render_shelf_rename(uint16_t *fb, int stride, const shelf_slot_t *s, const 
             for (int x = 0; x < TANK_W; x++) px565_blend(&c, x, y, 0, 244);   /* (near black: the shelves only a hint behind) */
     }
     if (!(part & 2)) return;
-    draw_text(&c, (TANK_W - text_w("RENAME THIS TANK", 2)) / 2, NK_PLATE_Y - 26, 2, 0xffffff, "RENAME THIS TANK");
+    { const char *ti = WORLD_STR("RENAME THIS TANK", "RENAME THIS TERRARIUM"); draw_text(&c, (TANK_W - text_w(ti, 2)) / 2, NK_PLATE_Y - 26, 2, 0xffffff, ti); }
     rect_fill(&c, NK_PX0, NK_PLATE_Y, NK_PW, NK_PH, SH_BRASS); rect_edge(&c, NK_PX0, NK_PLATE_Y, NK_PW, NK_PH, 0x7a6435);
     for (int k = 0; k < 2; k++) {
         int ty = NK_PLATE_Y + 9 + k * (NK_LH + 12), tx = NK_PX0 + 12;
@@ -11552,7 +11568,7 @@ void render_shelf_card(uint16_t *fb, int stride, const shelf_slot_t *s, const ch
     if (age_days >= 0) { snprintf(t, sizeof t, "%d DAYS OLD", age_days); draw_text(&c, tx, ty, 2, MSP_TEAL, t); }
     int y = my + 16 + top + 14;                            /* TIME: DORMANT | PAUSED */
     if (glass) {                                           /* (in its place: what the shelf does with it) */
-        const char *l1 = "SWAP IN ANOTHER TANK", *l2 = "TO PUT THIS ONE AWAY";
+        const char *l1 = WORLD_STR("SWAP IN ANOTHER TANK", "SWAP IN ANOTHER TERRARIUM"), *l2 = "TO PUT THIS ONE AWAY";
         draw_text(&c, mx + (SHC_W - text_w(l1, 2)) / 2, y + 4, 2, MSP_QUIET, l1);
         draw_text(&c, mx + (SHC_W - text_w(l2, 2)) / 2, y + 24, 2, MSP_QUIET, l2);
         y += SHC_SEG_H + SHC_NOTE;
@@ -11620,7 +11636,7 @@ void render_shelf_remove(uint16_t *fb, int stride, const shelf_slot_t *s, int re
     draw_text(&c, tx, ty, 2, 0xffffff, nm); ty += 22;
     draw_text(&c, tx, ty, 2, MSP_TEAL, "FROM THE SHELF?");
     int y = my + 16 + top + 14;
-    const char *l1 = "THIS TANK AND ITS FISH", *l2 = "ARE GONE FOR GOOD.";
+    const char *l1 = WORLD_STR("THIS TANK AND ITS FISH", "THIS TERRARIUM AND ITS"), *l2 = WORLD_STR("ARE GONE FOR GOOD.", "LIZARDS ARE GONE FOR GOOD.");
     draw_text(&c, mx + (SHC_W - text_w(l1, 2)) / 2, y, 2, 0xffffff, l1); y += 20;
     draw_text(&c, mx + (SHC_W - text_w(l2, 2)) / 2, y, 2, 0xffffff, l2); y += 20;
     char t[32]; snprintf(t, sizeof t, "+%d FOR ITS PIECES", refund);
@@ -11647,8 +11663,8 @@ void render_shelf_remove(uint16_t *fb, int stride, const shelf_slot_t *s, int re
  * so a board that asks the internet shows one screen whose words change, not two */
 void render_loading(uint16_t *fb, int stride, const char *name, double clock, const char *line) {
     ctx_t c = ctx_frame(fb, stride);
-    for (int y = 0; y < TANK_H; y++) {                     /* deep water, a little lighter at the top */
-        uint32_t col = sh_mix(0x0e3a4c, 0x04121a, y * 256 / TANK_H);
+    for (int y = 0; y < TANK_H; y++) {                     /* deep water, a little lighter at the top (the terrarium's: a desert dusk) */
+        uint32_t col = PT_TERRARIUM ? sh_mix(0x4a3020, 0x140c07, y * 256 / TANK_H) : sh_mix(0x0e3a4c, 0x04121a, y * 256 / TANK_H);
         rect_fill(&c, 0, y, TANK_W, 1, col);
     }
     const int cx = TANK_W / 2, cy = TANK_H / 2 - 24, R = 40;
@@ -11658,17 +11674,18 @@ void render_loading(uint16_t *fb, int stride, const char *name, double clock, co
         int bx = cx + (int)lroundf(cosf(a) * R), by = cy + (int)lroundf(sinf(a) * R);
         int age = (lead - k + 8) % 8;                      /* 0 = the bright one, then its trail */
         int r = age == 0 ? 11 : age == 1 ? 10 : 9;
-        uint32_t rim = age == 0 ? 0xe2f6fa : age == 1 ? 0x9fd8e2 : age == 2 ? 0x5f9fae : 0x2c5a66;
+        uint32_t rim = PT_TERRARIUM ? (age == 0 ? 0xffe6b8 : age == 1 ? 0xe9b98c : age == 2 ? 0xb07e52 : 0x5e3e28)   /* (a sand pebble) */
+                                    : (age == 0 ? 0xe2f6fa : age == 1 ? 0x9fd8e2 : age == 2 ? 0x5f9fae : 0x2c5a66);
         for (int dy = -r; dy <= r; dy++) for (int dx = -r; dx <= r; dx++) {
             int d = dx * dx + dy * dy;
             if (d > r * r) continue;
-            px(&c, bx + dx, by + dy, src_color(d >= (r - 2) * (r - 2) ? rim : sh_mix(rim, 0x0a2a36, 150), 1.0f).v);   /* a bubble: its rim bright */
+            px(&c, bx + dx, by + dy, src_color(d >= (r - 2) * (r - 2) ? rim : sh_mix(rim, PT_TERRARIUM ? 0x2a180c : 0x0a2a36, 150), 1.0f).v);   /* a bubble: its rim bright */
         }
         if (age == 0) rect_fill(&c, bx - 4, by - 4, 2, 2, 0xffffff);         /* (its glint) */
     }
     char nm[24]; snprintf(nm, sizeof nm, "%s", name ? name : ""); for (char *p = nm; *p; p++) if (*p == '\n') *p = ' ';
     draw_text(&c, (TANK_W - text_w(nm, 2)) / 2, cy + R + 26, 2, 0xffffff, nm);
-    if (!line) line = "FILLING THE TANK";
+    if (!line) line = WORLD_STR("FILLING THE TANK", "SETTING UP THE TERRARIUM");
     draw_text(&c, (TANK_W - text_w(line, 2)) / 2, cy + R + 48, 2, MSP_TEAL, line);
 }
 
@@ -11730,7 +11747,7 @@ void render_library(uint16_t *fb, int stride, const library_row_t *row, int n, i
         if (r->experimental) { sh_flask(&c, tx, tagy - 1, MSP_QUIET); draw_text(&c, tx + 10, tagy, 1, MSP_QUIET, "EXPERIMENTAL"); }
         else if (r->installed) draw_text(&c, tx, tagy, 1, MSP_QUIET, "INSTALLED");
         int bx = x1 - bw, by = y + 10;
-        const char *act = r->installed ? "NEW TANK" : "GET";
+        const char *act = r->installed ? WORLD_STR("NEW TANK", "NEW ONE") : "GET";
         if (r->price > wallet) {                           /* not enough yet: an outline with dim words (fill, not hue) */
             rect_edge(&c, bx, by, bw, MSP_CLOSE_H, MSP_DIM);
             draw_text(&c, bx + (bw - text_w(act, 2)) / 2, by + (MSP_CLOSE_H - 14) / 2, 2, MSP_DIM, act);

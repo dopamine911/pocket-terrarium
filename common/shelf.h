@@ -52,6 +52,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "world.h"
+
+/* a tank's name until the keeper gives it one, per world (P5): the tank on the glass at the first boot with shelves, and
+   a new or nameless one's (the lowest n no tank wears). The terrarium's are its habitat's - a plate holds seven letters a
+   line, so DESERT, not TERRARIUM */
+#define SHELF_NAME_FIRST WORLD_STR("MY TANK", "MY DESERT")
+#define SHELF_NAME_NTH   WORLD_STR("TANK %u", "DESERT %u")
 
 #define SHELF_SLOT_SIZE   (24 * 1024)
 #define SHELF_SAVE_OFF    256                     /* the save, in the header's sector */

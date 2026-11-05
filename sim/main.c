@@ -1582,12 +1582,15 @@ static int selftest_shelf_rename(void) {
     #undef RFAIL
 }
 
+/* the shelf's default names in this world (shelf.h SHELF_NAME_FIRST / SHELF_NAME_NTH: MY TANK, TANK n - the terrarium's MY
+   DESERT, DESERT n) */
+static const char *shelf_nth(unsigned n) { static char b[4][16]; static int i; i = (i + 1) & 3; snprintf(b[i], sizeof b[i], SHELF_NAME_NTH, n); return b[i]; }
 static int selftest_shelf(void) {
     int w, h; render_shelf_thumb_size(&w, &h);
     /* 1. the first boot, a new tank, the first swap: the wallet and settings go with it */
     shelf_wipe();
     shelf_reboot();
-    if (shelf_now()->id != 1 || shelf_count() != 0 || strcmp(shelf_now()->name, "MY TANK")) SFAIL("first boot: tank %u '%s', %d shelved", (unsigned)shelf_now()->id, shelf_now()->name, shelf_count());
+    if (shelf_now()->id != 1 || shelf_count() != 0 || strcmp(shelf_now()->name, SHELF_NAME_FIRST)) SFAIL("first boot: tank %u '%s', %d shelved", (unsigned)shelf_now()->id, shelf_now()->name, shelf_count());
     while (tank.n_fish < 5) tank_add_fish(&tank, 0, 1);
     tank.sd_balance = 900; tank_light_choice_set(&tank, 3); tank_screen_set(&tank, true);
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_SNAIL;   /* (pieces for REMOVE to value below - the snail is no piece) */
@@ -1596,7 +1599,7 @@ static int selftest_shelf(void) {
     collection_reset(); kin_learn(0xc0ffeeu, "kelp", 0xffd166, 0.3f, 0.6f);   /* (a visitor's name in tank 1's KIN book) */
 #endif
     int b = shelf_new(0, clock_port_now_unix());
-    if (b != 0 || strcmp(shelf_get(0)->name, "TANK 2") || shelf_get(0)->pos != 1 || shelf_get(0)->save_len) SFAIL("new tank: index %d '%s' at %d, %u bytes", b, shelf_get(0)->name, shelf_get(0)->pos, shelf_get(0)->save_len);
+    if (b != 0 || strcmp(shelf_get(0)->name, shelf_nth(2)) || shelf_get(0)->pos != 1 || shelf_get(0)->save_len) SFAIL("new tank: index %d '%s' at %d, %u bytes", b, shelf_get(0)->name, shelf_get(0)->pos, shelf_get(0)->save_len);
     if (!shelf_put_up(0)) SFAIL("swap to the new tank");
     int lived = shelf_reboot();
     if (lived >= 0) SFAIL("the new tank was not fresh (lived %d h)", lived);
@@ -1615,22 +1618,22 @@ static int selftest_shelf(void) {
     if (!shelf_rename(-1, "REEF") || strcmp(shelf_now()->name, "REEF")) SFAIL("rename the tank on the glass: '%s'", shelf_now()->name);
     shelf_reboot(); a = shelf_index_of(1);
     if (a < 0 || strcmp(shelf_get(a)->name, "SAM'S TANK") || strcmp(shelf_now()->name, "REEF") || !shelf_get(a)->save_len) SFAIL("names after a restart: '%s', '%s'", a >= 0 ? shelf_get(a)->name : "?", shelf_now()->name);
-    if (!shelf_rename(a, "   ") || strcmp(shelf_get(a)->name, "TANK 1")) SFAIL("an empty name: '%s' (want TANK 1)", shelf_get(a)->name);
+    if (!shelf_rename(a, "   ") || strcmp(shelf_get(a)->name, shelf_nth(1))) SFAIL("an empty name: '%s' (want %s)", shelf_get(a)->name, shelf_nth(1));
     {   /* (11-01) an empty name never repeats another tank's: the place's TANK n is worn (a MOVE left it there) - the lowest free one */
-        shelf_rename(-1, "TANK 1");
-        if (!shelf_rename(a, "") || !strcmp(shelf_get(a)->name, "TANK 1") || !strcmp(shelf_get(a)->name, shelf_now()->name)) SFAIL("an empty name repeated another tank's: '%s'", shelf_get(a)->name);
-        shelf_rename(-1, "TANK 2"); }
+        shelf_rename(-1, shelf_nth(1));
+        if (!shelf_rename(a, "") || !strcmp(shelf_get(a)->name, shelf_nth(1)) || !strcmp(shelf_get(a)->name, shelf_now()->name)) SFAIL("an empty name repeated another tank's: '%s'", shelf_get(a)->name);
+        shelf_rename(-1, shelf_nth(2)); }
     if (!shelf_thumb(a, back, sizeof back / 2) || memcmp(back, s_thumb, (size_t)w * h * 2)) SFAIL("the snapshot did not survive a rename");
     if (!shelf_rename(a, " NIGHT \n REEF ") || strcmp(shelf_get(a)->name, "NIGHT\nREEF")) SFAIL("two lines: '%s'", shelf_get(a)->name);
     if (!shelf_rename(a, "\nREEF") || strcmp(shelf_get(a)->name, "REEF")) SFAIL("line 2 alone: '%s'", shelf_get(a)->name);
-    shelf_rename(a, "MY TANK"); shelf_rename(-1, "TANK 2");
+    shelf_rename(a, SHELF_NAME_FIRST); shelf_rename(-1, shelf_nth(2));
 #if PT_NET
     {   /* the name a tank's fish carry next door (passport v2): a keeper's name on one line, never a default one */
         char kn[PASSPORT_TANK_NAME];
-        shelf_rename(-1, "MY TANK"); shelf_keeper_name(kn); if (kn[0]) SFAIL("MY TANK travels as '%s'", kn);
+        shelf_rename(-1, SHELF_NAME_FIRST); shelf_keeper_name(kn); if (kn[0]) SFAIL("%s travels as '%s'", SHELF_NAME_FIRST, kn);
         shelf_rename(-1, "  "); shelf_keeper_name(kn); if (kn[0]) SFAIL("a default %s travels as '%s'", shelf_now()->name, kn);
         shelf_rename(-1, "NIGHT\nREEF"); shelf_keeper_name(kn); if (strcmp(kn, "NIGHT REEF")) SFAIL("NIGHT/REEF travels as '%s'", kn);
-        shelf_rename(-1, "TANK 2"); }
+        shelf_rename(-1, shelf_nth(2)); }
 #endif
     printf("selftest-shelf: RENAME - shelved and on the glass, trimmed, kept over a restart, an empty name its place's, the snapshot kept\n");
     /* 2. the wallet spent here is the wallet there; time on the shelf */
@@ -1748,7 +1751,7 @@ static int selftest_shelf(void) {
         shelf_reboot();
         if (shelf_now()->pos != 6 || shelf_get(shelf_index_of(3))->pos != glass0) SFAIL("move: the trade - glass at %d, tank 3 at %d (want 6, %d)", shelf_now()->pos, shelf_get(shelf_index_of(3))->pos, glass0);
         int t4 = shelf_new(0, clock_port_now_unix()); if (t4 < 0) SFAIL("move: a third tank");
-        if (strcmp(shelf_get(t4)->name, "TANK 4")) SFAIL("new tank after a REMOVE named '%s' beside TANK 2 + TANK 3 (want TANK 4)", shelf_get(t4)->name);   /* (a count named it TANK 3 again: Strato's 1.8, 10-31) */
+        if (strcmp(shelf_get(t4)->name, shelf_nth(4))) SFAIL("new tank after a REMOVE named '%s' beside the 2nd + 3rd (want %s)", shelf_get(t4)->name, shelf_nth(4));   /* (a count named it TANK 3 again: Strato's 1.8, 10-31) */
         int id4 = shelf_get(t4)->id, cuts = 0;
         for (int n = 0; n < 12; n++) {                   /* two shelved tanks trading places, the power cut after n writes */
             int a3 = shelf_index_of(3), a4 = shelf_index_of(id4), p3 = shelf_get(a3)->pos, p4 = shelf_get(a4)->pos;
