@@ -115,20 +115,25 @@ tools it splits in thirds.
 
 ## Milestones
 
+As built (P5, `docs/progression.md` "The terrarium's long game", `--selftest-terr-progress`):
+
 | Badge | Earned |
 |---|---|
-| FIRST SHED | a lizard's first clean shed |
-| HELPING HAND | a stuck shed cleared by a soak |
-| CLEAN RUN | five clean sheds in a row (tank-wide) |
-| FIRST MIST | the keeper's first mister pass (tank-wide) |
+| FIRST CLEAN SHED (a lizard's, MS_FIRST_SHED) | its first shed off clean without sticking |
+| FIRST STUCK SHED FIXED (TMS_SHED_HELPED) | a stuck shed cleared - by the mister's soak or a damp stay |
+| THREE CLEAN SHEDS IN A ROW (TMS_CLEAN_RUN) | CLEAN_RUN_N (3, was drafted as five) sheds in a row off clean, tank-wide; a shed sticking breaks the row |
+| FIRST ADULT (TMS_FIRST_ADULT) | a lizard grown to adult, at its clean growth shed |
+
+Not built: FIRST MIST (the keeper's first mister pass). The hatchling's gates count the lizards' clean sheds too (4 for
+the first).
 
 ## Saved
 
-Per lizard: shed state, seconds left in it, damp seconds accrued, whether it is
-a growth shed, clean-shed count. Per terrarium: each humid hide's moisture, the
-clean-run counter. P2a writes all of it but the clean-run counter (a P5 milestone) in the save's packs tail
-(`progression.c`, SAVE LAYOUT LOCK: 1956..2095; P2c appended the mealworm dish at 2096), with the species' and the
-habitat's ids and each lizard's body temperature; P5's new format keeps the same fields.
+Per lizard: shed state, seconds left in it, damp seconds accrued, whether it is a growth shed, clean-shed count. Per
+terrarium: each humid hide's moisture, the clean-run counter. P2a writes all of it but the clean-run counter in the
+save's packs tail (`progression.c`, SAVE LAYOUT LOCK: 1956..2095; P2c appended the mealworm dish at 2096), with the
+species' and the habitat's ids and each lizard's body temperature; P5 appended the clean run at 2097 (and the mealworm
+farm's dish at 2098).
 
 ## Sand dollars (P2c)
 

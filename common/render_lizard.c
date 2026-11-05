@@ -242,13 +242,25 @@ bool   lizard_last_box(int *x0, int *y0, int *x1, int *y1) {
     return true;
 }
 
-const morph_t *lizard_morph_of(const species_t *sp, const fish_t *f) {
-    /* LOOK_COLORS order: teal, coral, green, lavender, yellow, pink, blue, silver, charcoal -> the gecko's NORMAL 0,
-       TANGERINE 1, ALBINO 2, BLIZZARD 3, MACK SNOW 4 (species/gecko.c) */
-    static const uint8_t BY_BODY[LOOK_N] = { 0, 1, 0, 4, 0, 2, 3, 3, 4 };
-    if (!sp || !sp->morphs || !sp->n_morphs) return NULL;
+/* LOOK_COLORS order: teal, coral, green, lavender, yellow, pink, blue, silver, charcoal -> the gecko's NORMAL 0,
+   TANGERINE 1, ALBINO 2, BLIZZARD 3, MACK SNOW 4 (species/gecko.c) */
+static const uint8_t BY_BODY[LOOK_N] = { 0, 1, 0, 4, 0, 2, 3, 3, 4 };
+int lizard_morph_index(const species_t *sp, const fish_t *f) {
+    if (!sp || !sp->morphs || !sp->n_morphs) return -1;
     const int g = tank_gene(f, GENE_BODY);
-    return &sp->morphs[BY_BODY[g < 0 || g >= LOOK_N ? 0 : g] % sp->n_morphs];
+    return BY_BODY[g < 0 || g >= LOOK_N ? 0 : g] % sp->n_morphs;
+}
+const morph_t *lizard_morph_of(const species_t *sp, const fish_t *f) {
+    const int m = lizard_morph_index(sp, f);
+    return m < 0 ? NULL : &sp->morphs[m];
+}
+int lizard_morph_body(const species_t *sp, int m) {
+    static const uint8_t PICK[5] = { 4, 1, 5, 7, 3 };   /* NORMAL yellow, TANGERINE coral, ALBINO pink, BLIZZARD silver, MACK SNOW lavender */
+    const int n = sp && sp->n_morphs ? sp->n_morphs : 1;
+    if (m < 0 || m >= n) m = 0;
+    if (m < 5 && BY_BODY[PICK[m]] % n == m) return PICK[m];
+    for (int g = 0; g < LOOK_N; g++) if (BY_BODY[g] % n == m) return g;   /* (a pack of its own morphs: the first colour that shows it) */
+    return 0;
 }
 /* (the walk's stride, species.h lizard_stride_px: lz_legs plants a foot LIZARD_DUTY of the cycle and sweeps it back
    LIZARD_STRIDE x the limb meanwhile) */

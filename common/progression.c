@@ -26,7 +26,30 @@
 #define STARVE_TRUST_FLOOR 2.0f
 #define SAVE_HEARTBEAT_S 600.0f
 #define SAVE_MIN_GAP_S   30.0f
+#define FARM_NIGHT_S     3600.0f   /* the terrarium's MEALWORM FARM fills the dish after a sleep this long, as at a light-on (P5) */
 
+#if PT_TERRARIUM
+/* the terrarium's words for the same bits (pocket-terrarium P5, tank.h): a lizard's row is MEAL_FROM_YOU, HOLD_APPROACH,
+   CATCH, BUBBLES (the bask), SHED, DART (the dig); GRASS and FOLLOW are no badge here. Each <= 28 chars (a notice line) */
+const char *const MS_NAMES[MS_FISH_COUNT] = {
+    "arrived", "first meal from you", "came to your hand", "first dig", "first bask",
+    "(inspected)", "(retired)", "(retired)", "(investigated)",
+    "reached juv", "reached adult", "reached elder",
+    "(hid)", "(crossbred)",
+    "first cricket caught", "first clean shed",
+};
+const char *const TMS_NAMES[TMS_COUNT] = {
+    "a pair", "a trio", "a quartet", "a quintet", "a sextet",
+    "first quiet night", "first dig together", "a personality changed", "first feeding",
+    "first trimming", "first glass cleaning", "a school of ten shrimp",
+    "first visit to the reef",
+    "first new morph",
+    "first lizard sold",
+    "first seahorse feeding",
+    "first sand dollar dug up",
+    "first stuck shed fixed", "three clean sheds in a row", "first adult",
+};
+#else
 const char *const MS_NAMES[MS_FISH_COUNT] = {
     "arrived", "first meal from you", "first hold-approach", "first dart", "first bubbles",
     "(inspected)", "(retired)", "(retired)", "first follow",
@@ -43,6 +66,7 @@ const char *const TMS_NAMES[TMS_COUNT] = {
     "first seahorse feeding",            /* 0.3.6 */
     "first sand dollar dug up",          /* 0.3.9: the crab's first find, taken - every find after it pays double */
 };
+#endif
 
 /* the save keeps 644 film cells - the rectangle's 28 x 23 grid, frozen by the
  * layout lock below. A build with another grid (the bowl's 26 x 22) saves its
@@ -283,6 +307,10 @@ typedef struct {
     uint32_t pack_print[N_FISH_MAX];
     /* the mealworm dish's worms (pocket-terrarium P2c: tank.h THE CRICKETS; an older save's zero: an empty dish) */
     uint8_t  dish_worms;
+    /* the terrarium's progress (pocket-terrarium P5; an older save's zeros - and every aquarium's - read: no clean run
+     * yet, the dish's worms the keeper's): clean_run, the sheds off clean in a row tank-wide (TMS_CLEAN_RUN, CLEAN_RUN_N;
+     * held at 255); dish_farm 1 = the dish's worms are the MEALWORM FARM's (tank_t.dish_farm) */
+    uint8_t  clean_run, dish_farm;
     /* never a field: where this build's fields end and a newer build's tail
      * begins (SAVE_FIELDS_END; new fields go above it) */
     uint8_t  newer_tail[];
@@ -410,7 +438,9 @@ SAVE_AT(pack_print, 2072);                                                      
 _Static_assert(sizeof(save_t) >= 2096, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2096 of fields */
 SAVE_AT(dish_worms, 2096);                                                                             /* the mealworm dish, pocket-terrarium P2c */
 _Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2097 of fields, padded to 8 */
-/* (the next field: SAVE_AT(its_name, 2097 or its type's alignment past it);) */
+SAVE_AT(clean_run, 2097); SAVE_AT(dish_farm, 2098);                                                   /* the terrarium's progress, pocket-terrarium P5 */
+_Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2099 of fields, padded to 8 */
+/* (the next field: SAVE_AT(its_name, 2099 or its type's alignment past it);) */
 /* A ROLLBACK keeps the newer build's tail (2026-10-05): a save longer than
  * this build's fields loads its head, and every save writes the bytes past
  * SAVE_FIELDS_END back as they were - so the update back up finds its tail
@@ -433,8 +463,9 @@ _Static_assert(SAVE_FIELDS_END >= 1952 && SAVE_FIELDS_END <= sizeof(save_t), "SA
  * is 3 x ~128 = ~390 entries, plus ~10 for the settings, "bat"/"hist" and
  * the batlog's "bed": under 2/3 of the 630, so GC always has room. Past it,
  * saves can start failing for space, and any nvs_flash_init error makes
- * main.c ERASE the partition. 2104 B today (pocket-terrarium: P2a's packs tail at 1956..2095 and P2c's mealworm
- * dish at 2096 past pocket-tank 0.4's 1956; 2097 of fields padded to 8; ~66 entries a copy): 1896 B of headroom
+ * main.c ERASE the partition. 2104 B today (pocket-terrarium: P2a's packs tail at 1956..2095, P2c's mealworm dish at
+ * 2096 and P5's clean run and farm at 2097..2098 past pocket-tank 0.4's 1956; 2099 of fields padded to 8; ~66 entries a
+ * copy): 1896 B of headroom
  * under the 4000. A rolled-back tank writes the newer build's length instead
  * (SAVE_FIELDS_END).
  * MY TANKS holds the save in a slot of SHELF_SAVE_MAX (3840, shelf.h), under the 4000 the NVS math allows: that is the
@@ -485,6 +516,9 @@ static int fish_held(const tank_t *t) {
     return n;
 }
 int progression_fish_held(const tank_t *t) { return fish_held(t); }
+/* what a keeper can earn or buy up to (progression.h progression_pop_cap): the pack's cap, under THE CAP (POP_CAP) */
+static int pop_cap(const tank_t *t) { const int c = tank_species(t)->pop_cap; return c >= 1 && c <= POP_CAP ? c : POP_CAP; }
+int progression_pop_cap(const tank_t *t) { return pop_cap(t); }
 /* THE CAP's guard (Strato 2026-11-03: at most POP_CAP fish, never more, on every path): a compare at every path that
    adds a fish and once a tick (here and tank_link_tick). The platform's hook says it (the sim fails the running
    selftest, the device logs once); nothing is taken from the keeper here */
@@ -512,6 +546,8 @@ static int32_t s_sale_need;               /* player_feedings the next fry waits 
 static uint16_t s_fry_seed;               /* the fry offer (progression_fry_*): its seed, 0 = none drawn */
 static double   s_fry_age;                /* ... its age in tank seconds (a double, as s_age) */
 static uint8_t  s_fry_sold;               /* ... bit k = fry k bought */
+static uint8_t  s_clean_run;              /* the terrarium's sheds off clean in a row, tank-wide (TMS_CLEAN_RUN; saved) */
+static uint32_t s_ms_last[N_FISH_MAX], s_tms_last;   /* the terrarium's badges last tick: one set in tank.c (a catch, the hand) saves */
 
 static void mark_dirty(void) { if (!s_dirty) { s_dirty = true; s_dirty_since = 0; } }
 bool progression_dirty(void) { return s_dirty; }
@@ -549,6 +585,23 @@ const sd_item_t SD_ITEMS[SD_ITEM_COUNT] = {
     { SD_ITEM_VOLCANO, "VOLCANO",    "A CONE OF ROCK AND LAVA,",    "GLOWING BUBBLES RISE FROM IT", SD_PRICE_VOLCANO },  /* 0.3.9: DonB's bubble volcano (28 chars, as the plant's) */
     { SD_ITEM_CRAB,    "STRAWBERRY CRAB", "DIGS UP SAND DOLLARS,",      "NAPS IN THE CASTLE OR CAVE", SD_PRICE_CRAB },  /* 0.3.9: the strawberry crab (Vulcanite's crab, Strato's strawberry sheets) */
 };
+/* the terrarium's (pocket-terrarium P5): items SD_TERR_FIRST.. - what each does is tank.h's SD_ITEM_MOSS block */
+const sd_item_t SD_TERR_ITEMS[SD_TERR_COUNT] = {
+    { SD_ITEM_MOSS, "SPHAGNUM MOSS", "FOR THE HUMID HIDE: IT",     "STAYS DAMP TWICE AS LONG", SD_PRICE_MOSS },
+    { SD_ITEM_BULB, "BASKING BULB",  "A WIDER POOL OF WARMTH",     "ON THE BASKING ROCK",      SD_PRICE_BULB },
+    { SD_ITEM_FARM, "MEALWORM FARM", "FILLS THE WORM DISH ITSELF", "EVERY MORNING",            SD_PRICE_FARM },
+};
+const sd_item_t *progression_item(int item) {
+    if (item >= 0 && item < SD_ITEM_COUNT) return &SD_ITEMS[item];
+    if (item >= SD_TERR_FIRST && item < SD_TERR_FIRST + SD_TERR_COUNT) return &SD_TERR_ITEMS[item - SD_TERR_FIRST];
+    return NULL;
+}
+/* every bit a save's sd_unlocks may keep in this bin: the fish's eleven, and the terrarium's own in its bin */
+static uint32_t sd_unlock_bits(void) {
+    uint32_t b = (1u << SD_ITEM_COUNT) - 1;
+    if (PT_TERRARIUM) for (int k = 0; k < SD_TERR_COUNT; k++) b |= SD_TERR_ITEMS[k].bit;
+    return b;
+}
 /* the pumpkin's season (0.3.6; Strato 2026-10-17: "it can remain on their
  * board until they upgrade ... whatever release comes after oct 31 will
  * remove the pumpkin"): no date check - SD_PUMPKIN_IN_SHOP says whether
@@ -717,11 +770,16 @@ bool progression_sell_fish(tank_t *t, int fish) {
     return true;
 }
 bool progression_buy(tank_t *t, int item) {
-    if (item < 0 || item >= SD_ITEM_COUNT) return false;
-    const sd_item_t *it = &SD_ITEMS[item];
+    const sd_item_t *it = progression_item(item);
+    if (!it || (item >= SD_TERR_FIRST && !PT_TERRARIUM)) return false;   /* (the terrarium's items: its bin's shop alone) */
     if ((t->sd_unlocks & it->bit) || t->sd_balance < it->price) return false;
     if (it->bit == SD_ITEM_PUMPKIN && !progression_pumpkin_offered(t)) return false;   /* out of season */
     t->sd_balance -= it->price; t->sd_unlocks |= it->bit;
+    if (it->bit == SD_ITEM_MOSS) {                         /* fresh moss goes in wet: the humid hides soaked */
+        const habitat_t *h = tank_habitat(t);
+        for (int k = 0; k < h->n_hides && k < HABITAT_HIDES_MAX; k++) if (h->hides[k].kind == HIDE_HUMID) t->moist[k] = 1.0f;
+    }
+    if (it->bit == SD_ITEM_FARM) tank_dish_farm(t);        /* its first worms at once */
     if (it->bit == SD_ITEM_PLANT) tank_plant_place(t);
     if (it->bit == SD_ITEM_SNAIL) tank_snail_place(t);
     if (it->bit == SD_ITEM_CASTLE) tank_castle_place(t);
@@ -741,16 +799,27 @@ const char *const *progression_sd_earn_lines(void) {
     static char lines[SD_EARN_LINES][30]; static const char *ptr[SD_EARN_LINES + 1]; static bool made;
     if (!made) {
         /* <= 25 chars each: the modal is 336 px wide at scale 2 */
-        snprintf(lines[0], 30, "+%d  EACH FISH YOU FEED", SD_MEAL);
-        snprintf(lines[1], 30, "+%d/%d/%d  A FISH GROWS UP", SD_STAGE_JUV, SD_STAGE_ADULT, SD_STAGE_ELDER);
-        snprintf(lines[2], 30, "+%d  A NEW FRY IS BORN", SD_BIRTH);
-        snprintf(lines[3], 30, "+%d  A FISH FULLY TRUSTS", SD_TRUST);
-        snprintf(lines[4], 30, "+%d  %d ALGAE COLONIES", SD_CHORE, SD_CHORE_EVERY);
-        snprintf(lines[5], 30, "+%d  %d CM OF GRASS CUT", SD_CHORE, SD_TRIM_CM);
-        snprintf(lines[6], 30, "+%d  THE SEAHORSE SNACKS", SD_SNACK);
-        snprintf(lines[7], 30, "+%d/%d  THE CRAB DIGS ONE UP", SD_CRAB_FIND, SD_CRAB_FIND_AGAIN);   /* the first, then every one after (the badge's reward) */
-        for (int i = 0; i < SD_EARN_LINES; i++) ptr[i] = lines[i];
-        ptr[SD_EARN_LINES] = NULL; made = true;
+        int n = 0;
+#if PT_TERRARIUM
+        /* the terrarium's (P5): its meals, stages, sheds, hatchlings, trust and the glass - no grass, seahorse or crab */
+        snprintf(lines[n++], 30, "+%d  EACH LIZARD YOU FEED", SD_MEAL);
+        snprintf(lines[n++], 30, "+%d/%d/%d  A LIZARD GROWS", SD_STAGE_JUV, SD_STAGE_ADULT, SD_STAGE_ELDER);
+        snprintf(lines[n++], 30, "+%d  A CLEAN SHED", SD_SHED_CLEAN);
+        snprintf(lines[n++], 30, "+%d  AN EGG HATCHES", SD_BIRTH);
+        snprintf(lines[n++], 30, "+%d  A LIZARD TRUSTS YOU", SD_TRUST);
+        snprintf(lines[n++], 30, "+%d  %d GLASS SMUDGES", SD_CHORE, SD_CHORE_EVERY);
+#else
+        snprintf(lines[n++], 30, "+%d  EACH FISH YOU FEED", SD_MEAL);
+        snprintf(lines[n++], 30, "+%d/%d/%d  A FISH GROWS UP", SD_STAGE_JUV, SD_STAGE_ADULT, SD_STAGE_ELDER);
+        snprintf(lines[n++], 30, "+%d  A NEW FRY IS BORN", SD_BIRTH);
+        snprintf(lines[n++], 30, "+%d  A FISH FULLY TRUSTS", SD_TRUST);
+        snprintf(lines[n++], 30, "+%d  %d ALGAE COLONIES", SD_CHORE, SD_CHORE_EVERY);
+        snprintf(lines[n++], 30, "+%d  %d CM OF GRASS CUT", SD_CHORE, SD_TRIM_CM);
+        snprintf(lines[n++], 30, "+%d  THE SEAHORSE SNACKS", SD_SNACK);
+        snprintf(lines[n++], 30, "+%d/%d  THE CRAB DIGS ONE UP", SD_CRAB_FIND, SD_CRAB_FIND_AGAIN);   /* the first, then every one after (the badge's reward) */
+#endif
+        for (int i = 0; i < n; i++) ptr[i] = lines[i];
+        ptr[n] = NULL; made = true;
     }
     return ptr;
 }
@@ -793,14 +862,21 @@ static void apply_growth(fish_t *f) {
 /* a shed come off clean (SHED_CLEAN: a damp stay or a soak, tank.c): one more clean shed, the timer restarted for the
  * stage it has now, and a growth shed's stage on (silent, as every stage change; the new skin shows it in P3) - and one
  * that never stuck pays SD_SHED_CLEAN, as a stage reached pays (P2c: the keeper's upkeep in time; one helped off a stuck
- * shed, fish_t.shed_helped, does not) */
+ * shed, fish_t.shed_helped, does not). The badges (P5): one that never stuck is the lizard's first clean shed and one
+ * more in the terrarium's clean run (CLEAN_RUN_N in a row earns TMS_CLEAN_RUN); one helped off is the keeper's first
+ * stuck shed fixed, and the row starts again */
 static void shed_done(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     if (f->shed != SHED_CLEAN) return;
     bool grew = f->shed_growth && stage_for(t, s_age[i]) > f->stage;
     if (grew) f->stage = (stage_t)(f->stage + 1);
     if (f->shed_clean < 65535) f->shed_clean++;
-    if (!f->shed_helped) sd_award(t, SD_SHED_CLEAN);
+    if (!f->shed_helped) {
+        sd_award(t, SD_SHED_CLEAN);
+        set_ms(f, MS_FIRST_SHED);
+        if (s_clean_run < 255) s_clean_run++;
+        if (s_clean_run >= CLEAN_RUN_N) set_tms(t, TMS_CLEAN_RUN);
+    } else { set_tms(t, TMS_SHED_HELPED); s_clean_run = 0; }
     f->shed = SHED_NORMAL; f->shed_growth = false; f->shed_damp = 0; f->shed_helped = false;
     f->shed_s = tank_species(t)->shed_every_s[f->stage & 3];
     mark_dirty();
@@ -831,7 +907,11 @@ static void live_tended(tank_t *t, double tended) {
             if (i == cut && s_age[i] < p->stage_s[t->fish[i].stage]) s_age[i] = p->stage_s[t->fish[i].stage];   /* (exactly there) */
         }
         tank_shed_clock(t, (float)step);
-        for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away) { shed_done(t, i); apply_stage(t, i, false); }
+        for (int i = 0; i < t->n_fish; i++) {
+            if (t->fish[i].away) continue;
+            if (t->fish[i].shed == SHED_STUCK && s_clean_run) { s_clean_run = 0; mark_dirty(); }   /* a shed stuck: the clean run's row broken (P5) */
+            shed_done(t, i); apply_stage(t, i, false);
+        }
         tended -= step;
     } while (tended > 1e-9);
 }
@@ -1004,10 +1084,13 @@ static void do_arrival(tank_t *t) {
     s_spawn_in = -1; t->spawning = false; t->spawn_danced = 0;
     fry_partner_clear(t);
     if (slot < 0) return;
-    int nb = tank_nursery_bed(t);            /* born in the grass it was courted in */
-    if (nb >= 0) {
-        float x0, x1; tank_veg_bed(t, nb, &x0, &x1, NULL, NULL);
-        t->fish[slot].x = (x0 + x1) * 0.5f; t->fish[slot].y = TANK_BOT - 16 - 18;
+    if (PT_TERRARIUM) tank_hatch_place(t, slot);   /* THE HATCHING (P5): in the humid hide, where the egg was */
+    else {
+        int nb = tank_nursery_bed(t);            /* born in the grass it was courted in */
+        if (nb >= 0) {
+            float x0, x1; tank_veg_bed(t, nb, &x0, &x1, NULL, NULL);
+            t->fish[slot].x = (x0 + x1) * 0.5f; t->fish[slot].y = TANK_BOT - 16 - 18;
+        }
     }
     t->fish[slot].ms_bits = cross ? MS_CROSSBRED : 0;
     if (to_home) {                           /* its home's: it waits in a visitor's place until its home says yes (tank_link) */
@@ -1155,7 +1238,9 @@ static const uint32_t FRY_COLORS[9] = { 0x38dcc7, 0xff725c, 0x78d67d, 0xa799ff, 
 #define FRY_BODY_N 8
 static uint32_t fry_hash(uint32_t x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 bool progression_fry_for_sale(const tank_t *t) { return (t->tank_ms_bits & TMS_FIRST_SALE) != 0; }
-bool progression_fry_room_to_buy(const tank_t *t) { return progression_fry_room(t) && s_newborn < 0; }   /* ... and no welcome owed (the shop, 0.3.5) */
+bool progression_fry_room_to_buy(const tank_t *t) {   /* ... and no welcome owed (the shop, 0.3.5); and under the pack's cap (P5) */
+    return progression_fry_room(t) && fish_held(t) < pop_cap(t) && s_newborn < 0;
+}
 int  progression_fry_left(void) { int n = 0; for (int k = 0; k < FRY_OFFER_N; k++) n += !(s_fry_sold >> k & 1); return n; }
 float progression_fry_new_in_s(void) { double s = FRY_OFFER_S - s_fry_age; return s > 0 ? (float)s : 0; }
 void progression_fry_offer(int k, fry_offer_t *o) {
@@ -1206,7 +1291,7 @@ bool progression_buy_fry(tank_t *t, int k) {
     t->sd_paid_fish[slot] = 0;                     /* its stages pay; no birth dollars - it was bought */
     apply_growth(&t->fish[slot]);
     if (t->n_fish <= N_FISH_MAX) set_tms(t, POP_TMS[t->n_fish]);
-    if (fish_held(t) >= POP_CAP) { s_arrival_pending = false; s_spawn_in = -1; t->spawning = false; t->spawn_danced = 0; }   /* the last slot: a staged fry is called off */
+    if (fish_held(t) >= pop_cap(t)) { s_arrival_pending = false; s_spawn_in = -1; t->spawning = false; t->spawn_danced = 0; }   /* the last slot: a staged fry is called off */
     s_newborn = slot;                              /* owed its welcome: the birth flow (setup.c) */
     progression_save(t);
     progression_cap_check(t, "progression_buy_fry");
@@ -1232,6 +1317,32 @@ static int care_gates(const tank_t *t, gate_t g[CARE_GATES_MAX]) {
 #define MEALS(tbl) ((float)((tbl) > s_sale_need ? (tbl) : s_sale_need))
 #define GATE(k, h, nd, m) do { g[n].kind = (k); g[n].have = (h); g[n].need = (nd); g[n].met = (m); \
         g[n].frac = g[n].met ? 1.0f : (nd) > 0 ? (h) / (nd) : 0; if (g[n].frac > 1) g[n].frac = 1; n++; } while (0)
+#if PT_TERRARIUM
+    /* THE TERRARIUM'S GATES (pocket-terrarium P5): the keeper's care of the lizards - every one's trust, meals from the
+       keeper's hand (crickets dropped, worms from the dish the keeper filled: player_feedings) and sheds come off clean,
+       the lizards' together (fish_t.shed_clean: a stuck one the keeper helped off counts) - and from the third on the
+       youngest grown to an adult. No glass and no grass: the egg is laid in the humid hide (THE HATCHING) */
+    int sheds = 0;
+    for (int i = 0; i < t->n_fish; i++) if (!t->fish[i].away) sheds += t->fish[i].shed_clean;
+    switch (t->n_fish) {
+    case 2:
+        GATE(FRY_REQ_TRUST, min_trust, 6.0f, min_trust >= 6.0f);
+        GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(12), t->player_feedings >= MEALS(12));
+        GATE(FRY_REQ_SHED, (float)sheds, 4, sheds >= 4);
+        break;
+    case 3:
+        GATE(FRY_REQ_GROW, age, progression_stage_age(t, STAGE_ADULT), t->fish[last].stage >= STAGE_ADULT);
+        GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(40), t->player_feedings >= MEALS(40));
+        GATE(FRY_REQ_SHED, (float)sheds, 8, sheds >= 8);
+        break;
+    default:
+        GATE(FRY_REQ_GROW, age, progression_stage_age(t, STAGE_ADULT), t->fish[last].stage >= STAGE_ADULT);
+        GATE(FRY_REQ_FEED, (float)t->player_feedings, MEALS(80), t->player_feedings >= MEALS(80));
+        GATE(FRY_REQ_TRUST, min_trust, 7.0f, min_trust >= 7.0f);
+        GATE(FRY_REQ_SHED, (float)sheds, 12, sheds >= 12);
+        break;
+    }
+#else
     switch (t->n_fish) {
     case 2:
         GATE(FRY_REQ_TRUST, min_trust, 6.0f, min_trust >= 6.0f);
@@ -1279,6 +1390,7 @@ static int care_gates(const tank_t *t, gate_t g[CARE_GATES_MAX]) {
             g[n - 1].frac = frac < 0 ? 0 : frac > 1 ? 1 : frac;
         }
     }
+#endif
 #undef GATE
 #undef MEALS
     return n;
@@ -1289,14 +1401,23 @@ static void arrival_conditions(const tank_t *t, int *met, int *total) {
     for (int i = 0; i < *total; i++) *met += g[i].met;
 }
 
-/* how each gate is moved - the words behind the HOW? button */
+/* how each gate is moved - the words behind the HOW? button (the terrarium's own, P5: its tools and its lizards) */
+#if PT_TERRARIUM
+static const char *const TIP_TRUST[]  = { "REST A FINGER ON THE GLASS", "AND KEEP IT STILL. EVERY", "LIZARD EARNS TRUST WHILE", "YOUR HAND RESTS THERE.", "3 QUICK TAPS SCARE THEM.", NULL };
+static const char *const TIP_FEED[]   = { "TAP THE GLASS TO DROP", "CRICKETS. A FEEDING IS A", "MEAL ONCE A LIZARD CATCHES", "ONE. TAP THE DISH TO FILL", "IT WITH MEALWORMS.", NULL };
+static const char *const TIP_HOLD[]   = { "REST A FINGER ON THE GLASS", "FOR A FEW SECONDS. A", "LIZARD THAT TRUSTS YOU", "WALKS OVER AND STAYS.", NULL };
+static const char *const TIP_GROW[]   = { "LIZARDS GROW WITH TIME,", "BUT ONLY AT A CLEAN SHED.", "SLOWER WHILE THEY SLEEP.", NULL };
+static const char *const TIP_CHANGE[] = { "LIZARD PERSONALITIES WILL", "NATURALLY DRIFT AS THEY", "INTERACT WITH THE WORLD.", NULL };
+#else
 static const char *const TIP_TRUST[]  = { "REST A FINGER ON THE GLASS", "AND KEEP IT STILL. EVERY", "FISH EARNS TRUST WHILE IT", "RESTS THERE. 3 QUICK TAPS", "SCARE THEM AND COST TRUST.", NULL };
 static const char *const TIP_FEED[]   = { "TAP THE WATER AT THE TOP", "OF THE TANK TO DROP FOOD.", "A FEEDING COUNTS AS A MEAL", "ONCE A FISH EATS FROM IT.", NULL };
 static const char *const TIP_HOLD[]   = { "REST A FINGER ON THE GLASS", "FOR A FEW SECONDS. A FISH", "THAT TRUSTS YOU SWIMS OVER", "AND STAYS. FEED FIRST: A", "HUNGRY FISH WON'T COME.", NULL };
 static const char *const TIP_GROW[]   = { "FISH GROW WITH TIME,", "SLOWER WHEN THE TANK IS", "IN SLEEP MODE.", NULL };
 static const char *const TIP_CHANGE[] = { "FISH PERSONALITIES WILL", "NATURALLY DRIFT AS THEY", "INTERACT WITH THE WORLD.", NULL };   /* Strato: intentionally vague */
+#endif
 static const char *const TIP_GRASS[]  = { "GRASS REGROWS ON ITS OWN,", "FASTEST WHILE THE TANK", "SLEEPS.", NULL };
 static const char *const TIP_GLASS[]  = { "DRAG A FINGER ACROSS THE", "GLASS TO WIPE IT CLEAN.", "UNLOCKABLE CRITTERS CAN", "HELP KEEP IT CLEAN.", NULL };   /* Strato's words */
+static const char *const TIP_SHED[]   = { "KEEP THE HUMID HIDE DAMP:", "MIST IT WITH THE MISTER.", "A LIZARD THAT SHEDS IN A", "DAMP HIDE SHEDS CLEAN.", NULL };   /* (the terrarium's, P5) */
 const char *const *progression_fry_tip(int kind) {
     switch (kind) {
     case FRY_REQ_TRUST:  return TIP_TRUST;
@@ -1305,15 +1426,16 @@ const char *const *progression_fry_tip(int kind) {
     case FRY_REQ_GROW:   return TIP_GROW;
     case FRY_REQ_CHANGE: return TIP_CHANGE;
     case FRY_REQ_GLASS:  return TIP_GLASS;
+    case FRY_REQ_SHED:   return TIP_SHED;
     default:             return TIP_GRASS;
     }
 }
 
 /* the checklist, in words. No %f: the device's printf may be the nano one. */
-static const char *const STAGE_WORDS[4] = { "A FRY", "A JUVENILE", "AN ADULT", "AN ELDER" };
+static const char *const STAGE_WORDS[4] = { WORLD_STR("A FRY", "A HATCHLING"), "A JUVENILE", "AN ADULT", "AN ELDER" };
 int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *staged) {
     if (staged) *staged = s_arrival_pending;
-    if (fish_held(t) >= POP_CAP || fish_held(t) >= N_FISH_MAX || t->n_fish < 2) return 0;
+    if (fish_held(t) >= pop_cap(t) || fish_held(t) >= N_FISH_MAX || t->n_fish < 2) return 0;
     gate_t g[CARE_GATES_MAX];
     int n = care_gates(t, g);
     for (int i = 0; i < n; i++) {
@@ -1324,15 +1446,15 @@ int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *stag
         switch (g[i].kind) {
         case FRY_REQ_TRUST:
             snprintf(r->title, sizeof r->title, "TRUST");
-            snprintf(r->words, sizeof r->words, "ALL FISH MUST HAVE TRUST");
+            snprintf(r->words, sizeof r->words, WORLD_STR("ALL FISH MUST HAVE TRUST", "EVERY LIZARD NEEDS TRUST"));
             snprintf(r->words2, sizeof r->words2, "OF AT LEAST %d OUT OF 10", need);
-            if (r->met) snprintf(r->progress, sizeof r->progress, "EVERY FISH DOES");
+            if (r->met) snprintf(r->progress, sizeof r->progress, WORLD_STR("EVERY FISH DOES", "EVERY LIZARD DOES"));
             else { int tenths = (int)(g[i].have * 10 + 0.5f);
                    snprintf(r->progress, sizeof r->progress, "LOWEST NOW %d.%d", tenths / 10, tenths % 10); }
             break;
         case FRY_REQ_FEED:
             snprintf(r->title, sizeof r->title, "MEALS");
-            snprintf(r->words, sizeof r->words, "FEED THE FISH AT LEAST");
+            snprintf(r->words, sizeof r->words, WORLD_STR("FEED THE FISH AT LEAST", "FEED THE LIZARDS AT LEAST"));
             snprintf(r->words2, sizeof r->words2, "%d TIMES IN ALL", need);
             if (r->met) snprintf(r->progress, sizeof r->progress, "DONE");
             else snprintf(r->progress, sizeof r->progress, "%d OF %d SO FAR", have, need);
@@ -1340,13 +1462,13 @@ int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *stag
         case FRY_REQ_HOLD:
             snprintf(r->title, sizeof r->title, "HOLD");
             snprintf(r->words, sizeof r->words, "REST A FINGER ON THE GLASS");
-            snprintf(r->words2, sizeof r->words2, "UNTIL A FISH SWIMS TO IT");
+            snprintf(r->words2, sizeof r->words2, WORLD_STR("UNTIL A FISH SWIMS TO IT", "UNTIL A LIZARD WALKS TO IT"));
             snprintf(r->progress, sizeof r->progress, r->met ? "DONE" : "NOT YET");
             break;
         case FRY_REQ_GROW: {
             const fish_t *f = &t->fish[t->n_fish - 1];
             snprintf(r->title, sizeof r->title, "GROW");
-            snprintf(r->words, sizeof r->words, "THE YOUNGEST FISH MUST");
+            snprintf(r->words, sizeof r->words, WORLD_STR("THE YOUNGEST FISH MUST", "THE YOUNGEST LIZARD MUST"));
             snprintf(r->words2, sizeof r->words2, need >= progression_stage_age(t, STAGE_ADULT) ? "GROW INTO AN ADULT" : "GROW INTO A JUVENILE");
             snprintf(r->progress, sizeof r->progress, "%s IS %s", f->name, STAGE_WORDS[f->stage & 3]);
             break; }
@@ -1366,10 +1488,17 @@ int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *stag
             if (r->met) snprintf(r->progress, sizeof r->progress, "CURRENTLY CLEAN ENOUGH");
             else snprintf(r->progress, sizeof r->progress, "%d%% COVERED NOW", pct);
             break; }
+        case FRY_REQ_SHED:                       /* (the terrarium's, P5) */
+            snprintf(r->title, sizeof r->title, "SHEDS");
+            snprintf(r->words, sizeof r->words, "THE LIZARDS MUST SHED");
+            snprintf(r->words2, sizeof r->words2, "CLEAN %d TIMES IN ALL", need);
+            if (r->met) snprintf(r->progress, sizeof r->progress, "DONE");
+            else snprintf(r->progress, sizeof r->progress, "%d OF %d SO FAR", have, need);
+            break;
         }
     }
-    /* and the nursery: every arrival needs grass to be born in */
-    {
+    /* and the nursery: every fry needs grass to be born in (the terrarium's hatchling: the humid hide, always there) */
+    if (!PT_TERRARIUM) {
         fry_req_t *r = &out[n++];
         memset(r, 0, sizeof *r);
         float best = 0;
@@ -1386,15 +1515,21 @@ int progression_next_fry(const tank_t *t, fry_req_t out[FRY_REQ_MAX], bool *stag
 }
 
 static bool arrival_earned(const tank_t *t) {
-    if (fish_held(t) >= POP_CAP || fish_held(t) >= N_FISH_MAX) return false;
-    if (tank_nursery_bed(t) < 0) return false;   /* no grass to be born in */
+    if (fish_held(t) >= pop_cap(t) || fish_held(t) >= N_FISH_MAX) return false;
+    if (!PT_TERRARIUM && tank_nursery_bed(t) < 0) return false;   /* no grass to be born in (a hatchling: the humid hide) */
     int met, total;
     arrival_conditions(t, &met, &total);
     return met == total;
 }
 
 void progression_force_arrival(tank_t *t) { s_arrival_pending = true; do_arrival(t); }
-void progression_woke(tank_t *t) { if (s_arrival_pending) do_arrival(t); }
+/* THE HATCHING (pocket-terrarium P5): a staged hatchling comes out of the humid hide - unless the pack's cap was reached
+   since it was staged (a hatchling bought in the shop): then it is called off, as the shop's last fry calls off a fry */
+static void hatch(tank_t *t) {
+    if (fish_held(t) >= pop_cap(t)) { s_arrival_pending = false; s_spawn_in = -1; mark_dirty(); return; }
+    do_arrival(t);
+}
+void progression_woke(tank_t *t) { if (s_arrival_pending) { if (PT_TERRARIUM) hatch(t); else do_arrival(t); } }
 void progression_stage_arrival(tank_t *t) { (void)t; if (!s_arrival_pending) { s_arrival_pending = true; mark_dirty(); } }
 
 static void newer_drop(void) { free(s_newer); s_newer = NULL; s_newer_n = 0; }
@@ -1470,6 +1605,9 @@ void progression_fresh(tank_t *t) {
     s_sd_pending = 0;                         /* a fresh ledger (tank_init zeroed the tank's) */
     s_sale_need = 0;
     s_fry_seed = 0; s_fry_age = 0; s_fry_sold = 0;
+    s_clean_run = 0;
+    for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;
+    s_tms_last = t->tank_ms_bits;
     s_booted = true;
     mark_dirty();
 }
@@ -1620,6 +1758,8 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     /* the mealworm dish's worms (P2c, tank.h THE CRICKETS): the save's pair's dish as it was (more than a full dish: full); a
        habitat without a dish, a pair not held (the defaults, as the hides' moisture) or an older save (its zero): empty */
     t->dish_worms = tank_dish_here(t) && packs_ok ? (sv.dish_worms <= DISH_WORMS ? sv.dish_worms : DISH_WORMS) : 0;
+    t->dish_farm = t->dish_worms && sv.dish_farm != 0;   /* (P5: the farm's worms, the tank's own; an older save's zero: the keeper's) */
+    s_clean_run = packs_ok ? sv.clean_run : 0;           /* (P5: the clean run - another world's pair starts its own) */
     if (sv.tank_uid) t->uid = sv.tank_uid;
     tank_ensure_ids(t);                       /* a pre-0.4 save: fresh IDs, the parents' from their slots */
     s_setup_pending = sv.setup_pending != 0;
@@ -1647,7 +1787,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     memcpy(t->algae, sv.algae, ALGAE_CELLS);
     t->trims = sv.trims; t->cells_cleaned = sv.cells_cleaned;
     /* the sand dollar tail (zeros for an older save: the ledger back-pays) */
-    t->sd_balance = sv.sd_balance; t->sd_earned = sv.sd_earned; t->sd_unlocks = sv.sd_unlocks & ((1u << SD_ITEM_COUNT) - 1);
+    t->sd_balance = sv.sd_balance; t->sd_earned = sv.sd_earned; t->sd_unlocks = sv.sd_unlocks & sd_unlock_bits();   /* (the terrarium's items in its bin) */
     t->sd_shelved = sv.sd_shelved & t->sd_unlocks & SD_DECOR_BITS;   /* the shelf (0.3.9): only owned, placeable pieces are ever on it */
     t->sd_locked = sv.sd_locked & t->sd_unlocks & SD_DECOR_BITS;     /* the locks (0.3.9): the same bits */
     for (int i = 0; i < N_FISH_MAX; i++) t->sd_paid_fish[i] = i < t->n_fish ? sv.sd_paid_fish[i] : 0;
@@ -1709,6 +1849,8 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     s_arrival_pending = sv.arrival_pending; s_spawn_in = -1;
     s_sale_need = sv.sale_meals_need > 0 ? sv.sale_meals_need : 0;
     s_fry_seed = sv.fry_seed; s_fry_age = sv.fry_age_min * 60.0f; s_fry_sold = sv.fry_sold & ((1u << FRY_OFFER_N) - 1);
+    for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;   /* (the badges as loaded: none new) */
+    s_tms_last = t->tank_ms_bits;
     s_prev_night = t->night;
     /* what this load made up (a pre-0.4 tank's secrets and IDs) is saved at
        the next save window (SAVE_MIN_GAP_S), not the heartbeat's 10 min: a
@@ -1791,6 +1933,7 @@ void progression_slept(tank_t *t, float seconds) {
             if (!t->fish[i].away) apply_growth(&t->fish[i]);
         }
         fry_age(t, seconds);                      /* the fry offer ages asleep too, in full */
+        if (seconds >= FARM_NIGHT_S) tank_dish_farm(t);   /* the MEALWORM FARM's morning after a sleep (P5; owned or not, tank.c decides) */
     }
     /* the tank milestone (2026-09-15, was "first quiet night" - every fish
        resting under the old day/night cycle): one unbroken stretch of device
@@ -1875,15 +2018,16 @@ void progression_tick(tank_t *t, float dt) {
         f->drift_acc += pressure;
         if (fabsf(f->bold - f->bold0) >= 0.11f || fabsf(f->sociable - f->sociable0) >= 0.11f) changed_someone = true;
 
-        /* milestones: firsts the fish chose to do. The terrarium's lizards earn the same bits by their own goals (P2b)
-           until P5 draws the lizard's badges (PLAN.md P5: first dig, first bask ...): a dig is the dart's, a bask on
-           the spot the bubbles', an investigation the curiosity's and the follow's, a hide the seagrass's */
-        if (f->goal.id == G_PLAY && f->goal_age > 1.0f) set_ms(f, MS_FIRST_DART);
+        /* milestones: firsts the fish chose to do. The terrarium's lizards (P5, tank.h): a dig is the dart's bit - digging,
+           not on its way to the spot - and a bask on the spot the bubbles'; an investigation the curiosity's and the
+           follow's (no badge there: the card's sliders). Its catch and its shed are set where they happen (tank.c
+           lizard_catch, shed_done) */
+        const bool playing = PT_TERRARIUM ? f->pose == LZ_POSE_DIG : f->goal.id == G_PLAY;
+        if (playing && (PT_TERRARIUM || f->goal_age > 1.0f)) set_ms(f, MS_FIRST_DART);
         if (PT_TERRARIUM) {
             float bx, by; tank_bask_point(t, &bx, &by);
             if (f->goal.id == GOAL_LZ_BASK && tank_dist(f->x, f->y, bx, by) < 20) set_ms(f, MS_FIRST_BUBBLES);   /* on the spot (up on its rock) */
             if (f->goal.id == GOAL_LZ_INVESTIGATE && f->goal_age > 2.0f) set_ms(f, MS_INSPECTED);
-            if (f->hide >= 0 && (f->goal_age > 2.0f || f->stress >= 5.0f)) set_ms(f, MS_FIRST_GRASS);   /* safe in a hide */
         } else {
             if (f->goal.id == GOAL_VISIT_BUBBLES && tank_dist(f->x, f->y, t->bubble_x, t->bubble_y) < 90) set_ms(f, MS_FIRST_BUBBLES);
             if (f->goal.id == GOAL_INSPECT_REEF) {               /* its landmark: the reef cluster once there is one */
@@ -1900,7 +2044,8 @@ void progression_tick(tank_t *t, float dt) {
                 set_ms(f, MS_FIRST_GRASS);
         }
         if (f->goal.id == G_FRIEND && f->goal_age > 2.0f) set_ms(f, MS_FIRST_FOLLOW);
-        if (f->goal.id == G_PLAY) n_dart++;
+        if (playing) n_dart++;
+        if (PT_TERRARIUM && f->stage >= STAGE_ADULT) set_tms(t, TMS_FIRST_ADULT);   /* (P5: grown up at a clean growth shed) */
     }
     if (n_dart >= 2) set_tms(t, TMS_FIRST_PLAY_SESSION);
     if (changed_someone) set_tms(t, TMS_CHANGED_SOMEONE);
@@ -1973,7 +2118,7 @@ void progression_tick(tank_t *t, float dt) {
     collection_tick(t, dt);
 #endif
     t->courting = false; t->court_a = t->court_b = -1;
-    if (fish_held(t) < POP_CAP && fish_held(t) < N_FISH_MAX && tank_nursery_bed(t) >= 0) {
+    if (!PT_TERRARIUM && fish_held(t) < POP_CAP && fish_held(t) < N_FISH_MAX && tank_nursery_bed(t) >= 0) {   /* (no courtship in the terrarium: THE HATCHING) */
         /* ... and only with a nursery: a bed tall enough to hide in. Shave
          * every bed and the courting stops until one regrows. */
         int met, total;
@@ -1996,14 +2141,33 @@ void progression_tick(tank_t *t, float dt) {
     if (s_prev_night != t->night) mark_dirty();
     s_prev_night = t->night;
     if (light_on_edge) t->greet_timer = 6.0f;
+    if (light_on_edge && (t->sd_unlocks & SD_ITEM_FARM)) tank_dish_farm(t);   /* the MEALWORM FARM's morning (P5) */
     if (!s_arrival_pending && arrival_earned(t)) { s_arrival_pending = true; mark_dirty(); }
 
+    if (PT_TERRARIUM) {
+        /* THE HATCHING (pocket-terrarium P5): no courtship and no dance - a hatchling staged by its gates comes out of the
+           humid hide a little after the last gate closed, while the keeper can see it (the spawning's wait: real awake
+           seconds, paused under a page) */
+        if (!s_arrival_pending || t->ui_cover) { if (!s_arrival_pending) s_spawn_in = -1; }
+        else {
+            if (s_spawn_in < 0) s_spawn_in = tank_randf(t, SPAWN_WAIT_MIN_S, SPAWN_WAIT_MAX_S);
+            if ((s_spawn_in -= dt) <= 0) { s_spawn_in = -1; hatch(t); }
+        }
+        t->spawning = false; t->spawn_danced = 0;
+        /* a badge set in tank.c (a catch, a meal from the hand, the hand) saves at the next window, as one set here does */
+        bool moved = t->tank_ms_bits != s_tms_last;
+        for (int i = 0; i < t->n_fish && i < N_FISH_MAX; i++) moved |= t->fish[i].ms_bits != s_ms_last[i];
+        if (moved) {
+            for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;
+            s_tms_last = t->tank_ms_bits; mark_dirty();
+        }
+    }
     /* the spawning (progression.h): a staged fry is born on its own, a
      * little after the last gate closed, while the keeper can see it. The
      * wait counts real awake seconds (not progression_time_scale) and pauses
      * under a page; a dance cut short (a page, the grass shaved) starts
      * over with a fresh wait. */
-    if (!(s_arrival_pending || cross_due) || !t->courting || t->ui_cover) {
+    else if (!(s_arrival_pending || cross_due) || !t->courting || t->ui_cover) {
         if (t->spawning) s_spawn_in = -1;
         t->spawning = false; t->spawn_danced = 0;
     } else if (!t->spawning) {
@@ -2107,6 +2271,8 @@ bool progression_save(tank_t *t) {
     sv.pack_v = 1; sv.pack_id = t->pack_id; sv.habitat_id = t->habitat_id;
     for (int k = 0; k < HABITAT_HIDES_MAX; k++) sv.moist[k] = t->moist[k];
     sv.dish_worms = tank_dish_here(t) ? t->dish_worms : 0;   /* (an aquarium's: always 0 - freshwater has no dish) */
+    sv.dish_farm = sv.dish_worms && t->dish_farm;            /* (P5) */
+    sv.clean_run = s_clean_run;
     sv.tank_uid = t->uid;
     const void *out = &sv; size_t out_n = sizeof sv; uint8_t *joined = NULL;
     if (s_newer && (joined = malloc(SAVE_FIELDS_END + s_newer_n))) {   /* a newer build's tail, as it left it */

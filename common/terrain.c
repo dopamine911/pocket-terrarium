@@ -209,13 +209,14 @@ float terrain_air_open_c(const terrain_t *tr, const habitat_t *h, float x, float
     float v = (py - y) / py; v = v < 0 ? 0 : v > 1 ? 1 : v;
     return air_floor_c(tr, h, x) + h->rise_c * v;
 }
-float terrain_air_c(const terrain_t *tr, const habitat_t *h, float x, float y, bool lit) {
+float terrain_air_lamp_c(const terrain_t *tr, const habitat_t *h, float x, float y, bool lit, float lamp_x) {
     if (!lit) return air_floor_c(tr, h, x) - h->night_drop_c;            /* the lamp out, the night's cool */
     float c = terrain_air_open_c(tr, h, x, y);
-    const float dx = x - tr->bask_x, dy = y - tr->bask_y, d2 = dx * dx + dy * dy, r = h->bask_r_px;
+    const float dx = x - tr->bask_x, dy = y - tr->bask_y, d2 = dx * dx + dy * dy, r = h->bask_r_px * lamp_x;
     if (d2 < r * r) c += (h->bask_c - c) * (1 - d2 / (r * r));          /* the lamp's pool: bask_c in the middle, the air's own at its edge */
     return c;
 }
+float terrain_air_c(const terrain_t *tr, const habitat_t *h, float x, float y, bool lit) { return terrain_air_lamp_c(tr, h, x, y, lit, 1.0f); }
 
 /* ---- the rules on one glass ---- */
 /* two paths over one x closer than TERRAIN_HEADROOM_PX are fine where they part from a point both pass through: a ramp

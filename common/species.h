@@ -105,7 +105,8 @@ typedef struct {
 
     /* life */
     float       stage_s[3];         /* tended age to reach juv, adult, elder: starts a growth shed (docs/shed.md) */
-    uint8_t     pop_cap;            /* <= POP_CAP (P5 reads it; the engine's cap is still POP_CAP) */
+    uint8_t     pop_cap;            /* <= POP_CAP: the most a keeper can earn or buy (progression_pop_cap: the arrival gates, the
+                                       shop's hatchlings); POP_CAP stays the engine's hard cap (THE CAP's guard, a forced arrival) */
     bool        sheds;              /* it grows by shedding (docs/shed.md): the shed cycle runs, a stage's age starts a
                                        growth shed and the stage waits for it, the mister soaks it. false (the
                                        aquarium's fish): no shed at all - the stage changes at the age itself, as

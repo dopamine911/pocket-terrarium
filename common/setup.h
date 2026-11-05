@@ -146,6 +146,9 @@ enum { SETUP_PG_RENAME = SETUP_PG_PLACE + 1 };
 #define SETUP_HIT_Z0    60               /* + DECOR_Z_BACK..FRONT: the placement page's layer row */
 #define SETUP_HIT_ORD0  64               /* + 0 BEHIND / 1 IN FRONT: the sword plant's ORDER SQUARES (0.4) - behind or in front of the piece they show */
 #define SETUP_HIT_COLOR0 80              /* + 0..CORAL_N-1: the coral's colour swatches (its placement page) */
+#define SETUP_HIT_MORPH0 190             /* the terrarium's MORPH page (P5, the colors page's place): + morph 0..SETUP_MORPH_MAX-1 */
+#define SETUP_MORPH_MAX  6               /* (two rows of SETUP_TILE_N: the FORM page's tiles, the rows at its SHAPE and FINS rows' y) */
+#define SETUP_MORPH_Y(row) ((row) ? SETUP_FORM_FINS_Y : SETUP_FORM_SHAPE_Y)
 
 /* geometry (tank coordinates), shared by the drawing, the hit test and the
  * sim's selftest. The panelled pages (welcome, colours, care) sit inside the

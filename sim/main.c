@@ -126,6 +126,8 @@ int selftest_crickets(void);            /* ... live prey: the feed gesture, land
 int selftest_gestures(void);            /* ... THE HAND (resting on the ground nearest the finger, the approach, trust), THE RAP (stress,
                                            trust, the dash for cover and out), a tap on a lizard along its body, the tools own the glass */
 int selftest_terr_pay(void);            /* ... the terrarium's sand dollars: keeper meals (crickets, the dish) and clean sheds */
+int selftest_terr_progress(void);       /* ... the terrarium's long game (P5): its badges once each, through a save; a hatchling's gates and
+                                           the pack's cap; the shop's three items, their prices and what they do */
 int selftest_terrarium(void);          /* ... a free-running terrarium on the rule stub: heat in band, growth sheds off clean, no keeper; the
                                            share above the floor and the zone rows */
 int census_llm(const char *model_path, const char *tok_path, int pack, int habitat);   /* --census-llm <model.bin> <tok.bin>
@@ -1331,9 +1333,9 @@ static int selftest_double_tap(void) {
     static const float GAP[2] = { 0.19f, 0.55f };
     int doubles = 0, rows = 0;
     for (int v = 0; v < 3; v++) {                                      /* 0: nothing owned; 1: every piece in the tank; 2: the fry for sale */
-        tank.sd_unlocks = v == 1 ? every : 0; tank.sd_shelved = 0;
+        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM : every) : 0; tank.sd_shelved = 0;   /* (the terrarium sells its own) */
         if (v == 2) tank.tank_ms_bits |= TMS_FIRST_SALE; else tank.tank_ms_bits &= ~TMS_FIRST_SALE;
-        const int n_rows = SD_ITEM_COUNT + (v == 2) - !progression_pumpkin_offered(&tank), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
+        const int n_rows = (PT_TERRARIUM ? SD_TERR_COUNT : SD_ITEM_COUNT - !progression_pumpkin_offered(&tank)) + (v == 2), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
         for (int pg = 0; pg < pages; pg++)
             for (int r = 0; r < SHP_PER_PAGE && pg * SHP_PER_PAGE + r < n_rows; r++) {
                 const int top = SHP_ROW_Y0 + r * SHP_ROW_DY;
@@ -1372,9 +1374,9 @@ static int selftest_double_tap(void) {
     const double MASH_DT = 0.205;                                      /* ~5 Hz (90 ms down, 115 up): tap 4 lands 615 ms after the first */
     int mashes = 0;
     for (int v = 0; v < 3; v++) {
-        tank.sd_unlocks = v == 1 ? every : 0; tank.sd_shelved = 0;
+        tank.sd_unlocks = v == 1 ? (PT_TERRARIUM ? SD_ITEM_MOSS | SD_ITEM_BULB | SD_ITEM_FARM : every) : 0; tank.sd_shelved = 0;
         if (v == 2) tank.tank_ms_bits |= TMS_FIRST_SALE; else tank.tank_ms_bits &= ~TMS_FIRST_SALE;
-        const int n_rows = SD_ITEM_COUNT + (v == 2) - !progression_pumpkin_offered(&tank), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
+        const int n_rows = (PT_TERRARIUM ? SD_TERR_COUNT : SD_ITEM_COUNT - !progression_pumpkin_offered(&tank)) + (v == 2), pages = (n_rows + SHP_PER_PAGE - 1) / SHP_PER_PAGE;
         for (int pg = 0; pg < pages; pg++)
             for (int r = 0; r < SHP_PER_PAGE && pg * SHP_PER_PAGE + r < n_rows; r++) {
                 const int top = SHP_ROW_Y0 + r * SHP_ROW_DY;
@@ -1407,9 +1409,10 @@ static int selftest_double_tap(void) {
                 if (!acted) { printf("FAIL: double-tap: shop page %d row %d (owned %d, fry %d): the modal's button 0.7 s after a mash returned %d\n", pg + 1, r, v == 1, v == 2, r3); return 1; }
             }
     }
-    /* the shop's SELL on a shelved piece: armed, then mashed - never sold; a 0.7 s pause, then it sells */
+    /* the shop's SELL on a shelved piece: armed, then mashed - never sold; a 0.7 s pause, then it sells (the aquarium's: the
+       terrarium's shop sells no piece back) */
     tank.tank_ms_bits &= ~TMS_FIRST_SALE; tank.sd_unlocks = SD_ITEM_CASTLE; tank.sd_shelved = SD_ITEM_CASTLE;
-    for (int m = 0; m < 3; m++) {
+    for (int m = 0; m < 3 && !PT_TERRARIUM; m++) {
         render_shop_leave();
         if (shop_tap(SHOP_ROW_X, SHOP_ROW_Y(2)) != SHOP_TAP_KEPT) { printf("FAIL: double-tap: the shelved castle's row\n"); return 1; }
         tank.clock += 0.7;
@@ -1419,7 +1422,7 @@ static int selftest_double_tap(void) {
         mashes++;
     }
     tank.clock += 0.7;
-    if (shop_tap(SHOP_SELL_X, SHOP_BTN_Y) != SHOP_TAP_SELL + 2) { printf("FAIL: double-tap: the shop's SELL 0.7 s after a mash did not sell\n"); return 1; }
+    if (!PT_TERRARIUM && shop_tap(SHOP_SELL_X, SHOP_BTN_Y) != SHOP_TAP_SELL + 2) { printf("FAIL: double-tap: the shop's SELL 0.7 s after a mash did not sell\n"); return 1; }
     /* the placement page's SELL: armed, mashed - still on the page, the castle kept; a 0.7 s pause, then it sells */
     tank.sd_shelved = 0; tank_castle_place(&tank); render_shop_leave();
     for (int m = 0; m < 3; m++) {
@@ -2269,8 +2272,8 @@ static int selftest_genes(void) {
 #ifndef _MSC_VER
 #include <dirent.h>
 static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096, 2104 };
-#define SAVE_NOW 2104                    /* today's sizeof(save_t): the mealworm dish, pocket-terrarium P2c (2096; 2097..2103 padding); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
-#define SAVE_FIELDS 2097                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
+#define SAVE_NOW 2104                    /* today's sizeof(save_t): the terrarium's progress, pocket-terrarium P5 (2097..2098: the clean run, the farm's dish; 2099..2103 padding); the mealworm dish, P2c (2096); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
+#define SAVE_FIELDS 2099                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
 #define SAVE_032 1688                    /* 0.3.2's save: an older build's head */
 static uint32_t sv_u32(const uint8_t *e, size_t off) { uint32_t v; memcpy(&v, e + off, 4); return v; }
 static float    sv_f32(const uint8_t *e, size_t off) { float v; memcpy(&v, e + off, 4); return v; }
@@ -4378,7 +4381,7 @@ static int selftest_under_card(void) {
         if (!render_milestones_card(&tank, &fish, &rx, &sx, &by) || fish != 0) UC_FAIL("e. no card for fish 0");
         else {
             render_milestones_tap(&tank, (float)sx, (float)by); render_milestones(&tank, ufb, TANK_W);
-            if (strcmp(render_milestones_line(), "KEEP AT LEAST TWO FISH")) UC_FAIL("e. the card's SELL said \"%s\", not KEEP AT LEAST TWO FISH", render_milestones_line());
+            if (strcmp(render_milestones_line(), WORLD_STR("KEEP AT LEAST TWO FISH", "KEEP AT LEAST TWO LIZARDS"))) UC_FAIL("e. the card's SELL said \"%s\", not keep-two", render_milestones_line());
         }
         render_milestones_leave();
     }
@@ -12526,7 +12529,7 @@ static int selftest_card(const char *prefix) {
     progression_set_age(&tank, 3, progression_stage_age(&tank, STAGE_ADULT) + 60);
     for (int i = 0; i < tank.n_fish; i++) { tank.fish[i].trust = 9; tank.fish[i].hunger = 2; }
     memset(tank.algae, 0, sizeof tank.algae);
-    {
+    if (!PT_TERRARIUM) {   /* (the fish's: four of POP_CAP's five - the terrarium's pack cap is three, so its four lizards owe none: --selftest-terr-progress has its rule) */
         fry_req_t req[FRY_REQ_MAX]; bool staged; int n = progression_next_fry(&tank, req, &staged), feed = -1, met = 0;
         for (int i = 0; i < n; i++) { if (req[i].kind == FRY_REQ_FEED) feed = i; met += req[i].met; }
         if (feed < 0 || req[feed].met || met != n - 1 || staged) CARD_FAIL("after a sale only MEALS should be owed (%d of %d met, staged %d)", met, n, staged);
@@ -12544,12 +12547,14 @@ static int selftest_card(const char *prefix) {
     if (tank.fish[3].parent_a != -1 || tank.fish[3].parent_b != 2) CARD_FAIL("the reload lost the moved parents (%d/%d)", tank.fish[3].parent_a, tank.fish[3].parent_b);
     for (int i = 0; i < tank.n_fish; i++) { tank.fish[i].trust = 9; tank.fish[i].hunger = 2; }
     memset(tank.algae, 0, sizeof tank.algae); for (int b = 0; b < VEG_BEDS; b++) tank_veg_set(&tank, b, 0.8f);
-    tank.player_feedings = 150 + SELL_FRY_MEALS - 1;
-    progression_tick(&tank, DT);
-    if (progression_arrival_pending()) CARD_FAIL("the meals owed since the sale did not survive the save");
-    tank.player_feedings = 150 + SELL_FRY_MEALS;
-    progression_tick(&tank, DT);
-    if (!progression_arrival_pending()) CARD_FAIL("%d meals after the sale the fry was still not staged", SELL_FRY_MEALS);
+    if (!PT_TERRARIUM) {   /* (as above: the terrarium stages no fourth) */
+        tank.player_feedings = 150 + SELL_FRY_MEALS - 1;
+        progression_tick(&tank, DT);
+        if (progression_arrival_pending()) CARD_FAIL("the meals owed since the sale did not survive the save");
+        tank.player_feedings = 150 + SELL_FRY_MEALS;
+        progression_tick(&tank, DT);
+        if (!progression_arrival_pending()) CARD_FAIL("%d meals after the sale the fry was still not staged", SELL_FRY_MEALS);
+    }
     progression_force_arrival(&tank); progression_newborn_done(&tank);
     if (tank.n_fish != 5 || tank.fish[4].stage != STAGE_FRY || progression_age_s(&tank, 4) != 0) CARD_FAIL("the new fry: %d fish, stage %d", tank.n_fish, tank.fish[4].stage);
     printf("selftest-card: the next fry waited for %d more meals (saved with the tank), then came as fish %d\n", SELL_FRY_MEALS, tank.n_fish);
@@ -12649,7 +12654,7 @@ static int selftest_clock(void) {
         if (r != MS_TAP_SELL + 2) CK_CHECK("the fish card's SELL never confirmed (tap %d, 0.8 s after arming)", r);
         render_milestones_leave();
 
-        /* the shop's SELL on a shelved castle */
+        if (!PT_TERRARIUM) {   /* the shop's SELL on a shelved castle (the aquarium's: the terrarium's shop sells no piece back) */
         if (!progression_shelve(&tank, 2)) CK_FAIL("the castle did not go on the shelf");
         render_shop_leave(); render_shop(&tank, fb, TANK_W);
         if (shop_tap(SHOP_ROW_X, SHOP_ROW_Y(2)) != SHOP_TAP_KEPT) CK_FAIL("the shelved castle's row");
@@ -12658,7 +12663,7 @@ static int selftest_clock(void) {
         ck_live(0.8f); render_shop(&tank, fb, TANK_W);
         r = shop_tap(SHOP_SELL_X, SHOP_BTN_Y);
         if (r != SHOP_TAP_SELL + 2) CK_CHECK("the shop's SELL never confirmed (tap %d, 0.8 s after arming)", r);
-        render_shop_leave();
+        render_shop_leave(); }
 
 #if PT_NET
         /* the GIVE modal (one door: CONFIRM) - its hold passes, frame by frame on the glass */
@@ -13324,6 +13329,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-crickets") == 0) return selftest_crickets();
         if (strcmp(argv[a], "--selftest-gestures") == 0) return selftest_gestures();
         if (strcmp(argv[a], "--selftest-terr-pay") == 0) return selftest_terr_pay();
+        if (strcmp(argv[a], "--selftest-terr-progress") == 0) return selftest_terr_progress();
         if (strcmp(argv[a], "--selftest-terrarium") == 0) return selftest_terrarium();
         if (strcmp(argv[a], "--census-llm") == 0 && a + 2 < argc)
             return census_llm(argv[a + 1], argv[a + 2], a + 3 < argc ? atoi(argv[a + 3]) : SPECIES_DEFAULT,
@@ -13380,6 +13386,8 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--terr-shot") == 0 && a + 1 < argc) { int terr_shot(const char *prefix); return terr_shot(argv[a + 1]); }   /* shot_terrarium.c (P3b) */
         if (strcmp(argv[a], "--terr-bench") == 0) { int terr_bench(void); return terr_bench(); }                                      /* ... the terrarium's frame cost */
         if (strcmp(argv[a], "--selftest-terr-render") == 0) { int selftest_terr_render(void); return selftest_terr_render(); }         /* ... its scenes and stack */
+        if (strcmp(argv[a], "--terr-ui-shot") == 0 && a + 1 < argc) { int terr_ui_shot(const char *prefix); return terr_ui_shot(argv[a + 1]); }   /* ... its pages (P5) */
+        if (strcmp(argv[a], "--selftest-terr-setup") == 0) { int selftest_terr_setup(void); return selftest_terr_setup(); }            /* ... its first run (P5) */
 #endif
         if (strcmp(argv[a], "--critter-cards") == 0 && a + 1 < argc) return critter_cards(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-critter-nav") == 0) return selftest_critter_nav();
@@ -13680,10 +13688,10 @@ int main(int argc, char **argv) {
                 }
                 else if (r >= SHOP_TAP_BUY) {
                     int item = r - SHOP_TAP_BUY;
-                    if (progression_buy(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s unlocked, %d sand dollars left\n", SD_ITEMS[item].name, tank.sd_balance);
+                    if (progression_buy(&tank, item)) { snd(SND_CONFIRM, AUDIO_PITCH_ONE); printf("shop: %s unlocked, %d sand dollars left\n", progression_item(item)->name, tank.sd_balance);
                         if (tank_decor_placeable(item)) { shop_view = false; render_shop_leave(); setup_begin_place(&tank, item);
-                                                          printf("shop: placement page up for the %s\n", SD_ITEMS[item].name); } }
-                    else printf("shop: %s refused (balance %d, price %d)\n", SD_ITEMS[item].name, tank.sd_balance, SD_ITEMS[item].price);
+                                                          printf("shop: placement page up for the %s\n", progression_item(item)->name); } }
+                    else printf("shop: %s refused (balance %d, price %d)\n", progression_item(item)->name, tank.sd_balance, progression_item(item)->price);
                 }
             }
             else if (milestones_view && abs(dx) >= 40 && abs(dx) > 2 * abs(dy) && render_milestones_swipe(&tank, (float)press_x, (float)press_y, (float)dx)) {

@@ -1415,11 +1415,11 @@ static void tank_task(void *arg) {
           } else if (r >= SHOP_TAP_BUY) {
               int item = r - SHOP_TAP_BUY;
               if (progression_buy(&tank, item)) { audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE);
-                  ESP_LOGI(TAG, "shop: %s unlocked, %d sand dollars left", SD_ITEMS[item].name, (int)tank.sd_balance);
+                  ESP_LOGI(TAG, "shop: %s unlocked, %d sand dollars left", progression_item(item)->name, (int)tank.sd_balance);   /* (any item: the terrarium's past the fish's, P5) */
                   if (tank_decor_placeable(item)) {                     /* a placeable piece: the page opens over the live tank */
                       touch_port_show_shop(false); setup_begin_place(&tank, item);
                       ESP_LOGI(TAG, "shop: placement page up for the %s", SD_ITEMS[item].name); } }
-              else ESP_LOGI(TAG, "shop: %s refused (balance %d, price %d)", SD_ITEMS[item].name, (int)tank.sd_balance, SD_ITEMS[item].price); } }
+              else if (progression_item(item)) ESP_LOGI(TAG, "shop: %s refused (balance %d, price %d)", progression_item(item)->name, (int)tank.sd_balance, progression_item(item)->price); } }
         brightness_apply(tank.night);
         { static int64_t last_bat; if (now - last_bat > 5LL * 60 * 1000000) {   /* battery log: awake sample every 5 min */
             batlog_add(battery_pct(), battery_port_vbat_mv(), display_port_brightness(), false, last_bat ? "" : "boot"); last_bat = now; } }

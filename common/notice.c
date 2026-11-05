@@ -15,9 +15,12 @@ static float    s_gap;                       /* seconds until the next may come 
 static int      s_cue = -1;
 static bool     s_model_told;                /* NOTICE_MODEL_DAMAGED: once per start (a sync does not forget it) */
 
-/* never announced: they belong to the birth of a tank or a fish */
-#define MS_SILENT   (MS_ARRIVED | MS_INSPECTED | MS_RETIRED_6 | MS_RETIRED_7 | MS_CROSSBRED)   /* (MS_INSPECTED: no badge since 0.3.0) */
-#define TMS_SILENT  (TMS_PAIR)
+/* never announced: they belong to the birth of a tank or a fish - and in the terrarium the fish's follow and seagrass,
+   which are no badge there (pocket-terrarium P5, tank.h: FOLLOW still reveals the card's slider) */
+#define MS_SILENT   (MS_ARRIVED | MS_INSPECTED | MS_RETIRED_6 | MS_RETIRED_7 | MS_CROSSBRED | (PT_TERRARIUM ? MS_FIRST_FOLLOW | MS_FIRST_GRASS : 0))   /* (MS_INSPECTED: no badge since 0.3.0) */
+/* ... and the terrarium's tank bits that are no badge on its row (P5): the first feeding (the first meal from you says it),
+   the trimming, the fish's bought creatures, a mutation (the birth page names a new morph) */
+#define TMS_SILENT  (TMS_PAIR | (PT_TERRARIUM ? TMS_FIRST_FEEDING | TMS_FIRST_TRIM | TMS_FIRST_MUTATION | TMS_FULL_SCHOOL | TMS_FIRST_REEF | TMS_SEAHORSE_FED | TMS_CRAB_FIND : 0))
 #define MS_STAGES   (MS_REACHED_JUV | MS_REACHED_ADULT | MS_REACHED_ELDER)
 
 static void push(int kind, int fish, uint32_t bit) {

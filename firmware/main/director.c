@@ -639,7 +639,7 @@ static void run(tank_t *t, char *line) {
         else if (argc > 2 && !strcmp(argv[1], "buy")) {
             if (progression_buy_fry(t, atoi(argv[2]))) ESP_LOGI(TAG, "fry %d bought: the welcome opens", atoi(argv[2]));
             else ESP_LOGW(TAG, "fry %d refused: not for sale, bought, no room (%d of %d fish), a welcome owed, or %d < %d",
-                          atoi(argv[2]), t->n_fish, POP_CAP, (int)t->sd_balance, SD_PRICE_FRY);
+                          atoi(argv[2]), t->n_fish, progression_pop_cap(t), (int)t->sd_balance, SD_PRICE_FRY);
         }
         ESP_LOGI(TAG, "fry: %s | %d left, a fresh three in %.1f h | room %s | balance %d", progression_fry_for_sale(t) ? "FOR SALE" : "not yet (sell a fish, or `fry open`)",
                  progression_fry_left(), progression_fry_new_in_s() / 3600, progression_fry_room_to_buy(t) ? "yes" : "no", (int)t->sd_balance);
@@ -649,12 +649,13 @@ static void run(tank_t *t, char *line) {
         if (argc > 1) progression_sd_grant(t, atoi(argv[1]));
         ESP_LOGI(TAG, "sand dollars %d (earned %d) | colonies %d | %.0f cm trimmed", (int)t->sd_balance, (int)t->sd_earned,
                  (int)t->algae_colonies, t->trim_px / PX_PER_CM);
-    } else if (!strcmp(c, "buy") && argc > 1) {      /* buy plant|snail|...|shrimp: the shop's sale, at the price */
-        int item = !strcmp(argv[1], "plant") ? 0 : !strcmp(argv[1], "snail") ? 1 : !strcmp(argv[1], "castle") ? 2 : !strcmp(argv[1], "coral") ? 3 : !strcmp(argv[1], "cluster") ? 4 : !strcmp(argv[1], "shrimp") ? 5 : !strcmp(argv[1], "urchin") ? 6 : !strcmp(argv[1], "seahorse") ? 7 : !strcmp(argv[1], "pumpkin") ? 8 : !strcmp(argv[1], "volcano") ? 9 : !strcmp(argv[1], "crab") ? 10 : -1;
-        if (item < 0) ESP_LOGW(TAG, "buy plant|snail|castle|coral|cluster|shrimp|urchin|seahorse|pumpkin|volcano|crab");
-        else if (progression_buy(t, item)) ESP_LOGI(TAG, "%s unlocked, %d sand dollars left%s", SD_ITEMS[item].name, (int)t->sd_balance,
+    } else if (!strcmp(c, "buy") && argc > 1) {      /* buy plant|snail|...|shrimp: the shop's sale, at the price (the terrarium's: moss|bulb|farm, P5) */
+        int item = !strcmp(argv[1], "plant") ? 0 : !strcmp(argv[1], "snail") ? 1 : !strcmp(argv[1], "castle") ? 2 : !strcmp(argv[1], "coral") ? 3 : !strcmp(argv[1], "cluster") ? 4 : !strcmp(argv[1], "shrimp") ? 5 : !strcmp(argv[1], "urchin") ? 6 : !strcmp(argv[1], "seahorse") ? 7 : !strcmp(argv[1], "pumpkin") ? 8 : !strcmp(argv[1], "volcano") ? 9 : !strcmp(argv[1], "crab") ? 10
+                 : !strcmp(argv[1], "moss") ? SD_TERR_FIRST : !strcmp(argv[1], "bulb") ? SD_TERR_FIRST + 1 : !strcmp(argv[1], "farm") ? SD_TERR_FIRST + 2 : -1;
+        if (item < 0) ESP_LOGW(TAG, "buy plant|snail|castle|coral|cluster|shrimp|urchin|seahorse|pumpkin|volcano|crab|moss|bulb|farm");
+        else if (progression_buy(t, item)) ESP_LOGI(TAG, "%s unlocked, %d sand dollars left%s", progression_item(item)->name, (int)t->sd_balance,
                                                     tank_decor_placeable(item) ? " (`place` opens the placement page)" : "");
-        else ESP_LOGW(TAG, "%s refused: owned, not sold by this build, or %d < %d", SD_ITEMS[item].name, (int)t->sd_balance, SD_ITEMS[item].price);
+        else ESP_LOGW(TAG, "%s refused: owned, not sold by this build, or %d < %d", progression_item(item)->name, (int)t->sd_balance, progression_item(item)->price);
     } else if (!strcmp(c, "crab")) {                 /* crab [x <px> | roost [castle|volcano] | tap | scare]: the strawberry crab (0.3.9) - set it down, send it to roost now, poke it, scare it */
         static const char *const M[] = { "resting", "walking", "digging", "heading for a shelter", "roosting", "going for food", "eating", "climbing" };   /* (climbing + cr_nibble: nibbling the rock) */
         if (!(t->sd_unlocks & SD_ITEM_CRAB) || t->cr_x < 0) ESP_LOGW(TAG, "no crab in the tank (`buy crab`)");

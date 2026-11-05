@@ -9,18 +9,27 @@ typedef struct { uint8_t w, h; const uint16_t *rgb; const uint8_t *a; } icon_t;
 
 extern const icon_t icon_foot_close;
 extern const icon_t icon_foot_my_tanks;
+extern const icon_t icon_foot_my_tanks_terr;
 extern const icon_t icon_foot_passport;
 extern const icon_t icon_foot_sand_dollar;
+extern const icon_t icon_foot_sand_dollar_terr;
 extern const icon_t icon_foot_settings;
 extern const icon_t icon_bold;
+extern const icon_t icon_bold_terr;
 extern const icon_t icon_cautious;
+extern const icon_t icon_cautious_terr;
 extern const icon_t icon_curiosity;
 extern const icon_t icon_curious;
+extern const icon_t icon_curious_terr;
 extern const icon_t icon_energy;
 extern const icon_t icon_hunger;
+extern const icon_t icon_hunger_terr;
 extern const icon_t icon_shy;
+extern const icon_t icon_shy_terr;
 extern const icon_t icon_social;
+extern const icon_t icon_social_terr;
 extern const icon_t icon_solo;
+extern const icon_t icon_solo_terr;
 extern const icon_t icon_stress;
 extern const icon_t icon_trust;
 extern const icon_t icon_unknown_16;
@@ -63,7 +72,9 @@ extern const icon_t icon_shop_crab;
 extern const icon_t icon_shop_plant;
 extern const icon_t icon_shop_pumpkin;
 extern const icon_t icon_shop_sand_dollar_16;
+extern const icon_t icon_shop_sand_dollar_16_terr;
 extern const icon_t icon_shop_sand_dollar_64;
+extern const icon_t icon_shop_sand_dollar_64_terr;
 extern const icon_t icon_shop_seahorse;
 extern const icon_t icon_shop_shrimp;
 extern const icon_t icon_shop_snail;
@@ -79,9 +90,13 @@ extern const icon_t icon_tool_sponge;
 
 /* the per-world art: icon_<name>_terr in the terrarium's bin, icon_<name> in the aquarium's. Each bin defines
  * only its own of the pair (icons.c), so name one only through WORLD_ICON (a constant choice, folded away):
- *   icon_ms_first_bubbles icon_ms_first_dart icon_ms_first_feeding icon_ms_first_follow
- *   icon_ms_first_glass_cleaning icon_ms_first_hold_approach icon_ms_first_meal icon_ms_first_play_session
- *   icon_ms_first_quiet_night icon_ms_first_sale icon_ms_first_seagrass icon_ms_tank_changed_someone
+ *   icon_foot_my_tanks icon_foot_sand_dollar icon_bold icon_cautious
+ *   icon_curious icon_hunger icon_shy icon_social
+ *   icon_solo icon_ms_first_bubbles icon_ms_first_dart icon_ms_first_feeding
+ *   icon_ms_first_follow icon_ms_first_glass_cleaning icon_ms_first_hold_approach icon_ms_first_meal
+ *   icon_ms_first_play_session icon_ms_first_quiet_night icon_ms_first_sale icon_ms_first_seagrass
+ *   icon_ms_tank_changed_someone icon_shop_sand_dollar_16 icon_shop_sand_dollar_64
+ * The terrarium's own art, defined in its bin alone (name it in terrarium-only code):
  */
 #define WORLD_ICON(name) (PT_TERRARIUM ? &name##_terr : &name)
 

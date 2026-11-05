@@ -322,11 +322,17 @@ enum {
     MS_RETIRED_6 = 1u << 6, MS_RETIRED_7 = 1u << 7, MS_FIRST_FOLLOW = 1u << 8,
     MS_REACHED_JUV = 1u << 9, MS_REACHED_ADULT = 1u << 10, MS_REACHED_ELDER = 1u << 11,
     MS_FIRST_GRASS = 1u << 12,                               /* rested (or hid) inside a seagrass canopy (2026-10-02) */
-    MS_FISH_COUNT = 13,                                      /* (the badges; the bits past it are no badge) */
+    /* (the badges; the bits past it are no badge) - the terrarium's names run to its own two below (pocket-terrarium P5) */
+    MS_FISH_COUNT = PT_TERRARIUM ? 16 : 13,
     /* born of a visitor and one of the tank it was born in (cross-tank fry,
        2026-10-05): no badge, never a notice - Strato: "worth double" (its
        SELL). It travels in the passport and is saved like the badges */
-    MS_CROSSBRED = 1u << 13
+    MS_CROSSBRED = 1u << 13,
+    /* the terrarium's own badges (pocket-terrarium P5; never set in the aquarium): a lizard's first cricket caught (anyone's
+       cricket: tank.c lizard_catch) and its first shed come off clean without sticking (progression.c shed_done). The rest
+       of a lizard's row are the fish's bits with a lizard's meaning: MEAL_FROM_YOU, HOLD_APPROACH (came to the hand),
+       BUBBLES (a bask on the spot), DART (a dig); GRASS and FOLLOW are no badge there (FOLLOW still set: the card's slider) */
+    MS_FIRST_CATCH = 1u << 14, MS_FIRST_SHED = 1u << 15
 };
 #define MS_RETIRED_MASK (MS_RETIRED_6 | MS_RETIRED_7)
 /* tank-level milestone bits */
@@ -342,7 +348,10 @@ enum {
     TMS_FIRST_SALE = 1u << 14,                               /* a fish sold: fry for sale in the shop (0.3.5) */
     TMS_SEAHORSE_FED = 1u << 15,                             /* the seahorse's first snack (0.3.6); its badge shows once it is bought */
     TMS_CRAB_FIND = 1u << 16,                                /* the crab's first sand dollar, taken (0.3.9); its badge shows once it is bought */
-    TMS_COUNT = 17
+    /* the terrarium's (pocket-terrarium P5; never set in the aquarium): a stuck shed cleared (the mister's soak or a damp
+       stay), CLEAN_RUN_N sheds in a row off clean tank-wide (a stuck one breaks the row), the first lizard grown to adult */
+    TMS_SHED_HELPED = 1u << 17, TMS_CLEAN_RUN = 1u << 18, TMS_FIRST_ADULT = 1u << 19,
+    TMS_COUNT = PT_TERRARIUM ? 20 : 17                       /* (the names: each world's bits) */
 };
 
 typedef struct {
@@ -1125,10 +1134,13 @@ typedef struct tank {
     float    mist_x, mist_y, mist_s;
     int8_t   mist_fish;
     /* THE CRICKETS and the dish (P2c, THE CRICKETS above): the crickets in the terrarium (not saved: a boot finds none, a
-     * night takes them); the mealworm dish's worms (saved, progression.c); the census's counters - crickets dropped (by
-     * the keeper and the tank alike), caught, struck at and missed, gone uneaten; worms eaten from the dish (not saved) */
+     * night takes them); the mealworm dish's worms (saved, progression.c) and whose they are - dish_farm: the MEALWORM
+     * FARM's (P5, tank_dish_farm: the tank's own, no meal of the keeper's) until the keeper fills it by hand (saved); the
+     * census's counters - crickets dropped (by the keeper and the tank alike), caught, struck at and missed, gone uneaten;
+     * worms eaten from the dish (not saved) */
     cricket_t cricket[MAX_CRICKETS];
     uint8_t   dish_worms;
+    bool      dish_farm;
     uint32_t  ck_dropped, ck_caught, ck_missed, ck_lost, dish_eaten;
 } tank_t;
 
@@ -1651,6 +1663,19 @@ void  tank_set_bubble_x(tank_t *t, float x);
 enum { SD_ITEM_PLANT = 1u << 0, SD_ITEM_SNAIL = 1u << 1, SD_ITEM_CASTLE = 1u << 2, SD_ITEM_CORAL = 1u << 3, SD_ITEM_CLUSTER = 1u << 4, SD_ITEM_SHRIMP = 1u << 5,
        SD_ITEM_URCHIN = 1u << 6, SD_ITEM_SEAHORSE = 1u << 7, SD_ITEM_PUMPKIN = 1u << 8, SD_ITEM_VOLCANO = 1u << 9, SD_ITEM_CRAB = 1u << 10,
        SD_ITEM_COUNT = 11 };
+/* the terrarium's shop (pocket-terrarium P5; progression.h SD_TERR_*): its own items, sold only in its bin, their bits in
+ * sd_unlocks well past the fish's (room for upstream's next pieces). Each is the keeper's for good, in the terrarium: none
+ * is placed, shelved or sold back. SPHAGNUM MOSS: the humid hides dry SD_MOSS_DRY_X as fast (tank_shed_clock); the
+ * BASKING BULB: the lamp's pool SD_BULB_R_X as wide (tank_env_c_lit, tank_animal_env_c: the air the lizards feel); the
+ * MEALWORM FARM: the dish filled at each light-on and after a slept hour (tank_dish_farm), its worms the tank's own */
+enum { SD_ITEM_MOSS = 1u << 20, SD_ITEM_BULB = 1u << 21, SD_ITEM_FARM = 1u << 22 };
+#define SD_MOSS_DRY_X 0.5f
+#define SD_BULB_R_X   1.5f
+void  tank_dish_farm(tank_t *t);                 /* the farm fills the dish (owned, the habitat has one, not full): its worms
+                                                    are the tank's own until the keeper fills it by hand */
+/* a hatchling (pocket-terrarium P5, progression.c THE HATCHING): lizard `slot` set inside the habitat's humid hide (or its
+   first hide; none: where it stands), hidden - it comes out at the hide's mouth when its plan leads it out */
+void  tank_hatch_place(tank_t *t, int slot);
 /* per-fish paid bits (sd_paid_fish) */
 enum { SD_PAID_JUV = 1u << 0, SD_PAID_ADULT = 1u << 1, SD_PAID_ELDER = 1u << 2, SD_PAID_TRUST = 1u << 3 };
 #define PX_PER_INCH 24.0f          /* the tank reads as ~15 in tall; a fish ~1.7 in */

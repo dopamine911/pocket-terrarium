@@ -34,6 +34,11 @@
  *   ./fishsim --selftest-terr-pay    the terrarium's sand dollars: keeper meals (a cricket from the hand, a worm from the
  *                                    dish the keeper filled; once a lizard per SD_MEAL_GAP_S; the tank's own, nothing) and
  *                                    clean sheds (never stuck: SD_SHED_CLEAN; a stuck one cleared: nothing; growth: + its stage)
+ *   ./fishsim --selftest-terr-progress the terrarium's long game (P5): its badges (the first cricket, dig, clean shed, stuck
+ *                                    shed fixed, clean run, adult) each announced once and kept through a save; a
+ *                                    hatchling held by its gates, then out of the humid hide, owed its welcome - none
+ *                                    past the pack's cap, a sale's meals; the shop's moss, bulb and farm: a dollar short
+ *                                    refused, sold at the price, each doing what it says, kept through a save
  *   ./fishsim --selftest-terrarium   a free-running terrarium, the rule stub its brain and nobody at the glass but the
  *                                    tank's own AUTO CRICKETS: a lit day, a night, a morning. The heat in band, the growth
  *                                    sheds off clean (the humid hide's own start, never misted), the night in hides or
@@ -51,6 +56,7 @@
 #include "advisor_core.h"
 #include "pt_util.h"
 #include "sim_tmp.h"
+#include "notice.h"
 
 static const char *s_name = "";
 #define WF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
@@ -1261,6 +1267,232 @@ int selftest_terr_pay(void) {
            SD_SHED_CLEAN, SD_SHED_CLEAN, SD_STAGE_JUV);
 #undef PAY
     printf("selftest-terr-pay OK\n");
+    return 0;
+}
+
+/* ================================================================ --selftest-terr-progress */
+/* THE TERRARIUM'S LONG GAME (pocket-terrarium P5, docs/progression.md "The terrarium"): its badges, each announced once at
+   its event and kept through a save and a load; a hatchling's gates holding until the last closes, then the hatchling out
+   of the humid hide, owed its welcome - and none past the pack's cap; the shop's three, each taking its price and
+   changing what it says */
+static int tp_notes(tank_t *t, int *kind, uint32_t *bit, int *fish, int max) {   /* the notices queued since the last call, in order */
+    int n = 0;
+    for (int g = 0; g < 4 * NOTICE_QUEUE + 8; g++) {          /* (each comes up, its time runs out, the gap: 7 s a step) */
+        notice_tick(t, 7.0f, false);
+        const notice_t *c = notice_current();
+        if (c && c->age == 0 && n < max) { kind[n] = c->kind; bit[n] = c->bit; fish[n] = c->fish; n++; }
+        if (!c && !notice_pending()) break;
+    }
+    return n;
+}
+/* lizard i's shed under way (stuck or not), in the damp humid hide until it comes off (a second short of its next stage's
+   age first, for a growth shed); 0 = off, and finished */
+static int tp_shed(tank_t *t, int i, bool stuck, bool growth) {
+    fish_t *f = &t->fish[i];
+    const int humid = tank_humid_hide(t);
+    if (growth) progression_set_age(t, i, tank_species(t)->stage_s[f->stage] - 1);
+    t->moist[humid] = 1;
+    f->shed = stuck ? SHED_STUCK : SHED_SHEDDING; f->shed_s = 400; f->shed_damp = 0; f->shed_growth = false;
+    tank_lizard_enter(t, i, humid); force(t, i, GOAL_LZ_REST);
+    const uint16_t c0 = f->shed_clean;
+    for (float s = 0; s < SHED_SOAK_S + 5 && f->shed_clean == c0; s += DT) { tank_tick(t, DT, advisor_force); progression_tick(t, DT); }
+    progression_tick(t, DT);
+    return f->shed_clean == c0 + 1 && f->shed == SHED_NORMAL ? 0 : 1;
+}
+static int tp_reload(tank_t *t, uint32_t seed) {          /* saved, a cold boot on the same save (no time away) */
+    if (!progression_save(t)) return 1;
+    tank_init(t, seed); progression_wake(t, 0);
+    t->trickle_off = true; tank_clear_food(t);
+    t->light_override = true; t->light_on = true; t->night = false;
+    notice_sync(t);
+    return 0;
+}
+int selftest_terr_progress(void) {
+    s_name = "selftest-terr-progress";
+    tank_t *t = &s_t;
+    int nk[NOTICE_QUEUE * 2], nf[NOTICE_QUEUE * 2]; uint32_t nb[NOTICE_QUEUE * 2]; int n;
+#define NOTES_ARE(want_n, ...) do { n = tp_notes(t, nk, nb, nf, NOTICE_QUEUE * 2); if (n != (want_n)) { printf("  notices:"); \
+        for (int q_ = 0; q_ < n; q_++) { printf(" kind %d bit %#x fish %d;", nk[q_], (unsigned)nb[q_], nf[q_]); } printf("\n"); WF(__VA_ARGS__); } } while (0)
+
+    /* 1. THE BADGES, lizard 0 (lizard 1 rests out of the way, its shed far off - a save needs the pair): each first
+          announced once (a milestone's notice), the second of it nothing */
+    fresh(t, 641, 2, false);
+    stand(t, 1, 0, tank_floor_x(0.92f)); force(t, 1, GOAL_LZ_REST); t->fish[1].shed_s = 1e5f; t->fish[1].hunger = 3;
+    const species_t *sp = tank_species(t);
+    fish_t *f = ck_hunter(t, 0, 0.3f);
+    progression_set_age(t, 0, sp->stage_s[0] + 60); f->stage = STAGE_JUV;   /* a juvenile (the adult's badge is earned below) */
+    f->shed_s = 1e5f; f->hunger = 7;
+    force(t, 0, GOAL_LZ_HUNT);
+    progression_tick(t, DT); notice_sync(t);
+    const uint32_t tms0 = t->tank_ms_bits;
+    for (int k = 0; k < 2; k++) {                              /* a cricket of the tank's own, sat in front of it: caught - twice */
+        const float cx = tank_floor_x(0.36f);
+        const int ck = tank_cricket_drop(t, cx, false);
+        if (ck < 0) WF("no cricket to drop");
+        ck_stage(t, ck, 0, cx, CK_SIT, false);
+        if (pay_live(t, CK_CATCH_S, true) < 0) WF("cricket %d was never caught", k + 1);
+        pay_live(t, 0.5f, false);
+        if (!(f->ms_bits & MS_FIRST_CATCH)) WF("cricket %d caught, no first-cricket badge", k + 1);
+        if (k == 0) { NOTES_ARE(1, "the first cricket caught: %d notices, want its one", n);
+                      if (nk[0] != NOTICE_MILESTONE || nb[0] != MS_FIRST_CATCH || nf[0] != 0) WF("the first cricket's notice is kind %d bit %#x", nk[0], (unsigned)nb[0]); }
+        else NOTES_ARE(0, "the second cricket caught: %d notices, want none", n);
+        stand(t, 0, 0, tank_floor_x(0.3f)); f->facing = 1; f->yaw = 1;
+    }
+    if (f->ms_bits & MS_FIRST_MEAL_FROM_YOU) WF("the tank's own crickets earned the first meal from you");
+    force(t, 0, GOAL_LZ_DIG);                                  /* a dig: digging, the badge; on its way there, none yet */
+    for (float s = 0; s < 20 && f->pose != LZ_POSE_DIG; s += DT) { tank_tick(t, DT, advisor_force); progression_tick(t, DT); }
+    if (f->pose != LZ_POSE_DIG) WF("no dig in 20 s (pose %d)", f->pose);
+    progression_tick(t, DT);
+    if (!(f->ms_bits & MS_FIRST_DART)) WF("dug, no first-dig badge");
+    NOTES_ARE(1, "the first dig: %d notices", n);
+    if (nb[0] != MS_FIRST_DART) WF("the first dig's notice is bit %#x", (unsigned)nb[0]);
+    printf("selftest-terr-progress: the first cricket caught (the tank's own) and the first dig: a badge and a notice each, once\n");
+
+    /* 2. THE SHEDS: the first off clean is the lizard's badge and starts the clean run; a stuck one cleared by a damp stay is
+          the first stuck shed fixed and breaks the run; two more clean, a save and a load (the run kept), and a growth shed off
+          clean - the third in a row and the lizard grown to an adult: CLEAN_RUN and FIRST_ADULT, its stage's notice */
+    if (tp_shed(t, 0, false, false)) WF("a shed in the damp hide never came off");
+    if (!(f->ms_bits & MS_FIRST_SHED) || (t->tank_ms_bits & (TMS_CLEAN_RUN | TMS_SHED_HELPED))) WF("one clean shed: badge %d, tank bits %#x", !!(f->ms_bits & MS_FIRST_SHED), (unsigned)t->tank_ms_bits);
+    NOTES_ARE(1, "the first clean shed: %d notices", n);
+    if (nb[0] != MS_FIRST_SHED) WF("the first clean shed's notice is bit %#x", (unsigned)nb[0]);
+    if (tp_shed(t, 0, true, false)) WF("a stuck shed in the damp hide was never cleared");
+    if (!(t->tank_ms_bits & TMS_SHED_HELPED)) WF("a stuck shed cleared, no first-stuck-shed-fixed badge");
+    NOTES_ARE(1, "the first stuck shed fixed: %d notices", n);
+    if (nk[0] != NOTICE_TANK_MILESTONE || nb[0] != TMS_SHED_HELPED) WF("the stuck shed's notice is kind %d bit %#x", nk[0], (unsigned)nb[0]);
+    for (int k = 0; k < CLEAN_RUN_N - 1; k++) if (tp_shed(t, 0, false, false)) WF("clean shed %d after the stuck one never came off", k + 1);
+    if (t->tank_ms_bits & TMS_CLEAN_RUN) WF("%d clean after a stuck one made a clean run of %d", CLEAN_RUN_N - 1, CLEAN_RUN_N);
+    NOTES_ARE(0, "two more clean sheds: %d notices", n);
+    const uint32_t ms_before = f->ms_bits, tms_before = t->tank_ms_bits;
+    if (tp_reload(t, 642)) WF("the save failed");
+    f = &t->fish[0];
+    if (t->n_fish != 2 || f->ms_bits != ms_before || t->tank_ms_bits != tms_before)
+        WF("through a save: %d lizards, badges %#x / %#x, want %#x / %#x", t->n_fish, (unsigned)f->ms_bits, (unsigned)t->tank_ms_bits, (unsigned)ms_before, (unsigned)tms_before);
+    f->shed_s = 1e5f; f->hunger = 3; force(t, 0, GOAL_LZ_REST);
+    stand(t, 1, 0, tank_floor_x(0.92f)); force(t, 1, GOAL_LZ_REST); t->fish[1].hunger = 3;
+    progression_tick(t, DT);
+    NOTES_ARE(0, "a load announced %d notices (its badges were all earned before)", n);
+    int b0 = (int)t->sd_balance;
+    if (tp_shed(t, 0, false, true)) WF("the growth shed never came off");
+    if (f->stage != STAGE_ADULT) WF("the growth shed off clean, stage %d", f->stage);
+    if (!(t->tank_ms_bits & TMS_CLEAN_RUN)) WF("%d sheds off clean in a row across a save, no clean run", CLEAN_RUN_N);
+    if (!(t->tank_ms_bits & TMS_FIRST_ADULT)) WF("an adult, no first-adult badge");
+    if ((int)t->sd_balance - b0 != SD_SHED_CLEAN + SD_STAGE_ADULT) WF("the growth shed paid %d, want %d", (int)t->sd_balance - b0, SD_SHED_CLEAN + SD_STAGE_ADULT);
+    NOTES_ARE(3, "the growth shed: %d notices, want the stage, the clean run and the first adult", n);
+    {   bool st = false, run = false, adult = false;
+        for (int q = 0; q < n; q++) { st |= nk[q] == NOTICE_STAGE; run |= nb[q] == TMS_CLEAN_RUN; adult |= nb[q] == TMS_FIRST_ADULT; }
+        if (!st || !run || !adult) WF("the growth shed's notices: stage %d, clean run %d, first adult %d", st, run, adult); }
+    if ((tms0 & (TMS_SHED_HELPED | TMS_CLEAN_RUN | TMS_FIRST_ADULT)) || (t->tank_ms_bits & (TMS_FIRST_TRIM | TMS_FULL_SCHOOL)))
+        WF("tank bits before %#x, now %#x", (unsigned)tms0, (unsigned)t->tank_ms_bits);
+    printf("selftest-terr-progress: sheds - the first clean one its badge, a stuck one cleared the first fixed (the run broken), %d in a row across a save the clean run, the growth shed the first adult\n", CLEAN_RUN_N);
+
+    /* 3. A HATCHLING: the gates (every lizard's trust, the keeper's meals, the clean sheds) hold while one is short - then
+          the hatchling comes out of the humid hide, owed its welcome; none past the pack's cap */
+    fresh(t, 651, 2, false);
+    for (int i = 0; i < 2; i++) { stand(t, i, 0, tank_floor_x(i ? 0.85f : 0.6f)); force(t, i, GOAL_LZ_REST); t->fish[i].shed_s = 1e5f; t->fish[i].trust = 7; t->fish[i].hunger = 3; }
+    t->player_feedings = 12;
+    const int cap = progression_pop_cap(t);
+    if (cap != sp->pop_cap) WF("the pop cap reads %d, the pack's is %d", cap, sp->pop_cap);
+    fry_req_t req[FRY_REQ_MAX]; bool staged;
+    int nr = progression_next_fry(t, req, &staged), shed_row = -1;
+    for (int k = 0; k < nr; k++) { if (req[k].kind == FRY_REQ_SHED) shed_row = k; if (req[k].kind == FRY_REQ_GRASS || req[k].kind == FRY_REQ_GLASS || req[k].kind == FRY_REQ_HOLD) WF("the checklist has the fish's gate %d", req[k].kind); }
+    if (nr != 3 || shed_row < 0 || req[shed_row].met || staged) WF("two lizards: %d gates, the sheds' row %d (met %d), staged %d", nr, shed_row, shed_row >= 0 && req[shed_row].met, staged);
+    for (int k = 0; k < nr; k++) if (k != shed_row && !req[k].met) WF("gate %d (%s) unmet with its numbers given", req[k].kind, req[k].title);
+    for (float s = 0; s < 40; s += DT) { tank_tick(t, DT, advisor_force); progression_tick(t, DT); }
+    if (t->n_fish != 2 || progression_arrival_pending()) WF("a hatchling with no clean shed (%d lizards, staged %d)", t->n_fish, progression_arrival_pending());
+    t->fish[0].shed_clean = 2; t->fish[1].shed_clean = 2; t->fish[1].trust = 5.9f;   /* the sheds done; one lizard's trust short */
+    for (float s = 0; s < 40; s += DT) { tank_tick(t, DT, advisor_force); progression_tick(t, DT); t->fish[1].trust = fminf(t->fish[1].trust, 5.9f); }
+    if (t->n_fish != 2 || progression_arrival_pending()) WF("a hatchling with a lizard's trust at 5.9 (%d lizards, staged %d)", t->n_fish, progression_arrival_pending());
+    t->fish[1].trust = 6.0f;
+    b0 = (int)t->sd_balance;
+    float born = -1; int hide_at_birth = -2;
+    for (float s = 0; s < SPAWN_WAIT_MAX_S + 5 && born < 0; s += DT) {
+        tank_tick(t, DT, advisor_force); progression_tick(t, DT);
+        if (t->n_fish == 3) { born = s; hide_at_birth = t->fish[2].hide; }
+    }
+    if (born < 0) WF("every gate met: no hatchling in %.0f s (staged %d)", SPAWN_WAIT_MAX_S + 5, progression_arrival_pending());
+    if (hide_at_birth != tank_humid_hide(t)) WF("the hatchling came out of hide %d, not the humid hide %d", hide_at_birth, tank_humid_hide(t));
+    if (t->fish[2].stage != STAGE_FRY || progression_newborn() != 2 || !(t->tank_ms_bits & TMS_TRIO) || (int)t->sd_balance - b0 != SD_BIRTH)
+        WF("the hatchling: stage %d, welcome owed %d, trio %d, paid %d", t->fish[2].stage, progression_newborn(), !!(t->tank_ms_bits & TMS_TRIO), (int)t->sd_balance - b0);
+    progression_newborn_done(t);
+    printf("selftest-terr-progress: two lizards: no hatchling while the sheds or one lizard's trust are short; every gate met, one in the humid hide %.1f s later, owed its welcome\n", born);
+    if (cap == 3) {                                            /* the gecko's cap: the third is the last */
+        for (int i = 0; i < 3; i++) { t->fish[i].trust = 10; t->fish[i].shed_clean = 40; t->fish[i].shed_s = 1e5f; force(t, i, GOAL_LZ_REST); }
+        progression_set_age(t, 2, sp->stage_s[2] + 60);
+        t->player_feedings = 1000;
+        for (float s = 0; s < 40; s += DT) { tank_tick(t, DT, advisor_force); progression_tick(t, DT); }
+        if (t->n_fish != 3 || progression_arrival_pending() || progression_next_fry(t, req, &staged)) WF("at the pack's cap: %d lizards, staged %d", t->n_fish, progression_arrival_pending());
+        progression_fry_open(t); t->sd_balance = 10 * SD_PRICE_FRY;
+        if (progression_fry_room_to_buy(t) || progression_buy_fry(t, 0)) WF("the shop sold a hatchling past the pack's cap");
+        /* a sale: the slot earned again - and only by MEALS, SELL_FRY_MEALS more (the fish's rule) */
+        if (!progression_sell_fish(t, 2)) WF("the third lizard could not be sold");
+        nr = progression_next_fry(t, req, &staged);
+        int met = 0, feed = -1; for (int k = 0; k < nr; k++) { met += req[k].met; if (req[k].kind == FRY_REQ_FEED) feed = k; }
+        if (feed < 0 || req[feed].met || met != nr - 1 || staged) WF("after a sale only MEALS should be owed (%d of %d met)", met, nr);
+        printf("selftest-terr-progress: at the pack's cap (%d) no hatchling is staged or sold; after a sale only the meals are owed\n", cap);
+    }
+
+    /* 4. THE SHOP: each item refused a dollar short, sold at its price, and doing what it says */
+    fresh(t, 661, 2, false);
+    f = ck_hunter(t, 0, 0.6f); f->shed_s = 1e5f; force(t, 0, GOAL_LZ_REST);
+    stand(t, 1, 0, tank_floor_x(0.92f)); force(t, 1, GOAL_LZ_REST); t->fish[1].shed_s = 1e5f; t->fish[1].hunger = 3;
+    const int humid = tank_humid_hide(t);
+    float bx, by; tank_bask_point(t, &bx, &by);
+    const habitat_t *h = tank_habitat(t);
+    const float px = bx + 1.25f * h->bask_r_px, py = by;       /* past the lamp's pool, inside the bulb's */
+    const float warm0 = tank_env_c_lit(t, px, py, true), spot0 = tank_env_c_lit(t, bx, by, true), dark0 = tank_env_c_lit(t, px, py, false);
+    t->moist[humid] = 1; for (int s = 0; s < 600; s++) progression_tick(t, 1.0f);
+    const float dry0 = 1 - t->moist[humid];                   /* ten tended minutes without the moss */
+    for (int k = 0; k < SD_TERR_COUNT; k++) {
+        const int item = SD_TERR_FIRST + k; const sd_item_t *it = progression_item(item);
+        if (!it) WF("no item %d", item);
+        t->sd_balance = it->price - 1;
+        if (progression_buy(t, item) || (t->sd_unlocks & it->bit) || t->sd_balance != it->price - 1) WF("%s sold a dollar short", it->name);
+        t->sd_balance = it->price + 3;
+        if (!progression_buy(t, item) || !(t->sd_unlocks & it->bit) || t->sd_balance != 3) WF("%s: not sold at its price (balance %d)", it->name, (int)t->sd_balance);
+        if (progression_buy(t, item) || t->sd_balance != 3) WF("%s sold twice", it->name);
+        if (progression_sell_value(item) || progression_sell(t, item)) WF("%s sells back", it->name);
+        if (it->bit == SD_ITEM_MOSS) {                         /* the humid hide soaked, and drying at half the pace */
+            if (t->moist[humid] < 0.999f) WF("the moss: the humid hide at %.2f, not soaked", t->moist[humid]);
+            for (int s = 0; s < 600; s++) progression_tick(t, 1.0f);
+            const float dry = 1 - t->moist[humid];
+            if (fabsf(dry - dry0 * SD_MOSS_DRY_X) > 0.002f) WF("the moss: ten minutes dried %.4f, without it %.4f", dry, dry0);
+            printf("selftest-terr-progress: SPHAGNUM MOSS for %d: the humid hide soaked; ten tended minutes dry it %.3f (%.3f without)\n", it->price, dry, dry0);
+        } else if (it->bit == SD_ITEM_BULB) {                  /* the lamp's pool wider: warmer past its old edge; the spot and the dark as they were */
+            const float warm = tank_env_c_lit(t, px, py, true);
+            if (!(warm > warm0 + 0.5f) || fabsf(tank_env_c_lit(t, bx, by, true) - spot0) > 1e-4f || fabsf(tank_env_c_lit(t, px, py, false) - dark0) > 1e-4f)
+                WF("the bulb: %.1f px out %.2f C (was %.2f), the spot %.2f (was %.2f)", px - bx, warm, warm0, tank_env_c_lit(t, bx, by, true), spot0);
+            stand(t, 0, tank_terrain(t)->bask_path, bx);
+            if (fabsf(tank_animal_env_c(t, f, true) - spot0) > 0.5f) WF("the bulb: a lizard on the spot feels %.1f C", tank_animal_env_c(t, f, true));
+            stand(t, 0, 0, tank_floor_x(0.6f));
+            printf("selftest-terr-progress: BASKING BULB for %d: %.0f px from the spot %.1f C (%.1f before); the spot and the night unchanged\n", it->price, px - bx, warm, warm0);
+        } else if (it->bit == SD_ITEM_FARM) {                  /* the dish filled now and every morning; its worms no keeper's meal */
+            if (t->dish_worms != DISH_WORMS || !t->dish_farm) WF("the farm: the dish holds %d (farm's %d)", t->dish_worms, t->dish_farm);
+            const int32_t feed0 = t->player_feedings; const int ep0 = f->eaten_player; b0 = (int)t->sd_balance;
+            f->hunger = 8; force(t, 0, GOAL_LZ_HUNT);
+            for (float s = 0; s < 120 && t->dish_eaten == 0; s += DT) pay_live(t, DT, false);
+            pay_live(t, 1, false);
+            if (t->dish_eaten == 0) WF("the farm's worms were never eaten");
+            if (t->player_feedings != feed0 || f->eaten_player != ep0 || (int)t->sd_balance != b0 || (f->ms_bits & MS_FIRST_MEAL_FROM_YOU))
+                WF("the farm's worm was the keeper's meal: feedings %d -> %d, from the hand %d -> %d, paid %d", feed0, t->player_feedings, ep0, f->eaten_player, (int)t->sd_balance - b0);
+            force(t, 0, GOAL_LZ_REST);
+            t->dish_worms = 0; t->dish_farm = false;
+            t->night = true; progression_tick(t, DT); t->night = false; progression_tick(t, DT);
+            if (t->dish_worms != DISH_WORMS || !t->dish_farm) WF("the farm: no worms in the morning (%d)", t->dish_worms);
+            t->dish_worms = 0; progression_slept(t, 2 * 3600.0f);
+            if (t->dish_worms != DISH_WORMS) WF("the farm: no worms after a night's sleep (%d)", t->dish_worms);
+            float dx, dy; tank_dish_point(t, &dx, &dy);
+            t->dish_worms = 2; tank_feed(t, dx, 1);
+            if (t->dish_farm || t->dish_worms != DISH_WORMS) WF("the keeper's fill: the dish still the farm's");
+            printf("selftest-terr-progress: MEALWORM FARM for %d: the dish full at once, at a light-on and after a night; its worms no keeper's meal\n", it->price);
+        }
+    }
+    const uint32_t own = t->sd_unlocks; const bool farm = t->dish_farm; const uint8_t worms = t->dish_worms;
+    if (tp_reload(t, 662)) WF("the save failed");
+    if (t->sd_unlocks != own || t->dish_farm != farm || t->dish_worms != worms) WF("through a save: unlocks %#x (want %#x), dish %d farm's %d", (unsigned)t->sd_unlocks, (unsigned)own, t->dish_worms, t->dish_farm);
+    if (fabsf(tank_env_c_lit(t, px, py, true) - warm0) < 0.5f) WF("through a save the bulb's warmth was lost");
+    printf("selftest-terr-progress: the three kept through a save\n");
+#undef NOTES_ARE
+    printf("selftest-terr-progress OK\n");
     return 0;
 }
 

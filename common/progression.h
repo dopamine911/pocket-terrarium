@@ -215,8 +215,13 @@ void progression_ack_milestones(tank_t *t);
  * "all fish must have a minimum six out of 10 trust score", not a hint), a
  * progress phrase (where it stands), a 0..1 fraction and whether it is met. Returns the count, 0 at the
  * population cap. *staged = every gate is met and the fry is on its way
- * (the spawning). Strings fit the pixel font: <= 25 chars at scale 2. */
-enum { FRY_REQ_TRUST, FRY_REQ_FEED, FRY_REQ_HOLD, FRY_REQ_GROW, FRY_REQ_CHANGE, FRY_REQ_GRASS, FRY_REQ_GLASS };
+ * (the spawning). Strings fit the pixel font: <= 25 chars at scale 2.
+ * THE TERRARIUM'S (pocket-terrarium P5): its own gates for a HATCHLING - every lizard's TRUST, keeper MEALS (crickets
+ * from the hand or worms from the dish the keeper filled: player_feedings) and CLEAN SHEDS (FRY_REQ_SHED: the lizards'
+ * clean sheds together, fish_t.shed_clean), and from the third on the youngest GROWN to an adult - no glass, no grass, no
+ * courtship; none past the pack's cap (progression_pop_cap). A staged hatchling comes out of the humid hide (THE HATCHING,
+ * progression.c) and is owed its birth flow as a fry is. */
+enum { FRY_REQ_TRUST, FRY_REQ_FEED, FRY_REQ_HOLD, FRY_REQ_GROW, FRY_REQ_CHANGE, FRY_REQ_GRASS, FRY_REQ_GLASS, FRY_REQ_SHED };
 #define FRY_REQ_MAX 5
 typedef struct {
     int   kind;
@@ -285,6 +290,15 @@ const char *const *progression_fry_tip(int kind);
 #define SD_PRICE_PUMPKIN 75       /* 0.3.6, Strato 2026-10-17: the seasonal lantern, "affordable" */
 #define SD_PRICE_VOLCANO 190      /* 0.3.9: Strato 2026-10-24 (it was the castle's 150 until he named one) */
 #define SD_PRICE_CRAB 140         /* 0.3.9: the strawberry crab - Strato 2026-10-24 */
+/* the terrarium's shop (pocket-terrarium P5; tank.h SD_ITEM_MOSS, its effects): items SD_TERR_FIRST .. SD_TERR_FIRST +
+ * SD_TERR_COUNT - 1 in the shop's one numbering, after the fish's eleven (SD_ITEMS: the aquarium's shop, unchanged - and
+ * still sold by progression_buy in either bin, where the shared tests stage them). Sold only in the terrarium's bin; none
+ * is placed, sold back or shelved. Priced against a terrarium's pay: a keeper meal 1 a lizard, a clean shed 5 */
+#define SD_PRICE_MOSS 40          /* the first and cheap, as the sword plant: the shed's upkeep halved */
+#define SD_PRICE_BULB 90
+#define SD_PRICE_FARM 140
+#define SD_TERR_FIRST SD_ITEM_COUNT
+#define SD_TERR_COUNT 3
 typedef struct {
     uint32_t    bit;               /* SD_ITEM_* */
     const char *name;              /* <= 15 chars: the row draws it at scale 2 from x 76, 178 px, short of the button at 300;
@@ -293,9 +307,12 @@ typedef struct {
     int         price;
 } sd_item_t;
 extern const sd_item_t SD_ITEMS[SD_ITEM_COUNT];
-/* the shop's sale: false when the balance is short or it is already owned;
- * true = unlocked, placed in the tank (tank_plant_place / tank_snail_place)
- * and saved at once */
+extern const sd_item_t SD_TERR_ITEMS[SD_TERR_COUNT];
+/* any item by its number, the fish's or the terrarium's - NULL past both (the shop's rows, its modal, the director) */
+const sd_item_t *progression_item(int item);
+/* the shop's sale: false when the balance is short, it is already owned or this bin does not sell it (a terrarium item in
+ * the aquarium's); true = unlocked, placed in the tank (tank_plant_place / tank_snail_place; the moss soaks the humid
+ * hides, the farm fills the dish) and saved at once */
 bool progression_buy(tank_t *t, int item);
 /* the seasonal pumpkin (0.3.6): sold while SD_PUMPKIN_IN_SHOP - the first
  * release after October 31 sets it to 0 (Strato: no date check, a board
@@ -381,11 +398,19 @@ bool progression_sell_fish(tank_t *t, int fish);
 int  progression_sd_take_award(void);
 /* director / tests: dollars from nowhere (negative takes them away) */
 void progression_sd_grant(tank_t *t, int n);
-/* the earn table for the shop page: one line per source, "+N WORDS" */
+/* the earn table for the shop page: one line per source, "+N WORDS", NULL-terminated - this world's (the terrarium's
+ * has fewer: no grass, no seahorse, no crab; loop to the NULL) */
 #define SD_EARN_LINES 8
 const char *const *progression_sd_earn_lines(void);
 
-/* the population ceiling, POP_CAP (5), is tank.h's: one cap for the sim and every board */
+/* the population ceiling, POP_CAP (5), is tank.h's: one cap for the sim and every board - THE CAP's guard
+ * (progression_cap_check) and a forced arrival (the director, the tests) hold to it. What a keeper can EARN or BUY is the
+ * pack's own, under it (pocket-terrarium P5: species_t.pop_cap - the gecko's 3, the fish's POP_CAP): the arrival gates,
+ * the checklist, the shop's fry or hatchlings, a gift's room. The population strip shows this many places */
+int  progression_pop_cap(const tank_t *t);
+/* the clean run (pocket-terrarium P5, TMS_CLEAN_RUN): this many sheds in a row off clean, never stuck, tank-wide - a
+ * lizard's shed sticking breaks the row (saved: progression.c's packs tail) */
+#define CLEAN_RUN_N 3
 
 /* stage thresholds, in seconds of grown life: awake time in full (the light
  * makes no difference), sleep at SLEEP_GROWTH_FRAC. pocket-terrarium (P2a):

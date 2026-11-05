@@ -25,6 +25,12 @@
 #endif
 #define PT_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)   /* 1 in the terrarium's bin, 0 in the aquarium's; use #if for world-owned code */
 #define PT_WORLD_NAME (PT_TERRARIUM ? "terrarium" : "aquarium")
+/* the words a keeper reads, per world (P5): WORLD_STR("TWO FRY", "TWO HATCHLINGS") is the aquarium's in its bin and the
+ * terrarium's in its own - a constant choice, folded away like icons.h WORLD_ICON, so the aquarium's text is pocket-tank's.
+ * Whole phrases, never spliced words: each world's line is written (and fitted to its box) on its own. The terrarium says
+ * LIZARD for fish, HATCHLING for fry, TERRARIUM for tank, SMUDGES for algae, PLANTS for grass, CRICKETS for pellets and
+ * DESERT ROSES for sand dollars. */
+#define WORLD_STR(aquarium, terrarium) (PT_TERRARIUM ? (terrarium) : (aquarium))
 /* Test/tool builds may carry both worlds' const packs to validate the boundary. Release bins leave this 0 and link
  * only their own pack sources (firmware/components/tankcore/CMakeLists.txt). */
 #ifndef PT_ALL_PACKS

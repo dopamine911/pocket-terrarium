@@ -78,9 +78,14 @@ lizard_pose_t lizard_pose(int kind, float yaw);
  * tank's tank_lizard_scale (its stage's x its own build). Its MORPH, picked by its body colour's gene - tank_gene
  * GENE_BODY, a LOOK_COLORS index: teal, green, yellow -> NORMAL; coral -> TANGERINE; pink -> ALBINO; blue, silver ->
  * BLIZZARD; lavender, charcoal -> MACK SNOW (the gecko's five, species/gecko.c; a pack with fewer morphs wraps) - so the
- * keeper's colour pick and heredity's colour genes carry over; its pattern is its stage's (species_t.pattern). The accent's
- * gene and the fish's forms (shape, fins, pattern) draw nothing on a lizard */
+ * keeper's pick and heredity's colour genes carry over and the save keeps it (the body colour is saved); its pattern is
+ * its stage's (species_t.pattern). The accent's gene and the fish's forms (shape, fins, pattern) draw nothing on a
+ * lizard. lizard_morph_index: the morph's index in sp->morphs (-1: a pack without morphs). lizard_morph_body: the
+ * LOOK_COLORS index the setup's MORPH page gives a hatchling for morph m - each morph's own swatch (NORMAL yellow,
+ * TANGERINE coral, ALBINO pink, BLIZZARD silver, MACK SNOW lavender), the colour its name and card border wear */
 const morph_t *lizard_morph_of(const species_t *sp, const fish_t *f);
+int lizard_morph_index(const species_t *sp, const fish_t *f);
+int lizard_morph_body(const species_t *sp, int m);
 
 /* where the engine's lizard stands to where it is drawn: (fish_t.x, fish_t.y) is its middle on its path of the ground
  * (fish_t.surf: the floor's band, a rock's top, a ramp - tank_terrain); its feet stand TERRAIN_FEET_DY (terrain.h) below

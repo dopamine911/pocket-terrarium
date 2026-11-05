@@ -175,7 +175,8 @@ was before.
   SHED pays SD_SHED_CLEAN (5) when it comes off clean without ever having stuck (the keeper kept the humid hide damp in
   time); a stuck shed cleared by a damp stay or the mister's soak counts as a clean shed but pays nothing. A growth shed
   that comes off clean pays SD_SHED_CLEAN and its new stage's SD_STAGE_* on top. Stages and full trust pay as a fish's.
-  The shop, its items and the HOW TO EARN lines for the terrarium are P5's.
+  A worm from the MEALWORM FARM's dish (P5, below) is the tank's own: no pay. The terrarium's shop, its HOW TO EARN
+  lines and its currency (DESERT ROSES on the glass) are "The terrarium's long game" below.
 - **A colony** is a connected patch of film whose last cell went under the
   keeper's wipe; the grass counts px of frond actually cut, 24 px to the
   tank's inch (PX_PER_CM = 24 / 2.54). The shop's line reads "+25  250 CM OF
@@ -239,6 +240,62 @@ was before.
   October. Its modals say NOT IN THE SHOP NOW while the build does not sell
   it, so a SELL is an informed one.
 - Dollars earned during play show as a small "+N" toast over the live tank.
+
+## The terrarium's long game (pocket-terrarium P5, `--selftest-terr-progress`)
+
+The terrarium's bin keeps the fish's mechanisms - the badge bits and their notices, the care gates and the birth flow,
+the sand dollar ledger and the shop's item numbers - with a lizard's content. The aquarium's bin is unchanged.
+
+**Badges** (bits in `tank.h`, names per world in `progression.c` MS_NAMES / TMS_NAMES; MS_FISH_COUNT / TMS_COUNT are the
+terrarium's 16 / 20, the aquarium's 13 / 17). Each is announced once, by notice.c's diff, and rides in the save.
+
+| Row | Bit | Name | Earned |
+|---|---|---|---|
+| lizard | MS_FIRST_MEAL_FROM_YOU | first meal from you | ate a cricket the keeper dropped, or a worm from the dish the keeper filled |
+| lizard | MS_FIRST_HOLD_APPROACH | came to your hand | walked up to the resting hand |
+| lizard | MS_FIRST_CATCH (new, bit 14) | first cricket caught | its first catch, anyone's cricket (tank.c `lizard_catch`) |
+| lizard | MS_FIRST_BUBBLES | first bask | basked on the basking spot |
+| lizard | MS_FIRST_SHED (new, bit 15) | first clean shed | a shed came off clean without sticking (`shed_done`) |
+| lizard | MS_FIRST_DART | first dig | digging (pose DIG), not on its way to the spot |
+| tank | TMS_FIRST_FULL_NIGHT | first quiet night | one stretch of device sleep of FULL_NIGHT_S (6 h) |
+| tank | TMS_SHED_HELPED (new, bit 17) | first stuck shed fixed | a stuck shed cleared, by the mister's soak or a damp stay |
+| tank | TMS_CLEAN_RUN (new, bit 18) | three clean sheds in a row | CLEAN_RUN_N (3) sheds off clean, tank-wide; a shed sticking breaks the row (saved at 2097) |
+| tank | TMS_FIRST_ADULT (new, bit 19) | first adult | a lizard reached adult - at its clean growth shed |
+| tank | TMS_FIRST_PLAY_SESSION | first dig together | two lizards digging at once |
+| tank | TMS_FIRST_CLEANING, TMS_CHANGED_SOMEONE, TMS_FIRST_SALE | as the fish's | the glass's smudges, a personality drifted, a lizard sold |
+
+No badge in the terrarium, and silent there (notice.c): MS_FIRST_GRASS (never set), MS_FIRST_FOLLOW (still set by an
+investigation: it reveals the card's social slider), TMS_FIRST_FEEDING (the first meal from you says it), TMS_FIRST_TRIM,
+TMS_FIRST_MUTATION and the fish's bought creatures' bits.
+
+**A hatchling** (`care_gates`, `progression_next_fry`): the pack's population cap (`species_t.pop_cap`, the gecko's 3;
+`progression_pop_cap`) is what a keeper can earn or buy; POP_CAP stays THE CAP's guard and a forced arrival's limit.
+The gates, by the lizards here: two - every lizard's trust 6+, 12 keeper meals (player_feedings: a cricket dropped by
+hand and caught, or the keeper's dish eaten from) and 4 clean sheds in all (the lizards' `shed_clean` together: a stuck
+one the keeper helped off counts); three - the youngest an adult, 40 meals, 8 clean sheds; four or more - an adult
+youngest, 80 meals, trust 7, 12 clean sheds. No glass and no grass gate, no courtship: once every gate is met the
+hatchling comes out of the humid hide (THE HATCHING: `tank_hatch_place`, inside it and hidden, walking out when its plan
+leads it out) 8-20 s later, paused under a page; a staged one wakes into the humid hide after a sleep. It is owed its
+birth flow (setup.c) and pays SD_BIRTH, as a fry. A sale earns the place again with SELL_FRY_MEALS more meals (the fish's
+rule); the shop's hatchlings (after a first sale) stop at the pack's cap too.
+
+**The shop** (one item numbering: the fish's eleven, SD_ITEMS, then the terrarium's at SD_TERR_FIRST; `progression_item`
+any of them; the bits in `sd_unlocks` from bit 20). Sold only in the terrarium's bin, kept for good, never placed, sold
+back or shelved:
+
+| Item | Price | Effect |
+|---|---|---|
+| SPHAGNUM MOSS | 40 | the humid hides dry at half the pace (SD_MOSS_DRY_X), soaked full when bought |
+| BASKING BULB | 90 | the lamp's pool of warmth 1.5x as wide (SD_BULB_R_X, `terrain_air_lamp_c`): the spot itself and the night unchanged |
+| MEALWORM FARM | 140 | fills the dish when bought, at every light-on and after a sleep of an hour or more; its worms are the tank's own (no keeper meal, no pay) until the keeper fills the dish by hand (`tank_t.dish_farm`, saved at 2098) |
+
+HOW TO EARN in the terrarium: +1 each lizard you feed, +5/10/25 a lizard grows, +5 a clean shed, +20 an egg hatches, +15
+a lizard trusts you (full trust), +25 for 100 glass smudges.
+
+**Saved** (append-only, `SAVE_LAYOUT_LOCK`): the clean run at 2097 and the farm's dish at 2098, in what was the 2104-byte
+save's padding (still 2104 B); the new badge bits ride in the existing ms_bits / tank_ms_bits, the items in sd_unlocks
+(the load keeps the terrarium's bits in its bin). An aquarium's save, and every older one, reads zeros: no run yet, the
+dish the keeper's.
 
 ## IMU (motion)
 

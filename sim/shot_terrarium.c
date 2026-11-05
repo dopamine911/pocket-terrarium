@@ -8,8 +8,8 @@
  *                                    _shed (soon, shedding, stuck), _night (the lamp out: asleep up on the rocks and on
  *                                    the floor, one looking out), _card (a lizard's card over the tank), _mister (the
  *                                    mister in hand over the humid box: its spray), _chip (the finger lifted: the tool's
- *                                    chip), _keeper (the keeper page's rows: every stage's portrait) - each staged (goals
- *                                    held, positions
+ *                                    chip), _keeper (the keeper page's rows: every stage's portrait), _hatch (P5: a
+ *                                    hatchling just out of the humid box) - each staged (goals held, positions
  *                                    set as the director would) and then RUN: the engine ticks and render_tank draws a
  *                                    second of frames with every cache as the board has them
  *   ./fishsim --terr-bench          the frame's cost on this board's glass, estimated on the board by the --bench
@@ -32,6 +32,7 @@
 #include "render_lizard.h"
 #include "terrain.h"
 #include "sim_tmp.h"
+#include "setup.h"
 
 double lizard_board_k(void);            /* sheet_lizard.c */
 
@@ -204,6 +205,17 @@ int terr_shot(const char *prefix) {
     { const int st[4] = { STAGE_ELDER, STAGE_ADULT, STAGE_JUV, STAGE_FRY }; const uint32_t bd[4] = { CHARCOAL, TEAL, CORAL, PINK };
       fresh(15, 4, st, bd);
       run(0.3f); render_milestones(&s_t, s_fb, TANK_W); ppm(prefix, "keeper"); render_milestones_leave(); }
+    /* HATCH (P5, progression.c THE HATCHING): a pair with every gate met - the hatchling comes out of the humid box (_hatch,
+       a moment after it appears there) */
+    { const int st[2] = { STAGE_ADULT, STAGE_ADULT }; const uint32_t bd[2] = { YELLOW, TEAL };
+      fresh(16, 2, st, bd);
+      stand(0, 0, TANK_W * 0.72f, -1); stand(1, 0, TANK_W * 0.86f, -1);
+      for (int i = 0; i < 2; i++) { force(&s_t, i, GOAL_LZ_REST); s_t.fish[i].trust = 7; s_t.fish[i].shed_clean = 2; s_t.fish[i].shed_s = 1e5f; }
+      s_t.player_feedings = 12;
+      for (int k = 0; k < (int)(25 / DT) && s_t.n_fish < 3; k++) run(DT);
+      if (s_t.n_fish < 3) { printf("terr-shot: no hatchling\n"); return 1; }
+      progression_newborn_done(&s_t);
+      run(2.0f); ppm(prefix, "hatch"); }
     return 0;
 }
 
@@ -414,5 +426,132 @@ int terr_bench(void) {
     printf("  the light off right after a boot (the dark bake hurried): the worst frame %5.1f ms, the dark on the glass after %d frames (%.2f s)\n",
            worst / 1000.0, lag + 1, (lag + 1) * DT);
     render_clock_us = NULL;
+    return 0;
+}
+
+/* ---- the keeper's pages (P5): --terr-ui-shot and --selftest-terr-setup ----
+ *   ./fishsim --terr-ui-shot <prefix>   PPMs of every terrarium page a keeper reaches, each over a live terrarium:
+ *     _setup_{welcome,morph,name,morph2,name2,care}  the first run: the pack named, a MORPH and a NAME page per hatchling,
+ *                                                    the care tips; _birth_{born,name,family,nature} a hatchling's arrival;
+ *     _card (a lizard's card), _keeper and its modals _keeper_{lizard,badge,new,tank}; _notice_{badge,tank,stage};
+ *     _shop, _shop_item, _shop_earn; _settings, _reset, _shelf (MY TANKS), _loading */
+static void ui_ppm(const char *prefix, const char *what) { ppm(prefix, what); }
+static void ui_page(const char *prefix, const char *what, void (*draw)(void)) { render_tank(&s_t, s_fb, TANK_W); draw(); ui_ppm(prefix, what); }
+static void ui_setup(void)   { render_setup(&s_t, s_fb, TANK_W, s_t.clock); }
+static void ui_keeper(void)  { render_milestones(&s_t, s_fb, TANK_W); }
+static void ui_shop(void)    { render_shop(&s_t, s_fb, TANK_W); }
+static int  s_notice_kind, s_notice_fish; static uint32_t s_notice_bit;
+static void ui_notice(void)  { render_notice(&s_t, s_fb, TANK_W, s_notice_kind, s_notice_fish, s_notice_bit, 0.6f); }
+static void ui_settings(void) { render_settings(&s_t, s_fb, TANK_W, 60, 100); }
+static void ui_reset(void)   { render_confirm_reset(s_fb, TANK_W, 0.5f); }
+static void ui_card(void)    { render_stats_card(&s_t, 0, s_fb, TANK_W); }
+static void keeper_tap(int x, int y) { render_milestones_tap(&s_t, PAGE_X + x, PAGE_Y + y); }
+int terr_ui_shot(const char *prefix) {
+    if (!PT_TERRARIUM) { printf("terr-ui-shot: the terrarium's bin only\n"); return 1; }
+    /* THE FIRST RUN: a fresh terrarium's two hatchlings; a morph picked for each (TANGERINE, BLIZZARD) */
+    { const int st[2] = { STAGE_FRY, STAGE_FRY }; const uint32_t bd[2] = { TEAL, CORAL };
+      fresh(31, 2, st, bd); tank_ensure_ids(&s_t); run(0.5f);
+      setup_begin(&s_t);
+      static const char *const PG[] = { "setup_welcome", "setup_morph", "setup_name", "setup_morph2", "setup_name2", "setup_care" };
+      for (int k = 0; k < 6 && setup_active(); k++) {
+          if (k == 1) setup_activate(&s_t, SETUP_HIT_MORPH0 + 1);
+          if (k == 3) setup_activate(&s_t, SETUP_HIT_MORPH0 + 3);
+          run(0.4f); ui_page(prefix, PG[k], ui_setup);
+          setup_activate(&s_t, SETUP_HIT_NEXT);
+      }
+      if (setup_active()) setup_cancel(&s_t); }
+    /* A HATCHLING ARRIVES: two adults' young, its four pages */
+    { const int st[3] = { STAGE_ADULT, STAGE_ADULT, STAGE_FRY }; const uint32_t bd[3] = { YELLOW, PINK, BLUE };
+      fresh(32, 3, st, bd); tank_ensure_ids(&s_t);
+      fish_t *h = &s_t.fish[2]; h->parent_a = 0; h->parent_b = 1; h->parent_uid[0] = s_t.fish[0].uid; h->parent_uid[1] = s_t.fish[1].uid;
+      run(0.5f);
+      setup_begin_birth(&s_t, 2);
+      static const char *const PG[] = { "birth_born", "birth_name", "birth_family", "birth_nature" };
+      for (int k = 0; k < 4 && setup_active(); k++) { run(0.3f); ui_page(prefix, PG[k], ui_setup); setup_activate(&s_t, SETUP_HIT_NEXT); }
+      if (setup_active()) setup_cancel(&s_t); }
+    /* A LIVED-IN TERRARIUM: two lizards (under the gecko's cap of three: the NEW EGG row shows), some badges earned - the card,
+       the keeper page and its modals, the notices */
+    { const int st[2] = { STAGE_ADULT, STAGE_JUV }; const uint32_t bd[2] = { YELLOW, CORAL };
+      fresh(33, 2, st, bd); tank_ensure_ids(&s_t);
+      stand(0, 0, TANK_W * 0.62f, -1); force(&s_t, 0, GOAL_LZ_REST);
+      run(1.0f);
+      s_t.fish[0].ms_bits |= MS_FIRST_MEAL_FROM_YOU | MS_FIRST_HOLD_APPROACH | MS_FIRST_BUBBLES | MS_FIRST_DART | MS_FIRST_FOLLOW;
+      s_t.fish[1].ms_bits |= MS_FIRST_BUBBLES; s_t.fish[0].ms_seen = s_t.fish[0].ms_bits;
+      s_t.tank_ms_bits |= TMS_FIRST_FULL_NIGHT | TMS_FIRST_CLEANING; s_t.tank_ms_seen = TMS_FIRST_FULL_NIGHT;
+      s_t.sd_balance = 124;
+      ui_page(prefix, "card", ui_card);
+      render_milestones_leave(); ui_page(prefix, "keeper", ui_keeper);
+      keeper_tap(110, MSP_ROW_Y0 + 10); ui_page(prefix, "keeper_lizard", ui_keeper); keeper_tap(4, 4);
+      keeper_tap(MSP_BADGE_X0 + 12, MSP_ROW_Y0 + 12); ui_page(prefix, "keeper_badge", ui_keeper); keeper_tap(4, 4);
+      keeper_tap(110, MSP_ROW_Y0 + s_t.n_fish * MSP_ROW_H + 10); ui_page(prefix, "keeper_new", ui_keeper); keeper_tap(4, 4);
+      keeper_tap(110, MSP_TANK_Y + 10); ui_page(prefix, "keeper_tank", ui_keeper); keeper_tap(4, 4);
+      keeper_tap(MSP_BADGE_X0 + 12, MSP_TANK_Y + 12); ui_page(prefix, "keeper_tank_badge", ui_keeper);
+      render_milestones_leave();
+      s_notice_kind = 0; s_notice_fish = 0; s_notice_bit = MS_FIRST_BUBBLES; ui_page(prefix, "notice_badge", ui_notice);
+      s_notice_kind = 1; s_notice_fish = -1; s_notice_bit = TMS_FIRST_FULL_NIGHT; ui_page(prefix, "notice_tank", ui_notice);
+      s_notice_kind = 2; s_notice_fish = 1; s_notice_bit = 0; ui_page(prefix, "notice_stage", ui_notice);
+      /* the shop: its rows, an item's modal, HOW TO EARN */
+      render_shop_leave(); render_shop(&s_t, s_fb, TANK_W); ui_ppm(prefix, "shop");
+      render_shop_tap(&s_t, PAGE_X + 120, PAGE_Y + SHP_ROW_Y0 + 10); render_shop(&s_t, s_fb, TANK_W); ui_ppm(prefix, "shop_item");
+      render_shop_leave(); render_shop_tap(&s_t, PAGE_X + SHP_EARN_X + 20, PAGE_Y + MSP_CLOSE_Y + 10); render_shop(&s_t, s_fb, TANK_W); ui_ppm(prefix, "shop_earn");
+      render_shop_leave();
+      (void)ui_shop;
+      ui_page(prefix, "settings", ui_settings);
+      ui_page(prefix, "reset", ui_reset);
+      /* MY TANKS: the terrarium on the glass and one asleep on the shelf, its picture the live one's */
+      int tw, th; render_shelf_thumb_size(&tw, &th);
+      uint16_t *pic = malloc((size_t)tw * th * sizeof *pic);
+      if (pic) {
+          render_tank(&s_t, s_fb, TANK_W); render_shelf_thumb(s_fb, pic);
+          shelf_slot_t sl[8] = { { SHELF_NOW, "MY DESERT", false, pic }, { SHELF_DORMANT, "DESERT 2", false, pic } };
+          for (int i = 2; i < 8; i++) sl[i] = (shelf_slot_t){ SHELF_EMPTY, "", false, NULL };
+          render_shelf(s_fb, TANK_W, sl, 1, 1); ui_ppm(prefix, "shelf"); render_shelf_free();
+          free(pic);
+      }
+      render_loading(s_fb, TANK_W, "MY DESERT", 0.3, NULL); ui_ppm(prefix, "loading"); }
+    return 0;
+}
+
+/* --selftest-terr-setup (P5): the terrarium's first run as a keeper meets it - WELCOME, then a MORPH and a NAME page per
+ * hatchling (no FORM page, no bubbles), CARE, BEGIN; a tap on a MORPH tile is that morph; BACK and NEXT pass the same
+ * pages; and the morphs picked are the lizards' after a reboot (the save keeps them) */
+#define TSF(...) do { printf("FAIL: terr-setup: "); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
+int selftest_terr_setup(void) {
+    const char *sav = sim_tmp("pocket-terrarium-selftest-terr-setup.sav");
+    setenv("POCKET_TANK_SAVE", sav, 1); remove(sav);
+    tank_init(&s_t, 41); progression_boot(&s_t);                    /* no save: a new pair, the first run owed */
+    if (!progression_setup_pending() || s_t.n_fish != 2) TSF("a new terrarium: setup %d, %d lizards", progression_setup_pending(), s_t.n_fish);
+    const species_t *sp = tank_species(&s_t);
+    if (sp->n_morphs < 4) TSF("the pack has %d morphs", sp->n_morphs);
+    setup_begin(&s_t);
+    if (setup_page() != SETUP_PG_WELCOME) TSF("not on the welcome page (%d)", setup_page());
+    static const int WANT[] = { SETUP_PG_COLORS_A, SETUP_PG_NAME_A, SETUP_PG_COLORS_B, SETUP_PG_NAME_B, SETUP_PG_CARE };
+    const int pick[2] = { 1, 3 };                                   /* TANGERINE, BLIZZARD on the gecko */
+    for (int k = 0; k < 5; k++) {
+        setup_activate(&s_t, SETUP_HIT_NEXT);
+        if (setup_page() != WANT[k]) TSF("NEXT %d reached page %d, not %d", k + 1, setup_page(), WANT[k]);
+        if (setup_page() == SETUP_PG_COLORS_A || setup_page() == SETUP_PG_COLORS_B) {
+            const int who = setup_page() == SETUP_PG_COLORS_B, m = pick[who];
+            const int row = m / SETUP_TILE_N, left = sp->n_morphs - row * SETUP_TILE_N, in_row = left < SETUP_TILE_N ? left : SETUP_TILE_N;
+            const int tx = (PAGE_W - (in_row - 1) * SETUP_TILE_PX - SETUP_TILE_W) / 2 + (m % SETUP_TILE_N) * SETUP_TILE_PX + SETUP_TILE_W / 2;
+            const int hit = setup_hit(PAGE_X + tx, PAGE_Y + SETUP_MORPH_Y(row) + SETUP_FORM_TILE_H / 2);
+            if (hit != SETUP_HIT_MORPH0 + m) TSF("a tap on the %s tile hit %s", sp->morphs[m].name, setup_hit_name(hit));
+            setup_activate(&s_t, hit);
+            if (lizard_morph_index(sp, &s_t.fish[who]) != m) TSF("lizard %d is %s after the %s tile", who, sp->morphs[lizard_morph_index(sp, &s_t.fish[who])].name, sp->morphs[m].name);
+        }
+    }
+    setup_activate(&s_t, SETUP_HIT_BACK);
+    if (setup_page() != SETUP_PG_NAME_B) TSF("BACK from CARE reached page %d, not the second name", setup_page());
+    setup_activate(&s_t, SETUP_HIT_BACK); setup_activate(&s_t, SETUP_HIT_BACK);
+    if (setup_page() != SETUP_PG_NAME_A) TSF("BACK twice more reached page %d, not the first name (no FORM page)", setup_page());
+    for (int k = 0; k < 3; k++) setup_activate(&s_t, SETUP_HIT_NEXT);
+    if (setup_page() != SETUP_PG_CARE) TSF("NEXT back to CARE reached page %d", setup_page());
+    setup_activate(&s_t, SETUP_HIT_NEXT);                             /* BEGIN */
+    if (setup_active() || progression_setup_pending()) TSF("BEGIN left the setup %s", setup_active() ? "up" : "owed");
+    tank_init(&s_t, 42); progression_wake(&s_t, 0);                  /* a reboot */
+    for (int i = 0; i < 2; i++)
+        if (lizard_morph_index(sp, &s_t.fish[i]) != pick[i]) TSF("after a reboot lizard %d is %s, not %s", i, sp->morphs[lizard_morph_index(sp, &s_t.fish[i])].name, sp->morphs[pick[i]].name);
+    remove(sav);
+    printf("selftest-terr-setup: WELCOME, MORPH, NAME, MORPH, NAME, CARE; %s and %s kept across a reboot\n", sp->morphs[pick[0]].name, sp->morphs[pick[1]].name);
     return 0;
 }

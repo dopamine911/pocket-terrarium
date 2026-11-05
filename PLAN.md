@@ -282,11 +282,23 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [x] C/Python encoder parity test (R4): `make_l1_parity.py --check` + `./fishsim --selftest-l1-encode`, 420/420
 
 ### P5 — Progression and UI
-- [ ] Stages advance at sheds; trust via handling
-- [ ] Milestones: first cricket caught, first clean shed, first bask, first hand approach, first dig
-- [ ] Arrivals: hatchling gates (trust, meals, clean sheds), pop cap from the pack
-- [ ] Shop items and prices; currency renamed
-- [ ] Setup: choose a species pack (one for now) and a morph; strings "fish/tank" → "lizard/terrarium"
+- [x] Stages advance at sheds; trust via handling (held through P5: `--selftest-shed`, `--selftest-gestures`, `--selftest-terr-pay`)
+- [x] Milestones (2026-11-05, `docs/progression.md` "The terrarium's long game"): a lizard's row - first meal from you,
+      came to your hand, first cricket caught, first bask, first clean shed, first dig; the tank's - first quiet night, first
+      stuck shed fixed, three clean sheds in a row, first adult, first dig together (+ glass, sale, personality). New bits
+      MS_FIRST_CATCH/SHED, TMS_SHED_HELPED/CLEAN_RUN/FIRST_ADULT; the fish's grass/follow/feeding/trim silent there
+- [x] Arrivals: hatchling gates (every lizard's trust 6, 12 keeper meals, 4 clean sheds; adult youngest from the third),
+      the pack's `pop_cap` (gecko 3: `progression_pop_cap`, POP_CAP stays the hard guard); no courtship - the hatchling
+      comes out of the humid hide 8-20 s after the last gate (`--terr-shot` _hatch), owed its birth flow
+- [x] Shop items and prices; currency renamed (DESERT ROSES): SPHAGNUM MOSS 40 (the humid hide dries half as fast),
+      BASKING BULB 90 (the lamp's pool 1.5x), MEALWORM FARM 140 (the dish filled each morning, no keeper pay) - items 11..13
+      after the fish's; save 2097 clean run, 2098 the farm's dish (`--selftest-terr-progress`)
+- [x] Setup: choose a species pack (one for now) and a morph; strings "fish/tank" → "lizard/terrarium" (2026-11-05):
+      WELCOME names the pack, then a MORPH page (the gecko's five; the pick is the saved body colour) and a NAME page per
+      hatchling, with no FORM page and no bubbles (`--selftest-terr-setup`). Strings go through `WORLD_STR` (world.h); currency
+      DESERT ROSES; the next arrival is a NEW EGG; the card, trait, rose and MY TANKS art is `_terr`; `--terr-ui-shot`.
+      Open: art for the shed/clean-run/first-adult badges and for the moss/bulb/farm shop pieces (fallback terrarium icons
+      for now); MY TANKS' title and default names, the library rows and the loading screen still say tank
 
 ### P6 — Integrate and accept
 - [x] Ship the model + tokenizer, delete the temporary goal map (2026-11-05): `model/out/model_q4_lizard.bin` (`lizard_v1`,

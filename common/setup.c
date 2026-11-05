@@ -4,6 +4,9 @@
 #include "tank_events.h"
 #include "render.h"
 #include "progression.h"
+#if PT_TERRARIUM
+#include "render_lizard.h"   /* the MORPH page: lizard_morph_index / lizard_morph_body */
+#endif
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -52,6 +55,9 @@ static int   s_same_note;      /* the editor (0.4): frames left of "SAME AS ITS 
 static int  s_kbd;             /* the name page's design: the wheel unless the director says otherwise */
 static bool s_typed;           /* this name page: the keeper has typed (the default is gone) */
 static int  s_kb_page;         /* SETUP_KBD_PAGES: 0 = A-M, 1 = N-Z */
+#if PT_TERRARIUM
+static int  s_morphs;          /* the MORPH page (below): the pack's morph count, from setup_begin (at most SETUP_MORPH_MAX) */
+#endif
 
 static int page_fish(void) { return s_birth || s_rename ? s_fish : s_place ? 0 : s_page <= SETUP_PG_NAME_A ? 0 : 1; }
 static bool page_is_name(void) { return s_page == SETUP_PG_NAME_A || s_page == SETUP_PG_NAME_B || s_page == SETUP_PG_NAME_NEW || s_page == SETUP_PG_RENAME; }
@@ -61,6 +67,10 @@ static bool page_is_look(void) { return page_is_form() || page_is_colors(); }   
 static bool page_is_last(void) { return s_page == SETUP_PG_CARE || s_page == SETUP_PG_NATURE; }
 static bool page_one_button(void) { return s_page == SETUP_PG_WELCOME || s_page == SETUP_PG_BORN; }   /* a lone NEXT at the foot */
 static int  first_page(void) { return s_rename ? SETUP_PG_RENAME : s_place ? SETUP_PG_PLACE : s_birth ? SETUP_PG_BORN : SETUP_PG_WELCOME; }
+/* THE TERRARIUM's first run (P5): a lizard's form is its pack's and there is no bubble column, so its pages are WELCOME
+   (the pack named), a MORPH page (the colors page's place) and a NAME page for each hatchling, then CARE - the FORM pages
+   and BUBBLES are passed by both ways */
+static bool page_skipped(int pg) { return PT_TERRARIUM && (pg == SETUP_PG_FORM_A || pg == SETUP_PG_FORM_B || pg == SETUP_PG_BUBBLES); }
 static bool nav_on_top(void) { return (page_is_name() && s_kbd != SETUP_KBD_GRID) || page_is_look() || s_page == SETUP_PG_BUBBLES || s_page == SETUP_PG_PLACE; }
 static int  place_y(void) { return s_item == 3 ? SETUP_PLACE_CORAL_Y : s_item == 4 ? SETUP_PLACE_CLUSTER_Y : SETUP_PLACE_Y; }   /* where the drag zone starts */
 /* a fish's parent w (0 = parent_uid[0] / parent_a, 1 = the other), wherever it
@@ -82,9 +92,17 @@ static parent_t parent_of(const tank_t *t, const fish_t *f, int w) {
     return p;
 }
 /* a mutation in words for the announcement (0.4): "SOMETHING NEW: SAIL FINS";
-   false = none */
-static bool mutation_words(const fish_t *f, char *out, size_t n) {
+   false = none. A lizard shows its body colour's gene alone, as its morph (render_lizard.h): a new morph is news, a
+   new fin or pattern gene draws nothing on it and is not */
+static bool mutation_words(const tank_t *t, const fish_t *f, char *out, size_t n) {
     if (!f->mutated || f->mutated > GENE_N) return false;
+#if PT_TERRARIUM
+    const species_t *sp = tank_species(t); const int m = lizard_morph_index(sp, f);
+    if (f->mutated - 1 != GENE_BODY || m < 0) return false;
+    snprintf(out, n, "SOMETHING NEW: %s", sp->morphs[m].name);
+    return true;
+#endif
+    (void)t;
     static const char *const PAT[PATTERN_N] = { "BARS", "A MASK", "AN EYE BAND", "NO MARKINGS" };
     switch (f->mutated - 1) {
     case GENE_SHAPE:   snprintf(out, n, "SOMETHING NEW: A %s BODY", SHAPE_NAMES[f->shape]); break;
@@ -103,6 +121,9 @@ static bool name_beside(const tank_t *t) { int f = page_fish(); return f >= 0 &&
 void setup_begin(tank_t *t) {
     if (t->n_fish < 2) { progression_setup_done(t); s_active = false; return; }   /* nothing to name */
     s_active = true; s_birth = false; s_place = false; s_rename = false; s_fish = -1; s_page = SETUP_PG_WELCOME; s_slot = 0; s_down = false;
+#if PT_TERRARIUM
+    s_morphs = tank_species(t)->n_morphs; if (s_morphs > SETUP_MORPH_MAX) s_morphs = SETUP_MORPH_MAX;
+#endif
     tank_emit(TEV_WELCOME, -1);
 }
 void setup_begin_birth(tank_t *t, int slot) {
@@ -244,6 +265,7 @@ const char *setup_hit_name(int id) {
     static char buf[12];
     if (id == SETUP_HIT_NEXT) return "NEXT";
     if (id == SETUP_HIT_BACK) return "BACK";
+    if (id >= SETUP_HIT_MORPH0 && id < SETUP_HIT_MORPH0 + SETUP_MORPH_MAX) { snprintf(buf, sizeof buf, "morph %d", id - SETUP_HIT_MORPH0); return buf; }
     if (id == SETUP_HIT_SELL) return "SELL";
     if (id == SETUP_HIT_ROLL) return "ROLL";
     if (id == SETUP_HIT_SWAP) return "SWAP";
@@ -364,6 +386,34 @@ static void edit_roll(tank_t *t, int fish) {
         tank_set_gene(t, fish, r[k].gene, v);
     }
 }
+#if PT_TERRARIUM
+/* THE MORPH PAGE (the terrarium's, in the colors page's place, P5): the pack's morphs as the FORM page's named tiles,
+   SETUP_TILE_N a row and a short last row centred, a grown lizard of that morph on each. A tap gives the hatchling that
+   morph's own body colour (render_lizard.h lizard_morph_body): the save keeps it and every drawing of the lizard reads
+   the morph back from it (lizard_morph_of). ROLL picks one at random */
+static void morph_tile(int m, int *x, int *y) {
+    const int row = m / SETUP_TILE_N, left = s_morphs - row * SETUP_TILE_N, in_row = left < SETUP_TILE_N ? left : SETUP_TILE_N;
+    *x = (PAGE_W - (in_row - 1) * SETUP_TILE_PX - SETUP_TILE_W) / 2 + (m % SETUP_TILE_N) * SETUP_TILE_PX;
+    *y = SETUP_MORPH_Y(row);
+}
+static void morph_set(tank_t *t, int fish, int m) { tank_set_gene(t, fish, GENE_BODY, lizard_morph_body(tank_species(t), m)); }
+static int morph_hit(float x, float y) {   /* (page coordinates) the nearest tile in the row band under the finger; 0 = none */
+    for (int row = 0; row * SETUP_TILE_N < s_morphs; row++) {
+        const int y0 = SETUP_MORPH_Y(row), last = (row + 1) * SETUP_TILE_N >= s_morphs;
+        const int top = row ? (SETUP_MORPH_Y(row - 1) + SETUP_FORM_TILE_H + y0) / 2 : y0 - SETUP_LABEL_DY - 4;
+        const int bot = last ? y0 + SETUP_FORM_TILE_H + 24 : (y0 + SETUP_FORM_TILE_H + SETUP_MORPH_Y(row + 1)) / 2;   /* (fingers land low) */
+        if (y < top || y >= bot) continue;
+        int best = 0; float bd = SETUP_TILE_PX * 0.5f + 12;
+        for (int m = row * SETUP_TILE_N; m < s_morphs && m < (row + 1) * SETUP_TILE_N; m++) {
+            int tx, ty; morph_tile(m, &tx, &ty);
+            const float d = fabsf(x - (tx + SETUP_TILE_W * 0.5f));
+            if (d < bd) { bd = d; best = SETUP_HIT_MORPH0 + m; }
+        }
+        return best;
+    }
+    return 0;
+}
+#endif
 
 static bool in_box(float x, float y, int bx, int by, int bw, int bh, int m) {
     return x >= bx - m && x < bx + bw + m && y >= by - m && y < by + bh + m;
@@ -437,6 +487,9 @@ int setup_hit(float x, float y) {
         if (i >= n) i = n - 1;
         return SETUP_HIT_Z0 + tank_decor_z_at(s_item, i);
     }
+#if PT_TERRARIUM
+    if (page_is_colors()) return morph_hit(x, y);       /* the MORPH page: its tiles (the top row's buttons above) */
+#endif
     if (page_is_colors() && in_box(x, y, SETUP_SWAP_X, SETUP_SWAP_Y, SETUP_SWAP_W, SETUP_SWAP_H, 6)) return SETUP_HIT_SWAP;   /* before the rows' bands */
     if (page_is_look()) {
         /* the rows: a band from a row's label to halfway into the gap under
@@ -517,12 +570,13 @@ void setup_activate(tank_t *t, int id) {
             if (s_birth) progression_newborn_done(t); else progression_setup_done(t);
             return;
         }
-        s_page++; s_slot = 0; s_typed = false; s_kb_page = 0; s_same_note = 0; stage(t);
+        do s_page++; while (page_skipped(s_page));
+        s_slot = 0; s_typed = false; s_kb_page = 0; s_same_note = 0; stage(t);
         return;
     }
     if (id == SETUP_HIT_BACK) {
         if (page_is_name()) tidy_name(t, page_fish());
-        if (s_page > first_page()) s_page--;
+        if (s_page > first_page()) do s_page--; while (s_page > first_page() && page_skipped(s_page));
         s_slot = 0; s_typed = false; s_kb_page = 0; s_same_note = 0; stage(t);
         return;
     }
@@ -537,6 +591,13 @@ void setup_activate(tank_t *t, int id) {
         return;
     }
     if (page_is_look()) {                               /* the fish wears a pick at once: the fry on stage, the grown portrait */
+#if PT_TERRARIUM
+        if (page_is_colors()) {                         /* the MORPH page: a tile, or ROLL - one of the pack's morphs */
+            if (id == SETUP_HIT_ROLL) { morph_set(t, page_fish(), (int)tank_randf(t, 0, s_morphs - 0.001f)); tank_emit(TEV_WHEEL_TICK, -1); }
+            else if (id >= SETUP_HIT_MORPH0 && id < SETUP_HIT_MORPH0 + s_morphs) morph_set(t, page_fish(), id - SETUP_HIT_MORPH0);
+            return;
+        }
+#endif
         if (id == SETUP_HIT_ROLL) { edit_roll(t, page_fish()); tank_emit(TEV_WHEEL_TICK, -1); return; }
         if (id == SETUP_HIT_SWAP && page_is_colors()) {       /* body <-> markings: one palette, so exact */
             int b = tank_gene(f, GENE_BODY), a = tank_gene(f, GENE_ACCENT);
@@ -603,10 +664,12 @@ static void nav(uint16_t *fb, int stride, bool top, const char *next_label, bool
     render_button(fb, stride, top ? SETUP_TOP_NEXT_X : SETUP_NEXT_X, y, w, SETUP_BTN_H,
                   go ? C_GO : C_INNER, go ? C_GO_E : C_EDGE, next_label, 2);
 }
-/* page dots along the foot: where the keeper is in the flow */
+/* page dots along the foot: where the keeper is in the flow (a page the world passes by has no dot) */
 static void dots(uint16_t *fb, int stride, int y) {
     if (s_place || s_rename) return;                    /* one page: nothing to count */
-    int n = s_birth ? SETUP_BIRTH_PAGES : SETUP_PG_N, cur = s_page - first_page();
+    const int p0 = first_page(), p1 = s_birth ? SETUP_PG_BIRTH_END : SETUP_PG_N;
+    int n = 0, cur = 0;
+    for (int p = p0; p < p1; p++) if (!page_skipped(p)) { if (p < s_page) cur++; n++; }
     int w = n * 10 - 4, x0 = (PAGE_W - w) / 2;
     for (int i = 0; i < n; i++) render_rect(fb, stride, x0 + i * 10, y, 6, 3, i == cur ? C_EDGE : C_DIM);
 }
@@ -840,6 +903,51 @@ static void panel(uint16_t *fb, int stride) {
     render_rect_edge(fb, stride, SETUP_X, SETUP_Y, SETUP_W, SETUP_H, C_EDGE);
     render_rect_edge(fb, stride, SETUP_X + 1, SETUP_Y + 1, SETUP_W - 2, SETUP_H - 2, C_INNER);
 }
+/* a name page's title */
+static const char *name_title(void) {
+    return s_rename ? WORLD_STR("RENAME YOUR FISH", "RENAME YOUR LIZARD") : s_birth ? WORLD_STR("NAME THE NEW FRY", "NAME THE HATCHLING")
+         : page_fish() == 0 ? WORLD_STR("NAME THE FIRST FISH", "NAME THE FIRST LIZARD") : WORLD_STR("NAME THE SECOND FISH", "NAME THE SECOND LIZARD");
+}
+/* THE MORPH PAGE (the terrarium's colors page; its tiles and taps above): NOW and GROWN UP on plates - a lizard on stage
+   walks the floor, under the tiles - then the pack's morphs as named tiles under a panel band, the hatchling's ringed */
+static void morph_page(const tank_t *t, uint16_t *fb, int stride, double clock) {
+#if PT_TERRARIUM
+    const int CX = PAGE_W / 2;
+    const fish_t *f = &t->fish[page_fish()];
+    const species_t *sp = tank_species(t);
+    const int cur = lizard_morph_index(sp, f);
+    text_c(fb, stride, CX, SETUP_Y + 7, 2, C_CAPT, page_fish() ? "THE SECOND LIZARD'S MORPH" : "THE FIRST LIZARD'S MORPH");
+    nav(fb, stride, true, "NEXT", false);
+    render_button(fb, stride, SETUP_ROLL_X, SETUP_TOP_BTN_Y, SETUP_TOP_BTN_W, SETUP_BTN_H, C_KEY, C_DIM, "ROLL", 2);
+    int x, y; morph_tile(s_morphs - 1, &x, &y);
+    const int band = SETUP_ED_CAPTION_Y - 6;
+    render_rect_blend(fb, stride, -PAGE_X, band, TANK_W, y + SETUP_FORM_TILE_H + 10 - band, C_PANEL, 110);
+    for (int k = 0; k < 2; k++) {                                   /* NOW (the hatchling as it is), GROWN UP */
+        const int px = k ? SETUP_ED_GROWN_X : SETUP_ED_NOW_X;
+        render_rect_blend(fb, stride, px - 72, SETUP_ED_PREVIEW_Y - 26, 144, 54, C_PANEL, 150);
+        if (k) render_fish_preview(fb, stride, px, SETUP_ED_PREVIEW_Y, SETUP_ED_GROWN_SIZE, f->color, f->fin, f->accent, f, FISH_ROOM_CARD, clock);
+        else render_fish_portrait(fb, stride, px, SETUP_ED_PREVIEW_Y, SETUP_ED_GROWN_SIZE, f, FISH_ROOM_CARD, clock);
+    }
+    text_c(fb, stride, (SETUP_ED_NOW_X + SETUP_ED_GROWN_X) / 2, SETUP_ED_PREVIEW_Y - 10, 3, C_CAPT, ">");
+    text_c(fb, stride, SETUP_ED_NOW_X, SETUP_ED_CAPTION_Y, 2, C_CAPT, "NOW");
+    text_c(fb, stride, SETUP_ED_GROWN_X, SETUP_ED_CAPTION_Y, 2, C_CAPT, "GROWN UP");
+    morph_tile(0, &x, &y);
+    render_text(fb, stride, x + 2, y - SETUP_LABEL_DY, 2, C_CAPT, "MORPH");
+    for (int m = 0; m < s_morphs; m++) {
+        morph_tile(m, &x, &y);
+        const bool on = m == cur;
+        const uint32_t body = LOOK_COLORS[lizard_morph_body(sp, m)];
+        render_rect(fb, stride, x, y, SETUP_TILE_W, SETUP_FORM_TILE_H, C_KEY);
+        render_rect_edge(fb, stride, x, y, SETUP_TILE_W, SETUP_FORM_TILE_H, on ? C_TEXT : C_DIM);
+        if (on) render_rect_edge(fb, stride, x + 1, y + 1, SETUP_TILE_W - 2, SETUP_FORM_TILE_H - 2, C_TEXT);
+        render_fish_preview(fb, stride, x + SETUP_TILE_W / 2.0f, y + 21, 1.0f, body, tank_fin_for(body), f->accent, f, FISH_ROOM_ROW, clock);
+        text_c(fb, stride, x + SETUP_TILE_W / 2, y + SETUP_FORM_TILE_H - 17, 2, on ? C_TEXT : dim(C_CAPT, 60), sp->morphs[m].name);
+    }
+    dots(fb, stride, PAGE_H - 14);
+#else
+    (void)t; (void)fb; (void)stride; (void)clock;
+#endif
+}
 
 void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
     if (s_same_note > 0) s_same_note--;
@@ -848,6 +956,22 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
     const int FLOOR = TANK_BOT - 16 - PAGE_Y;           /* the tank's sand line, in the page's coordinates */
     if (s_page == SETUP_PG_WELCOME) {
         panel(fb, stride);
+#if PT_TERRARIUM
+        /* the terrarium's names its pack under a grown one in the first hatchling's morph: the bin offers one species for
+           now (PLAN P5), so it is shown, not asked - the morphs are the keeper's to pick next */
+        const fish_t *f0 = &t->fish[0];
+        text_c(fb, stride, CX, SETUP_Y + 24, 3, C_TEXT, "WELCOME");
+        render_fish_preview(fb, stride, CX, SETUP_Y + 80, 1.3f, f0->color, f0->fin, f0->accent, f0, FISH_ROOM_CARD, clock);
+        text_c(fb, stride, CX, SETUP_Y + 106, 2, C_TEXT, tank_species(t)->name);
+        static const char *const ls[] = {
+            "TWO HATCHLINGS HAVE MOVED IN.",
+            "THEY HUNT, BASK, REST AND",
+            "GROW UP WHILE YOU WATCH.",
+            "EACH ONE THINKS FOR ITSELF.",
+            "FIRST, LET'S MEET THEM.",
+        };
+        lines_c(fb, stride, SETUP_Y + 140, 24, C_CAPT, ls, 5);
+#else
         text_c(fb, stride, CX, SETUP_Y + 36, 3, C_TEXT, "WELCOME");
         static const char *const ls[] = {
             "TWO FRY HAVE MOVED IN.",
@@ -857,6 +981,7 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
             "FIRST, LET'S MEET THEM.",
         };
         lines_c(fb, stride, SETUP_Y + 96, 24, C_CAPT, ls, 5);
+#endif
         render_button(fb, stride, SETUP_MID_X, SETUP_BTN_Y, SETUP_BTN_W, SETUP_BTN_H, C_INNER, C_EDGE, "NEXT", 2);
         dots(fb, stride, SETUP_Y + SETUP_H - 8);
     } else if (s_page == SETUP_PG_BUBBLES) {
@@ -991,7 +1116,7 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
         const fish_t *f = &t->fish[page_fish()];
         bool grid = s_kbd == SETUP_KBD_GRID;
         panel(fb, stride);
-        text_c(fb, stride, CX, SETUP_Y + (grid ? 12 : 7), 2, C_CAPT, s_rename ? "RENAME YOUR FISH" : s_birth ? "NAME THE NEW FRY" : page_fish() == 0 ? "NAME THE FIRST FISH" : "NAME THE SECOND FISH");
+        text_c(fb, stride, CX, SETUP_Y + (grid ? 12 : 7), 2, C_CAPT, name_title());
         if (grid) render_fish_preview(fb, stride, SETUP_X + 88, SETUP_Y + 72, 2.0f, f->color, f->fin, f->accent, f, FISH_ROOM_CARD, clock);
         const int SL = 22, NX = grid ? SETUP_X + 160 : CX - FISH_NAME_MAX * SL / 2 + 2, NY = grid ? SETUP_Y + 58 : SETUP_TOP_BTN_Y + (SETUP_BTN_H - 28) / 2;
         int n = name_len(f);
@@ -1026,14 +1151,23 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
            bright with the chevrons, the rest dimmed; slots past the first
            blank are just faint underlines */
         const fish_t *f = &t->fish[page_fish()];
+        const bool young = name_beside(t);                    /* the form they chose, in view while they name it (0.4) */
+#if PT_TERRARIUM
+        /* a lizard walks the floor, under the wheel's band: the one being named is on plates instead - NOW and GROWN UP
+           side by side while it is young (as the MORPH page), itself alone once grown */
+        const int px = young ? SETUP_ED_NOW_X : CX;
+        render_rect_blend(fb, stride, px - 64, SETUP_NAME_PREVIEW_Y - 24, 128, 48, C_PANEL, 150);
+        render_fish_portrait(fb, stride, px, SETUP_NAME_PREVIEW_Y, SETUP_NAME_GROWN_SIZE, f, FISH_ROOM_FAM, clock);
+#else
         fish_ring(fb, stride, f, 17 * f->size + 6, f->color);
-        if (name_beside(t)) {                                   /* the form they chose, in view while they name it (0.4) */
+#endif
+        if (young) {
             render_rect_blend(fb, stride, SETUP_ED_GROWN_X - 64, SETUP_NAME_PREVIEW_Y - 24, 128, 48, C_PANEL, 150);
             render_fish_preview(fb, stride, SETUP_ED_GROWN_X, SETUP_NAME_PREVIEW_Y, SETUP_NAME_GROWN_SIZE, f->color, f->fin, f->accent, f, FISH_ROOM_FAM, clock);
             text_c(fb, stride, (SETUP_ED_NOW_X + SETUP_ED_GROWN_X) / 2, SETUP_NAME_PREVIEW_Y - 10, 3, C_CAPT, ">");
         }
         render_rect_blend(fb, stride, -PAGE_X, SETUP_SLOT_Y - SETUP_ARROW_GAP - 2, TANK_W, SETUP_SLOT_H + 2 * SETUP_ARROW_GAP + 36, C_PANEL, 150);
-        text_c(fb, stride, CX, SETUP_Y + 7, 2, C_CAPT, s_rename ? "RENAME YOUR FISH" : s_birth ? "NAME THE NEW FRY" : page_fish() == 0 ? "NAME THE FIRST FISH" : "NAME THE SECOND FISH");
+        text_c(fb, stride, CX, SETUP_Y + 7, 2, C_CAPT, name_title());
         nav(fb, stride, true, s_rename ? "DONE" : "NEXT", s_rename);
         int n = name_len(f);
         if (s_slot > n) s_slot = n;
@@ -1052,6 +1186,8 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
         }
         text_c(fb, stride, CX, SETUP_SLOT_Y + SETUP_SLOT_H + 96, 2, C_CAPT, "SWIPE A LETTER UP OR DOWN");
         dots(fb, stride, PAGE_H - 14);
+    } else if (PT_TERRARIUM && page_is_colors()) {
+        morph_page(t, fb, stride, clock);                       /* the terrarium's MORPH page, in the colors page's place */
     } else if (page_is_look()) {
         /* THE EDITOR (setup.h): straight on the tank, the fry ringed on stage
            (NOW), the grown fish on a dark plate (GROWN UP), the rows under a
@@ -1118,18 +1254,20 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
            wherever it hatched (no stage - it stays in the grass it was born
            in), its parents are named, one button leads on */
         const fish_t *f = &t->fish[page_fish()];
-        char news[40]; bool mut = mutation_words(f, news, sizeof news);
+        char news[40]; bool mut = mutation_words(t, f, news, sizeof news);
         float r = 17 * f->size + 6 + 3 * sinf(tank_anim(clock) * 3);   /* a ring that breathes */
         fish_ring(fb, stride, f, r, f->color);
         fish_ring(fb, stride, f, r + 8, mut ? C_NEW : C_EDGE);     /* a mutation: a gold outer ring */
         render_rect_blend(fb, stride, -PAGE_X, 92, TANK_W, mut ? 138 : 116, C_PANEL, 150);
-        text_c(fb, stride, CX, 104, 3, C_TEXT, "A NEW FRY!");
+        text_c(fb, stride, CX, 104, 3, C_TEXT, WORLD_STR("A NEW FRY!", "A NEW HATCHLING!"));
         char l1[FISH_NAME_MAX * 2 + 24];
         bool shop = f->parent_a < 0 && f->parent_b < 0;              /* bought (0.3.5): no parents, in at the surface */
         if (shop) snprintf(l1, sizeof l1, "FROM THE SHOP,");
-        else snprintf(l1, sizeof l1, "BORN TO %s AND %s", parent_of(t, f, 0).name, parent_of(t, f, 1).name);
+        else snprintf(l1, sizeof l1, WORLD_STR("BORN TO %s AND %s", "%s AND %s'S EGG"), parent_of(t, f, 0).name, parent_of(t, f, 1).name);
         text_c(fb, stride, CX, 140, 2, C_CAPT, l1);
-        text_c(fb, stride, CX, 162, 2, C_CAPT, shop ? "IN AT THE SURFACE." : "DOWN IN THE GRASS.");
+        text_c(fb, stride, CX, 162, 2, C_CAPT, shop ? WORLD_STR("IN AT THE SURFACE.", "SET DOWN ON THE SAND.")   /* (the terrarium's: a staged one
+                                                                     hatches in the humid hide, a bought one is set on the floor) */
+                                                  : WORLD_STR("DOWN IN THE GRASS.", "HATCHED IN THE HUMID HIDE."));
         text_c(fb, stride, CX, 184, 2, C_CAPT, "GO AND SAY HELLO.");
         if (mut) text_c(fb, stride, CX, 206, 2, C_NEW, news);      /* 0.4: neither parent shows it */
         render_button(fb, stride, SETUP_MID_X, SETUP_BTN_Y, SETUP_BTN_W, SETUP_BTN_H, C_GO, C_GO_E, "MEET IT", 2);
@@ -1149,6 +1287,19 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
         render_fish_preview(fb, stride, SETUP_FAM_GROWN_X, SETUP_FAM_PORTRAIT_Y, SETUP_FAM_GROWN_SIZE, f->color, f->fin, f->accent, f, FISH_ROOM_FAM, clock);
         render_text(fb, stride, SETUP_FAM_FROM_X, SETUP_FAM_ROW_Y - 20, 2, dim(C_CAPT, 60), "FROM");
         bool hidden = false;
+#if PT_TERRARIUM
+        {   /* a lizard shows one gene, its body colour's, as its MORPH (render_lizard.h): that row alone */
+            const species_t *sp = tank_species(t); const int m = lizard_morph_index(sp, f), y = SETUP_FAM_ROW_Y;
+            render_text(fb, stride, SETUP_FAM_LABEL_X, y, 2, C_CAPT, "MORPH");
+            render_text(fb, stride, SETUP_FAM_VALUE_X, y, 2, C_TEXT, m >= 0 ? sp->morphs[m].name : "?");
+            if (f->mutated == GENE_BODY + 1) render_text(fb, stride, SETUP_FAM_FROM_X, y, 2, C_NEW, "NEW!");
+            else {
+                parent_t p = parent_of(t, f, (f->from_b >> GENE_BODY & 1) ? 1 : 0);
+                hidden = f->from_carried >> GENE_BODY & 1;
+                text_named(fb, stride, SETUP_FAM_FROM_X, y, "", p.name, p.known ? p.color : C_DIM, hidden ? " *" : NULL);
+            }
+        }
+#else
         for (int g = 0; g < GENE_N; g++) {
             int y = SETUP_FAM_ROW_Y + g * SETUP_FAM_ROW_DY, vx = SETUP_FAM_VALUE_X;
             static const char *const LABEL[GENE_N] = { "SHAPE", "FINS", "PATTERN", "BODY", "MARKINGS" };
@@ -1163,6 +1314,7 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
             hidden |= sec;
             text_named(fb, stride, SETUP_FAM_FROM_X, y, "", p.name, p.known ? p.color : C_DIM, sec ? " *" : NULL);
         }
+#endif
         if (hidden) text_c(fb, stride, CX, SETUP_FAM_NOTE_Y, 2, dim(C_CAPT, 70), "* HIDDEN IN THAT PARENT");
         nav(fb, stride, false, "NEXT", false);
         dots(fb, stride, SETUP_Y + SETUP_H - 8);
@@ -1206,11 +1358,19 @@ void render_setup(const tank_t *t, uint16_t *fb, int stride, double clock) {
         panel(fb, stride);
         text_c(fb, stride, CX, SETUP_Y + 22, 3, C_TEXT, "CARING FOR THEM");
         static const char *const ls[] = {
+#if PT_TERRARIUM
+            "TAP THE TOP TO DROP CRICKETS",
+            "HOLD A FINGER AND THEY VISIT",
+            "TAP A LIZARD TO CHECK ON IT",
+            "DRAG THE GLASS TO WIPE IT",
+            "KEEP THE HUMID HIDE MISTED",
+#else
             "TAP THE SURFACE TO FEED",
             "HOLD A FINGER AND THEY VISIT",
             "TAP A FISH TO CHECK ON IT",
             "DRAG THE GLASS TO WIPE ALGAE",
             "SWIPE ACROSS GRASS TO TRIM",
+#endif
             "TWO TAPS FLIP THE LIGHT",
             "THEY CHOOSE. YOU CARE.",
         };

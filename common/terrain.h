@@ -108,6 +108,8 @@ bool  terrain_route(const terrain_t *tr, int from, float fx, int to, float tx, t
  * round the basking spot - bask_c in its middle, blending to the air's own at bask_r_px; dark, the gradient night_drop_c
  * cooler, no rise, no lamp. _open_c: the lit air without the lamp's pool (what the lamp warms its spot over) */
 float terrain_air_c(const terrain_t *tr, const habitat_t *h, float x, float y, bool lit);
+/* ... with the lamp's pool lamp_x as wide (pocket-terrarium P5: the shop's BASKING BULB, tank.c) */
+float terrain_air_lamp_c(const terrain_t *tr, const habitat_t *h, float x, float y, bool lit, float lamp_x);
 float terrain_air_open_c(const terrain_t *tr, const habitat_t *h, float x, float y);
 /* the rules on glass g (habitat_check calls it for every board; the habitat's own data rules first): false with the first
  * broken one in why */

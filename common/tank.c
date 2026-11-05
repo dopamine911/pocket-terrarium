@@ -724,7 +724,7 @@ void tank_init(tank_t *t, uint32_t seed) {
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) t->moist[k] = k < h->n_hides && h->hides[k].kind == HIDE_HUMID ? h->moist_start : 0; }
     t->mist_stroke = 0; t->mist_hold = t->mist_done = false; t->mist_x = t->mist_y = t->mist_s = 0; t->mist_fish = -1;
     for (int i = 0; i < MAX_CRICKETS; i++) t->cricket[i].state = CK_NONE;   /* THE CRICKETS: none yet (the two below are the terrarium's), the dish empty */
-    t->dish_worms = 0; t->ck_dropped = t->ck_caught = t->ck_missed = t->ck_lost = t->dish_eaten = 0;
+    t->dish_worms = 0; t->dish_farm = false; t->ck_dropped = t->ck_caught = t->ck_missed = t->ck_lost = t->dish_eaten = 0;
     tank_scatter_food(t, 2);
 }
 
@@ -3306,7 +3306,7 @@ void tank_feed(tank_t *t, float x, int n) {
         float dx = 0, dy;
         if (tank_dish_here(t)) tank_dish_point(t, &dx, &dy);
         if (tank_dish_here(t) && fabsf(x - dx) <= DISH_FEED_PX) {
-            if (t->dish_worms < DISH_WORMS) { t->dish_worms = DISH_WORMS; tank_emit(TEV_FEED, -1); }
+            if (t->dish_worms < DISH_WORMS) { t->dish_worms = DISH_WORMS; t->dish_farm = false; tank_emit(TEV_FEED, -1); }   /* (the keeper's dish now: P5) */
         } else {
             int dropped = 0;
             for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {   /* (the draws a pellet's were: its jitter, its height) */
@@ -3650,16 +3650,18 @@ int tank_humid_hide(const tank_t *t) {
     for (int k = 0; k < h->n_hides; k++) if (h->hides[k].kind == HIDE_HUMID) return k;
     return -1;
 }
+/* the lamp's pool as the tank has it: the habitat's, SD_BULB_R_X as wide with the shop's BASKING BULB (pocket-terrarium P5) */
+static float lamp_x(const tank_t *t) { return (t->sd_unlocks & SD_ITEM_BULB) ? SD_BULB_R_X : 1.0f; }
 float tank_env_c_lit(const tank_t *t, float x, float y, bool lit) {
     const habitat_t *h = tank_habitat(t);
     int k = tank_hide_at(t, x, y);
     if (k >= 0) return lit ? h->hides[k].t_lit_c : h->hides[k].t_dark_c;
-    return terrain_air_c(tank_terrain(t), h, x, y, lit);
+    return terrain_air_lamp_c(tank_terrain(t), h, x, y, lit, lamp_x(t));
 }
 float tank_animal_env_c(const tank_t *t, const fish_t *f, bool lit) {
     const habitat_t *h = tank_habitat(t);
     if (f->hide >= 0 && f->hide < h->n_hides) return lit ? h->hides[f->hide].t_lit_c : h->hides[f->hide].t_dark_c;   /* in it: its air */
-    return terrain_air_c(tank_terrain(t), h, f->x, f->y, lit);   /* out: the air where it stands (a footprint walked past too) */
+    return terrain_air_lamp_c(tank_terrain(t), h, f->x, f->y, lit, lamp_x(t));   /* out: the air where it stands (a footprint walked past too) */
 }
 float tank_env_c(const tank_t *t, float x, float y) { return tank_env_c_lit(t, x, y, !t->night); }
 int tank_activity_phase(const tank_t *t) { return species_phase(tank_species(t), !t->night, t->light_s); }
@@ -3723,11 +3725,12 @@ void tank_shed_clock(tank_t *t, float dt) {
     const species_t *p = tank_species(t);
     if (dt <= 0 || !p->sheds) return;                 /* (the aquarium's fish do not shed, and its water keeps no hide damp) */
     const habitat_t *h = tank_habitat(t);
+    const float dry = h->moist_dry_per_s * ((t->sd_unlocks & SD_ITEM_MOSS) ? SD_MOSS_DRY_X : 1.0f);   /* (the shop's moss, P5: slower) */
     float damp_until[HABITAT_HIDES_MAX];              /* the part of dt each humid hide stays damp (-1: none) */
     for (int k = 0; k < h->n_hides; k++) {
         float m0 = t->moist[k];
-        damp_until[k] = h->hides[k].kind == HIDE_HUMID && m0 >= SHED_DAMP ? (m0 - SHED_DAMP) / h->moist_dry_per_s : -1;
-        if (h->hides[k].kind == HIDE_HUMID) t->moist[k] = fmaxf(0, m0 - h->moist_dry_per_s * dt);
+        damp_until[k] = h->hides[k].kind == HIDE_HUMID && m0 >= SHED_DAMP ? (m0 - SHED_DAMP) / dry : -1;
+        if (h->hides[k].kind == HIDE_HUMID) t->moist[k] = fmaxf(0, m0 - dry * dt);
     }
     for (int i = 0; i < t->n_fish; i++) {
         fish_t *f = &t->fish[i];
@@ -4699,12 +4702,27 @@ static void lizard_catch(tank_t *t, int idx, int i) {
     cricket_t *c = &t->cricket[i];
     const bool mine = c->from_player;
     c->state = CK_NONE; t->ck_caught++; t->fish[idx].prey = -1; t->fish[idx].seen_surf = -1;   /* (eaten: nothing to look for) */
+    if (!tank_is_visitor(idx)) t->fish[idx].ms_bits |= MS_FIRST_CATCH;   /* its first cricket, anyone's (P5's badge) */
     lizard_meal(t, idx, 1.0f, mine);
 }
-static void lizard_worm(tank_t *t, int idx) {                 /* a worm from the dish (the keeper filled it) */
+static void lizard_worm(tank_t *t, int idx) {                 /* a worm from the dish: the keeper's - or the farm's, the tank's own (P5) */
     if (!t->dish_worms) return;
+    const bool mine = !t->dish_farm;
     t->dish_worms--; t->dish_eaten++;
-    lizard_meal(t, idx, DISH_WORM_X, true);
+    if (!t->dish_worms) t->dish_farm = false;
+    lizard_meal(t, idx, DISH_WORM_X, mine);
+}
+/* the MEALWORM FARM (P5, tank.h): owned, a dish here and not full - filled, and the dish the farm's: its worms the tank's
+   own (whoever filled it last owns it, as a feed gesture's fill makes it the keeper's) */
+void tank_dish_farm(tank_t *t) {
+    if (!(t->sd_unlocks & SD_ITEM_FARM) || !tank_dish_here(t) || t->dish_worms >= DISH_WORMS) return;
+    t->dish_worms = DISH_WORMS; t->dish_farm = true;
+}
+/* a hatchling (P5): inside the humid hide - or the first hide there is - as a lizard staged into one (tank_lizard_enter) */
+void tank_hatch_place(tank_t *t, int slot) {
+    int k = tank_humid_hide(t);
+    if (k < 0 && tank_habitat(t)->n_hides > 0) k = 0;
+    if (k >= 0) tank_lizard_enter(t, slot, k);
 }
 static void lizard_missed(tank_t *t, cricket_t *c, float from_x) {
     t->ck_missed++;

@@ -8,7 +8,9 @@ blit_icon() (which can also scale alpha for dimming/unrevealed states).
 
 Per-world art: <name>_terr.png (tools/gen_terr_icons.py) replaces <name>.png in the
 terrarium's bin (common/world.h PT_TERRARIUM). Both are declared; each bin defines
-only its own world's, and WORLD_ICON(icon_<name>) picks it.
+only its own world's, and WORLD_ICON(icon_<name>) picks it. A <name>_terr.png with
+no <name>.png is the terrarium's own (its shop pieces, its shed badges): defined in
+the terrarium's bin alone, named as icon_<name>_terr in terrarium-only code.
 
 Run from anywhere; paths are repo-relative to this file:
     python3 tools/gen_icons.py
@@ -39,9 +41,9 @@ def main():
     if not files:
         sys.exit(f"no PNGs in {SRC}")
     stems = {os.path.splitext(f)[0] for f in files}
-    terr_of = {s[: -len(TERR)] for s in stems if s.endswith(TERR)}   # the aquarium names that have a terrarium variant
-    for base in sorted(terr_of - stems):
-        sys.exit(f"{base}{TERR}.png replaces {base}.png, which is not there")
+    terr_of = {s[: -len(TERR)] for s in stems if s.endswith(TERR)}   # the aquarium names that have a terrarium variant ...
+    terr_only = sorted(terr_of - stems)                                # ... and the terrarium's own art (no aquarium original)
+    terr_of &= stems
     decls, defs, table, pairs = [], [], [], []
     total = 0
     for fn in files:
@@ -75,7 +77,8 @@ def main():
         + "\n".join(decls) + "\n\n"
         "/* the per-world art: icon_<name>_terr in the terrarium's bin, icon_<name> in the aquarium's. Each bin defines\n"
         " * only its own of the pair (icons.c), so name one only through WORLD_ICON (a constant choice, folded away):\n"
-        + "".join(f" *   {' '.join(pairs[i:i + 4])}\n" for i in range(0, len(pairs), 4)) + " */\n"
+        + "".join(f" *   {' '.join(pairs[i:i + 4])}\n" for i in range(0, len(pairs), 4)) + " * The terrarium's own art, defined in its bin alone (name it in terrarium-only code):\n"
+        + "".join(f" *   {' '.join(cname(s + TERR) for s in terr_only[i:i + 4])}\n" for i in range(0, len(terr_only), 4)) + " */\n"
         "#define WORLD_ICON(name) (PT_TERRARIUM ? &name##_terr : &name)\n"
         "\n#endif\n")
     src = (
@@ -83,7 +86,7 @@ def main():
         '#include "icons.h"\n\n' + "\n\n".join(defs) + "\n\n" + "\n".join(table) + "\n")
     open(OUT_H, "w").write(hdr)
     open(OUT_C, "w").write(src)
-    print(f"wrote {len(files)} icons ({len(pairs)} with a terrarium variant), {total / 1024:.1f} KB of pixel data in all")
+    print(f"wrote {len(files)} icons ({len(pairs)} with a terrarium variant, {len(terr_only)} the terrarium's own), {total / 1024:.1f} KB of pixel data in all")
     for f in files:
         print(f"  {cname(f)}")
 

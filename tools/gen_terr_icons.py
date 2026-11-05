@@ -12,6 +12,7 @@ original so the pair stays alike.
 
     python3 tools/gen_terr_icons.py && python3 tools/gen_icons.py
 """
+import math
 import os
 from PIL import Image, ImageOps
 
@@ -30,6 +31,14 @@ PAL = {
     # the lamp, sparkles, a sleeping z
     "l": 0xfff6c0, "L": 0xffd24a, "o": 0xf09a2a, "w": 0xfff4d0,
     "z": OUTLINE[:3],
+    # an amber gecko iris's dark rim
+    "u": 0xb06a1a,
+    # the tangerine morph (the second gecko in a pair)
+    "t": 0xffc882, "T": 0xf39a3c, "O": 0xb8641e,
+    # a succulent: green, pink-tipped
+    "g": 0xa6d68e, "G": 0x63a85e, "v": 0x3a6e44, "p": 0xf08ca8,
+    # the desert rose (gypsum): a glint, highlight, light, mid, shadow, the gaps between the blades
+    "0": 0xfff2e2, "1": 0xf6dcb8, "2": 0xe9b98c, "3": 0xcf9466, "4": 0x9a6040, "5": 0x6a3c26,
 }
 
 
@@ -303,6 +312,302 @@ def first_sale():                       # a gecko sold: the gecko and the coin
     return im
 
 
+# ---- the card's icons (16 and 24 px) ----
+GECKO_MINI = [                  # 14 x 7: GECKO_SMALL two columns shorter, for the 16 px icons
+    ".........HHH..",
+    ".....HDH.HYYH.",
+    ".HHDHYYDHYYYEW",
+    "HYYYYDYYYDYYEY",
+    ".SSSBBBBBSBBBs",
+    "...SY....SY...",
+    "..SS....S..SS.",
+]
+GECKO_STRIDE = [                # 12 x 8: mid-stride, the legs flung fore and aft
+    "........HHH.",
+    "....HHDHYYYH",
+    "..HHYDYYYYEW",
+    "HHYDYYDYYYEY",
+    ".SSBBBBBSBBs",
+    "...SY...SY..",
+    "..S.....S...",
+    ".SS......SS.",
+]
+ROCK_WIDE = [                   # 13 x 7: a sandstone boulder to hide behind
+    "..rrrrrrr....",
+    ".rRRRRRRRrrr.",
+    "rRRRRqRRRRRRr",
+    "RRRRRRRRRqRRR",
+    "RqRRRRRRRRRRq",
+    "qRRRRRRqRRRqq",
+    ".qqqqqqqqqqq.",
+]
+EYE_OPEN = [                    # 13 x 7: a leopard gecko's eye, wide: amber iris, slit pupil, a glint
+    "....uuuuu....",
+    "..uuooEoouu..",
+    ".uoWWoEoooou.",
+    "uoWoooEooooou",
+    ".uoLLLELLLou.",
+    "..uLLLELLLu..",
+    "....uuuuu....",
+]
+EYE_NARROW = [                  # 13 x 5: the same eye, the lids drawn in to a slit
+    "...zzzzzzz...",
+    ".zzuuuEuuuzz.",
+    "zuoWooEoooouz",
+    ".zzLLLELLLzz.",
+    "...zzzzzzz...",
+]
+STAR = [".L.", "LlL", ".L."]
+CR_BODY = [                     # 19 x 9, facing left: head, saddle, folded wings, the legs under
+    "..cc...cccc........",
+    ".cccc.kcccccccc....",
+    "ccEcckcccCccccccc..",
+    "cccccCkCCCCCCCCCCC.",
+    "CccCCkCCkCCkCCkCCCk",
+    ".CCk.kkCCCCCCCCCCk.",
+    "..C..C.kkkkkkkkk...",
+    ".C...C..C..........",
+    "C...C....C.........",
+]
+CR_FEMUR = [                    # the jumping leg's thigh, the knee up over the back
+    "....cc",
+    "...cCk",
+    "...cCk",
+    "..ccCk",
+    "..cCkk",
+    ".ccCCk",
+    ".cCkCk",
+    "ccCCk.",
+    "cCCk..",
+]
+CR_TIBIA = ["C..", "C..", "C..", ".C.", ".C.", ".C.", ".C.", ".C.", "..C", "..C", "..C", "..C"]
+
+
+def line(dst, pts, ch):
+    """a 1 px line through pts, no outline (antennae)"""
+    px = dst.load()
+    col = rgb(PAL[ch]) + (255,)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        n = max(abs(x1 - x0), abs(y1 - y0))
+        for t in range(n + 1):
+            px[round(x0 + (x1 - x0) * t / n), round(y0 + (y1 - y0) * t / n)] = col
+
+
+def tangerine(rows):
+    return [r.replace("H", "t").replace("Y", "T").replace("S", "O") for r in rows]
+
+
+def hunger():                           # the food meter: a cricket, the hind leg cocked to jump
+    im = canvas(24)
+    line(im, [(3, 11), (3, 8), (4, 5), (6, 3), (9, 1), (13, 0), (17, 0)], "c")
+    line(im, [(5, 11), (5, 8), (7, 5), (10, 3), (14, 2)], "C")
+    put(im, sprite(CR_TIBIA), 19, 5)
+    put(im, sprite(CR_BODY), 1, 10)
+    put(im, sprite(CR_FEMUR), 13, 5)
+    return im
+
+
+def shy():                              # a gecko peeking over a rock
+    im = canvas(16)
+    put(im, sprite(GECKO_HEAD), 3, 0)
+    put(im, sprite(ROCK_WIDE), 0, 7)
+    return im
+
+
+def bold():                             # a gecko striding out, the dust streaking behind
+    im = canvas(16)
+    put(im, sprite(tilt(GECKO_STRIDE, -0.12)), 3, 3)
+    for y, x0, x1 in ((5, 0, 3), (8, 0, 2), (11, 1, 4)):
+        put(im, sprite(["n" * (x1 - x0)], outline=False), x0, y)
+    return im
+
+
+def solo():
+    im = canvas(16)
+    put(im, sprite(GECKO_MINI), 0, 4)
+    return im
+
+
+def social():                           # two geckos, a tangerine one behind and above
+    im = canvas(16)
+    put(im, sprite(tangerine(GECKO_MINI)), 1, 1)
+    put(im, sprite(GECKO_MINI), 0, 7)
+    return im
+
+
+def cautious():
+    im = canvas(16)
+    put(im, sprite(EYE_NARROW), 1, 7)
+    return im
+
+
+def curious():
+    im = canvas(16)
+    put(im, sprite(EYE_OPEN), 0, 6)
+    put(im, sprite(STAR), 11, 0)
+    return im
+
+
+# ---- the desert rose: the terrarium's currency ----
+def unit(v):
+    n = math.hypot(*v)
+    return (v[0] / n, v[1] / n)
+
+
+def ring_blades(cx, cy, rings, squash, lift):
+    """blades round concentric rings (outer first): (x, y, half-length, half-width, angle, outward unit)"""
+    out = []
+    for R, n, a, b, phase, twist in rings:
+        for k in range(n):
+            t = phase + 2 * math.pi * k / n
+            bx, by = cx + R * math.cos(t), cy + R * squash * math.sin(t) - lift * (1 - R / rings[0][0])
+            ang = math.degrees(math.atan2(squash * math.cos(t), -math.sin(t))) + twist * math.sin(3 * k + R)
+            out.append((bx, by, a, b, ang, unit((bx - cx, (by - cy) / squash + 1e-6))))
+    return out
+
+
+def rose(size, cx, cy, rings, squash, lift, pointy=1.3, light=(-0.5, -0.85)):
+    """a rosette of flat crystal blades as a character map: each blade a pointed lens, later ones on top;
+    its outer rim glints where it faces the light, its inner edge is a dark gap"""
+    blades = ring_blades(cx, cy, rings, squash, lift)
+    owner, masks = {}, []
+    for i, (bx, by, a, b, ang, rd) in enumerate(blades):
+        ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        m = {}
+        for y in range(size):
+            for x in range(size):
+                dx, dy = x + 0.5 - bx, y + 0.5 - by
+                u, v = (dx * ca + dy * sa) / a, (-dx * sa + dy * ca) / b
+                if abs(u) <= 1 and abs(v) <= (1 - u * u) ** pointy:
+                    m[(x, y)] = (dx * rd[0] + dy * rd[1]) / b
+        masks.append(m)
+        for p in m:
+            owner[p] = i
+    lx, ly = unit(light)
+    rmax = rings[0][0]
+    rows = []
+    for y in range(size):
+        row = ""
+        for x in range(size):
+            i = owner.get((x, y), -1)
+            if i < 0:
+                row += "."
+                continue
+            m, rd = masks[i], blades[i][5]
+            c, rim = None, None
+            for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if (x + ddx, y + ddy) not in m:
+                    out = ddx * rd[0] + ddy * rd[1]
+                    if out > 0.3:
+                        rim = max(rim, ddx * lx + ddy * ly) if rim is not None else ddx * lx + ddy * ly
+                    elif out < -0.3 and c is None:
+                        c = "5"
+            if rim is not None:
+                c = "0" if rim > 0.3 else "1" if rim > -0.5 else "2"
+            if c is None:
+                vr = m[(x, y)]
+                c = "2" if vr > 0.55 else "3" if vr > 0 else "4"
+                lit = ((x - cx) * lx + (y - cy) * ly) / rmax
+                if lit < -0.3:
+                    c = {"2": "3", "3": "4", "4": "4"}[c]
+                elif lit > 0.4 and c == "3":
+                    c = "2"
+            row += c
+        rows.append(row)
+    return rows
+
+
+ROSE_16 = [                     # 14 x 12, the price glyph: the same rosette, a few blades
+    ".....0000.....",
+    "..0002222000..",
+    ".024544005430.",
+    "02240002304330",
+    "02402000030432",
+    "02405040253442",
+    "24503402432442",
+    "02440342324442",
+    "03345022254442",
+    ".034544445443.",
+    "..3344444433..",
+    ".....4444.....",
+]
+ROSE_RINGS_64 = [(23, 10, 9.5, 5.5, 0.2, 12), (16, 8, 8.5, 5, 0.6, 12), (9.5, 6, 7, 4.5, 1.1, 12), (4, 3, 5, 3.2, 0.5, 10)]
+ROSE_RINGS_34 = [(11.5, 8, 6, 3.5, 0.2, 12), (7, 6, 5, 3.2, 0.6, 12), (3, 4, 4, 2.6, 1.1, 10)]
+SAND_64 = [
+    "..........nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn..........",
+    ".....nnnnnnnNNnnnnnnnnnnnnnnnNNnnnnnnnnnnnnNNnnnnnnn....",
+    "..nnnNNNNNNNNmNNNNNNNNNNNNNNNNNmNNNNNNNNNNNNNmNNNNNNnnn.",
+    "NNNNmNNNNNNNNNNNNNNmNNNNNNNNNNNNNNNNmNNNNNNNNNNNNNNNNNNN",
+    ".NNNNNNNNmNNNNNNNNNNNNNNNmNNNNNNNNNNNNNNNNNmNNNNNNNNNNN.",
+]
+SAND_34 = [
+    "....nnnnnnnnnnnnnnnnnnn....",
+    ".nnnnNNnnnnnnnnnnNNnnnnnnn.",
+    "NNNmNNNNNNNNmNNNNNNNNNmNNNN",
+    ".NNNNNmNNNNNNNNNNmNNNNNNNN.",
+]
+
+
+def desert_rose_64():                   # the shop's header: a desert rose bedded in sand, a glint
+    im = canvas(64)
+    put(im, sprite(rose(64, 32, 25, ROSE_RINGS_64, 0.62, 3)), -1, -1)
+    put(im, sprite(SAND_64), 3, 41)
+    for x, y, ch in ((2, 53, "n"), (6, 50, "N"), (60, 50, "n"), (61, 53, "m"), (4, 56, "m"), (57, 55, "n"), (30, 52, "m"), (38, 53, "n"), (20, 52, "n")):
+        grain(im, x, y, ch)
+    put(im, sprite(SPARKLE, outline=False), 2, 2)
+    return im
+
+
+def desert_rose_34():                   # the keeper page's shop button
+    im = canvas(34)
+    put(im, sprite(rose(34, 17, 14, ROSE_RINGS_34, 0.62, 1.5)), -1, -1)
+    put(im, sprite(SAND_34), 2, 21)
+    for x, y, ch in ((2, 29, "n"), (31, 28, "N"), (5, 30, "m"), (28, 30, "n"), (17, 29, "m")):
+        grain(im, x, y, ch)
+    put(im, sprite(SPARKLE, outline=False), 0, 0)
+    return im
+
+
+def desert_rose_16():                   # the price glyph
+    im = canvas(16)
+    put(im, sprite(ROSE_16), 0, 0)
+    put(im, sprite([".nnnnnnnnnn.", "nnNNnnnnNNnn"]), 1, 11)
+    return im
+
+
+# ---- the keeper page's MY TANKS: the bench and the glass kept, desert inside ----
+TANK_WALL = ["qqqqqqqqqqqqq"] + ["rrrrrrrrrrrrr"] * 2 + [
+    "RRRRrrrrrrrrr", "rrrRRRRrrrrrr", "rrrrrrRRRRRRR", "rrrrrrrrrrrrr", "rrrrrrrrrrrrr",
+    "rrrrrrrrrRRRR", "RRRRRRRRRRrrr"] + ["rrrrrrrrrrrrr"] * 4 + [
+    "nnnnnnnnnnnnn", "NNnNNNNnNNNnN", "NmNNNNmNNNNNN", "NNNNmNNNNmNNN"]
+TANK_GECKO = [
+    ".....HHH.",
+    "..HDHYYEW",
+    "HYYYDYYYY",
+    ".SBBBBBBs",
+    ".S.S..S.S",
+]
+TANK_ROCK = [                   # a rock with a pink-tipped succulent on it
+    ".p.gGg.p.",
+    "pGgGgGgGp",
+    ".vGgGGGv.",
+    "..vrrRv..",
+    ".rRRRRRq.",
+    "rRRqRRRqq",
+]
+
+
+def my_tanks():
+    im = crop("foot_my_tanks", (0, 0, 36, 36))
+    for x0 in (2, 21):                  # the water out, a sandstone wall and a sand floor in
+        put(im, sprite(TANK_WALL, outline=False), x0, 7)
+        put(im, crop("foot_my_tanks", (1, 8, 2, 20)), x0, 8)   # the glass's glint
+    put(im, sprite(TANK_GECKO), 3, 15)
+    put(im, sprite(TANK_ROCK), 22, 14)
+    return im
+
+
+
 ICONS_TERR = {
     "ms_first_meal": first_meal,
     "ms_first_hold_approach": first_hold_approach,
@@ -316,6 +621,17 @@ ICONS_TERR = {
     "ms_first_play_session": first_play_session,
     "ms_tank_changed_someone": changed_someone,
     "ms_first_sale": first_sale,
+    "icon_hunger": hunger,
+    "icon_shy": shy,
+    "icon_bold": bold,
+    "icon_solo": solo,
+    "icon_social": social,
+    "icon_cautious": cautious,
+    "icon_curious": curious,
+    "shop_sand_dollar_16": desert_rose_16,
+    "shop_sand_dollar_64": desert_rose_64,
+    "foot_sand_dollar": desert_rose_34,
+    "foot_my_tanks": my_tanks,
 }
 
 
