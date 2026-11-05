@@ -6,7 +6,7 @@
 # feature work, and a reflash used to wipe the night's log (2026-09-15).
 #
 #   tools/flash.sh              # preflight, build, flash app
-#   tools/flash.sh --model      # ... and model/out/model_q4.bin at 0x290000
+#   tools/flash.sh --model      # ... and the build's world's model (common/world.h) at 0x290000, with its trailer
 #   tools/flash.sh --no-build   # preflight, flash the existing build
 #   TANK_PORT=/dev/cu.usbmodem101 tools/flash.sh   # with another board plugged in
 #
@@ -50,8 +50,9 @@ if [[ " $* " != *" --no-build "* ]]; then
   run_logged "build" "binary size|build complete" idf.py -B "$BUILD" build
 fi
 if [[ " $* " == *" --model "* ]]; then
-  run_logged "model flash" "Wrote|verified" python -m esptool --chip esp32s3 -p "$PORT" -b 460800 write_flash 0x290000 ../model/out/model_q4.bin
+  MODEL=$(python ../tools/model_trailer.py --build-dir "$BUILD" --print-model)
   python ../tools/model_trailer.py --check --build-dir "$BUILD" || exit 1
+  run_logged "model flash" "Wrote|verified" python -m esptool --chip esp32s3 -p "$PORT" -b 460800 write_flash 0x290000 "$MODEL"
   run_logged "model trailer" "Wrote|verified" python -m esptool --chip esp32s3 -p "$PORT" -b 460800 write_flash 0xA8F000 "$BUILD/model_trailer.bin"
   sleep 3
 fi

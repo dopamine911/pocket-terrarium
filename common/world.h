@@ -32,19 +32,18 @@
 #endif
 
 /* ---- THE BRAIN, per world: the model and its tokenizer. Paths are from the repo's root: the sim opens "../" + them
- * (it runs in sim/); the firmware embeds PT_FW_TOKENIZER_<WORLD> (from firmware/, a copy kept in the repo, as model/out
- * is not) - firmware/main/CMakeLists.txt reads its world's line from this file - and the model itself goes to the
- * model partition (tools/flash*.sh). The model's identity - tag, length, sha256 - is version.h's PT_MODEL_*.
- *
- * THE LIZARD MODEL GOES HERE (P6): the terrarium's three lines are still the v4 fish model, its TEMPORARY brain - it
- * thinks for the lizards through advisor_core.c's TEMPORARY FISH-MODEL BRIDGE. When the lizard model lands, point them
- * at its files (version.h's identity at its own) and delete the bridge. ---- */
+ * (it runs in sim/); the firmware embeds PT_FW_TOKENIZER_<WORLD> (from firmware/, a copy kept in the repo) -
+ * firmware/main/CMakeLists.txt reads its world's line from this file - and the model itself goes to the model partition
+ * (tools/flash*.sh, which ask tools/model_trailer.py --print-model for their build's world). The model's identity - tag,
+ * length, sha256 - is version.h's PT_MODEL_*_<WORLD>. The aquarium thinks with the v4 fish model, the terrarium with
+ * the lizard model (schema L1, model/schema-lizard.md; docs/retrain-lizard.md, lizard_v1 = model_q4_l1_focus2.bin);
+ * advisor_core_init refuses the other world's. ---- */
 #define PT_MODEL_FILE_AQUARIUM      "model/out/model_q4.bin"
 #define PT_TOKENIZER_FILE_AQUARIUM  "model/out/tokenizer.bin"
 #define PT_FW_TOKENIZER_AQUARIUM    "main/tokenizer.bin"
-#define PT_MODEL_FILE_TERRARIUM     "model/out/model_q4.bin"       /* TEMPORARY: the v4 fish model (P6: the lizard model's) */
-#define PT_TOKENIZER_FILE_TERRARIUM "model/out/tokenizer.bin"      /* TEMPORARY: its tokenizer */
-#define PT_FW_TOKENIZER_TERRARIUM   "main/tokenizer.bin"           /* TEMPORARY: its tokenizer, embedded */
+#define PT_MODEL_FILE_TERRARIUM     "model/out/model_q4_lizard.bin"
+#define PT_TOKENIZER_FILE_TERRARIUM "model/out/tokenizer_lizard.bin"
+#define PT_FW_TOKENIZER_TERRARIUM   "main/tokenizer_lizard.bin"
 #if PT_TERRARIUM
 #define PT_MODEL_FILE     PT_MODEL_FILE_TERRARIUM
 #define PT_TOKENIZER_FILE PT_TOKENIZER_FILE_TERRARIUM

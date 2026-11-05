@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """make_installer.py - assemble the browser installer (ESP Web Tools).
 
-Gathers the firmware build's bootloader / partition table / app, the
-shipped model_q4.bin, the installer page and the vendored ESP Web Tools
+Gathers the firmware build's bootloader / partition table / app, its
+world's model (published as model_q4.bin), the installer page and the vendored ESP Web Tools
 bundle into ONE static folder that any HTTPS host can serve as-is:
 
     installer/dist/
@@ -42,6 +42,7 @@ http://localhost for a local check: `python3 -m http.server -d installer/dist`).
 import argparse, datetime, hashlib, json, os, re, shutil, struct, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pt_boards import BOARDS, board_of_image, name_of, build_of_image
+import model_trailer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BUILD = os.path.expanduser("~/.cache/pocket-terrarium/fw-build")
@@ -194,7 +195,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build-dir", default=DEFAULT_BUILD if os.path.isdir(DEFAULT_BUILD)
                     else os.path.join(ROOT, "firmware", "build"))
-    ap.add_argument("--model", default=os.path.join(ROOT, "model", "out", "model_q4.bin"))
+    ap.add_argument("--model", default=None, help="default: the build's world's model (common/world.h)")
     ap.add_argument("--out", default=os.path.join(ROOT, "installer", "dist"))
     ap.add_argument("--version", default=None)
     ap.add_argument("--manifest-url", default="manifest.json",
@@ -220,14 +221,19 @@ def main():
             parts.append((int(ent["offset"], 0), os.path.join(build_dir, ent["file"]), pub))
         # the otadata initial image: a cable install always boots ota_0 again,
         # whatever slot the tank had updated itself into
-        parts.append((model_offset(), a.model, "model_q4.bin"))
-        if os.path.getsize(a.model) > model_part()[1] - TRAILER_SIZE:
-            sys.exit(f"{a.model}: {os.path.getsize(a.model):,} B does not leave the model partition's last sector for the trailer")
+        world = model_trailer.world_of_build(build_dir)           # one model per page: every board's build of one world
+        if world != model_trailer.world_of_build(a.build_dir):
+            sys.exit(f"{build_dir} is the {world}'s build, {a.build_dir} the other world's: one installer, one world")
+        model = a.model or model_trailer.model_file(world)
+        parts.append((model_offset(), model, "model_q4.bin"))
+        if os.path.getsize(model) > model_part()[1] - TRAILER_SIZE:
+            sys.exit(f"{model}: {os.path.getsize(model):,} B does not leave the model partition's last sector for the trailer")
         # the trailer is made in a scratch folder, never in the build dir: in CI the build dirs are
         # root-owned (the ESP-IDF action's docker) and the public repo's first 0.3.0 installer run
         # died here (2026-10-04; make_ota_manifest.py had the same fault at the rehearsal)
         trailer = os.path.join(tempfile.mkdtemp(prefix="pt-trailer-"), "model_trailer.bin")
-        subprocess.run([sys.executable, os.path.join(ROOT, "tools", "model_trailer.py"), "--model", a.model, "--out", trailer, "--check"], check=True)
+        subprocess.run([sys.executable, os.path.join(ROOT, "tools", "model_trailer.py"), "--world", world, "--model", model,
+                        "--out", trailer, "--check"], check=True)
         parts.append((model_trailer_offset(), trailer, "model_trailer.bin"))
         parts.sort()
         for off, src, pub in parts:

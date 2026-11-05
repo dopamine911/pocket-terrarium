@@ -18,6 +18,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 #include <string.h>
+#include "world.h"   /* PT_TERRARIUM: the model identity is per world */
 
 /* main is the 0.4 line (2026-10-05, Strato: "bump main to 0.4.0 dev"): the
  * number sits above every 0.3.x, so the Wi-Fi update never offers a 0.3.x
@@ -41,17 +42,28 @@
  * rank below 0.3.8.1. tools/make_ota_manifest.py packs the same way. */
 #define PT_RELEASE_NUM   ((PT_RELEASE_MAJOR << 24) | (PT_RELEASE_MINOR << 16) | (PT_RELEASE_PATCH << 8) | PT_RELEASE_HOTFIX)
 
-/* the model this build ships with (model/out/model_q4.bin): its tag, byte
- * length and sha256. The tank's model trailer (firmware/main/model_trailer.c)
- * is healed from these at boot when a cable install left none, and an
- * update manifest naming another model tag says "needs the cable" until the
- * model path lands (docs/OTA.md, phase two). tools/model_trailer.py --check
- * refuses a release whose model file disagrees with these. pocket-terrarium
- * P2b: both worlds still ship the v4 fish model (world.h THE BRAIN); P6 gives
- * the terrarium the lizard model's identity here, by PT_WORLD. */
-#define PT_MODEL_TAG     "v3m"
-#define PT_MODEL_LEN     7557640u
-#define PT_MODEL_SHA256  "50bed3e16a6b11f3496dde21d8784da9067f40ec9f0a77cf97f60a95acb80f6b"
+/* the model this build ships with (world.h PT_MODEL_FILE_<WORLD>): its tag,
+ * byte length and sha256, per world. The tank's model trailer
+ * (firmware/main/model_trailer.c) is healed from these at boot when a cable
+ * install left none, and an update manifest naming another model tag says
+ * "needs the cable" until the model path lands (docs/OTA.md, phase two).
+ * tools/model_trailer.py --check refuses a build whose world's model file
+ * disagrees with these: update them when a world's model changes. */
+#define PT_MODEL_TAG_AQUARIUM     "v3m"
+#define PT_MODEL_LEN_AQUARIUM     7557640u
+#define PT_MODEL_SHA256_AQUARIUM  "50bed3e16a6b11f3496dde21d8784da9067f40ec9f0a77cf97f60a95acb80f6b"
+#define PT_MODEL_TAG_TERRARIUM    "lizard_v1"   /* docs/retrain-lizard.md: the focused repair's seed 2 */
+#define PT_MODEL_LEN_TERRARIUM    7558660u
+#define PT_MODEL_SHA256_TERRARIUM "d86e2f6194a2c5aa302b46502a2e20d57e06ba465d2d9f77dd85c40f9643d017"
+#if PT_TERRARIUM
+#define PT_MODEL_TAG     PT_MODEL_TAG_TERRARIUM
+#define PT_MODEL_LEN     PT_MODEL_LEN_TERRARIUM
+#define PT_MODEL_SHA256  PT_MODEL_SHA256_TERRARIUM
+#else
+#define PT_MODEL_TAG     PT_MODEL_TAG_AQUARIUM
+#define PT_MODEL_LEN     PT_MODEL_LEN_AQUARIUM
+#define PT_MODEL_SHA256  PT_MODEL_SHA256_AQUARIUM
+#endif
 
 /* the board this build is for (2026-10-02: 0.3.0 ships three - docs/BOARDS.md).
  * One source tree, one release number, but an image per board: a tank fetches

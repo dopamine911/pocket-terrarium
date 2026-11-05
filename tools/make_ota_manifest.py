@@ -31,15 +31,16 @@ and its common/version.h must agree with the model file (model_trailer.py
 import argparse, hashlib, json, os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pt_boards import board_of_image
+import model_trailer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def version_h():
+def version_h(build_dir):
+    """the release, its stage, and the build's world's model tag and length (model_trailer.version_h)"""
     src = open(os.path.join(ROOT, "common", "version.h")).read()
     g = lambda k: re.search(rf'#define {k}\s+"([^"]+)"', src).group(1)
-    rel, stage, tag = g("PT_RELEASE"), g("PT_RELEASE_STAGE"), g("PT_MODEL_TAG")
-    ln = int(re.search(r'#define PT_MODEL_LEN\s+(\d+)u?', src).group(1))
-    return rel, stage, tag, ln
+    tag, ln, _ = model_trailer.version_h(model_trailer.world_of_build(build_dir))
+    return g("PT_RELEASE"), g("PT_RELEASE_STAGE"), tag, ln
 
 def release_num(s):
     # four bytes, major.minor.patch.hotfix (common/version.h PT_RELEASE_NUM, 2026-10-21;
@@ -67,7 +68,7 @@ def main():
     a.add_argument("--model-url", default=None)
     a.add_argument("--needs-cable", action="store_true")
     a = a.parse_args()
-    rel, stage, tag, model_len = version_h()
+    rel, stage, tag, model_len = version_h(a.build_dir)
     subprocess.run([sys.executable, os.path.join(ROOT, "tools", "model_trailer.py"), "--check", "--build-dir", a.build_dir,
                     "--out", os.devnull], check=True)   # the check alone: CI's build dirs are root-owned (the IDF action's docker), nothing may be written there
     img = os.path.join(a.build_dir, "pocket_tank.bin")

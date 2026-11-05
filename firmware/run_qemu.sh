@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 QEMU_VER="${QEMU_VER:-esp_develop_9.2.2_20250817}"
 export PATH="$HOME/.espressif/tools/qemu-xtensa/$QEMU_VER/qemu/bin:$PATH"
 B="${B:-build}"
-MODEL="../model/out/model_q4.bin"
+MODEL=$(python ../tools/model_trailer.py --build-dir "$B" --print-model)   # the build's world's (common/world.h)
 # image on the local SSD: QEMU needs file locking, which AFP shares refuse
 mkdir -p "$HOME/.cache/pocket-terrarium"
 IMG="$HOME/.cache/pocket-terrarium/flash_qemu_$B.bin"

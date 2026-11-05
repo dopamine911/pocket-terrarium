@@ -16,8 +16,7 @@
  * Detects the schema from the tokenizer (a " trust" token = v3, " bored" = v4,
  * " heat" = the lizard's L1: model/schema-lizard.md). Its goal words are its
  * own set of tank.h's goals (the fish's eight, the lizard's seven); a model of
- * the other world is refused (false) - but for the terrarium's fish model, its
- * temporary brain (THE TEMPORARY FISH-MODEL BRIDGE, below). */
+ * the other world is refused (false): the terrarium thinks with L1 alone. */
 bool advisor_core_init(const uint8_t *model_bin, size_t model_len,
                        const uint8_t *tok_bin, size_t tok_len,
                        void *(*alloc)(size_t), uint32_t seed);
@@ -62,12 +61,6 @@ void advisor_core_encode_l1(const l1_snap_t *s, char *out, size_t n);
  * fish_t.hide, THE WALK), wall = the fish encoder's contact point, last = its goal (a lizard goal's LZ_* index), phase =
  * tank_activity_phase */
 void advisor_core_l1_snap(const tank_t *t, int idx, l1_snap_t *s);
-/* THE TEMPORARY FISH-MODEL BRIDGE (P2b; advisor_core.c has all of it - DELETE IN P6 with the lizard model): the
- * terrarium's bin thinks with the v4 fish model until then. Its answers are the lizard goals they play (seek_food
- * hunt, visit_bubbles bask, inspect_reef and flee_shadow hide, follow_friend investigate, explore explore, rest
- * rest, dart_play dig), and a lizard's goal reads back as a fish goal on the v4 line's `last` */
-goal_id_t advisor_bridge_lizard_goal(goal_id_t fish);
-goal_id_t advisor_bridge_fish_goal(goal_id_t lizard);
 
 /* run the model on a state line. Returns the goal (id == GOAL_COUNT if the
  * output was unparseable: keep the previous goal), with confidence and

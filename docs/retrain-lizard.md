@@ -15,11 +15,11 @@ the shipped candidate is `out/model_q4_l1_focus2.bin`. A13-A16 (the sim census) 
 | `train_tokenizer.py --schema L1` (vocab 59), `fold_traces.py --schema L1` | built, verified on the pilot's teacher answers |
 | `pilot.py` + `pilot_l1.jsonl` (37 edge states) | built, run |
 | `prompt_check.py --schema L1` (A2–A12 and rules 3, 7, 8 on the teacher) | built, run in full on the shipped text (the gate, below) |
-| `eval.py --schema L1 --teacher --api openai` (A1) | built; needs a model |
+| `eval.py --schema L1 --teacher --api openai` (A1) | built, run: 82% (section 6) |
 | `train.py` / `export_q4.py` | unchanged; `POCKET_SCHEMA=L1` selects the lexicon |
-| `probe_dist.py` for L1 (A2–A12 on the student) | **not built** |
-| sim census A13–A16 (`--selftest-llm` with an L1 model, the test pack) | **not built** (needs P2b's lizard goals and motion in C) |
-| shipping (`PT_MODEL_TAG lizard_v1`, the model partition) | P6 |
+| `probe_l1.py` (A2–A12 on the student) | built, run (sections 5, 6) |
+| sim census A13–A16 (`./fishsim --census-llm`, the test pack in the test warm desert) | built, run (section 7) |
+| shipping: `model/out/model_q4_lizard.bin` + `tokenizer_lizard.bin`, `PT_MODEL_TAG_TERRARIUM lizard_v1` | done 2026-11-05 (P6) |
 
 ## The line and the teacher
 

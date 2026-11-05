@@ -1,6 +1,8 @@
 model/llama2.c/
 model/out/*
 !model/out/.gitkeep
+!model/out/model_q4_lizard.bin
+!model/out/tokenizer_lizard.bin
 __pycache__/
 .DS_Store
 sim/lvgl

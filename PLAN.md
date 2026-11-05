@@ -22,7 +22,7 @@ Status: P1 specs drafted (2026-11-04): `model/schema-lizard.md`, `docs/species-p
 | D3 | Species packs | **Yes, in the core design** (§2). The engine has no species code paths; a pack is data plus a body-plan renderer. |
 | D4 | Scope | **POC.** Networking off: OTA, tank-link, passports, gifts, the visitors collection. Anything else that conflicts with the port also gets disabled rather than ported. |
 | D5 | Repo | `git clone` pocket-tank with history and keep an `upstream` remote so engine/board fixes can merge in. |
-| D6 | Brain | Retrain from scratch on a species-agnostic lizard schema (ai-lab). A fish→lizard goal map is the temporary brain until the model lands, then it is deleted. |
+| D6 | Brain | Retrain from scratch on a species-agnostic lizard schema (ai-lab). A fish→lizard goal map was the temporary brain until the model landed; deleted at P6 (2026-11-05). |
 | D7 | Save | New format (new magic, NVS namespace `terr`), append-only from day one (`SAVE_LAYOUT_LOCK` pattern, `progression.c` ~308). |
 | D8 | Shed | **In v1** as a core upkeep loop (§3). |
 | D9 | License | PolyForm Noncommercial, inherited. Keep the required `NOTICE` lines. Commercial use needs the author's permission. |
@@ -289,8 +289,11 @@ one OpenAI-compatible API on zaphod over Tailscale (`marvin/*` forwarded). No Ol
 - [ ] Setup: choose a species pack (one for now) and a morph; strings "fish/tank" → "lizard/terrarium"
 
 ### P6 — Integrate and accept
-- [ ] Ship the model + tokenizer, delete the temporary goal map
-- [ ] Acceptance A1–A16 in `model/schema-lizard.md` (model sweeps, sim census, pack independence), every row
+- [x] Ship the model + tokenizer, delete the temporary goal map (2026-11-05): `model/out/model_q4_lizard.bin` (`lizard_v1`,
+      the focused repair's seed 2) and `tokenizer_lizard.bin`, embedded copy `firmware/main/tokenizer_lizard.bin`;
+      identity per world in `version.h`; `advisor_core_init` refuses the other world's model; the flash scripts,
+      installer, manifest and QEMU take the build's world's model (`tools/model_trailer.py --print-model`)
+- [x] Acceptance A1–A16 in `model/schema-lizard.md` (model sweeps, sim census, pack independence), every row
 
 ### P7 — Boards
 - [ ] Sim screenshots on all 4 boards (`tools/shot.py`), QEMU boot, flash a device (`tools/flash.sh`)

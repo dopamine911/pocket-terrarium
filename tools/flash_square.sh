@@ -6,6 +6,7 @@
 #
 #   tools/flash_square.sh               # build, flash the app
 #   tools/flash_square.sh --build-only
+#   tools/flash_square.sh --model       # the app and the build's world's model + its trailer; the tank's save (nvs) kept
 #   tools/flash_square.sh --full        # a blank board: clear nvs, the model, bootloader + table + app
 #   SQUARE_SERIAL=AA:BB:CC:DD:EE:FF tools/flash_square.sh    # the board, by its USB serial (or set it once in tools/boards.local.sh)
 #
@@ -38,13 +39,17 @@ PY
 ) || { echo "flash_square: no board with USB serial $SERIAL on USB"; exit 1; }
 echo "flash_square: the square ($SERIAL) is $PORT"
 ESPTOOL="python -m esptool --chip esp32s3 -p $PORT -b 460800"
+write_model() {   # the build's world's model (common/world.h) and its trailer (docs/OTA.md): without the trailer the tank runs rules
+  local m; m=$(python tools/model_trailer.py --build-dir "$B" --print-model)
+  python tools/model_trailer.py --check --build-dir "$B" || exit 1
+  $ESPTOOL --after no_reset write_flash 0x290000 "$m" 0xA8F000 "$B/model_trailer.bin" | grep -E "Wrote|verified|rror"
+}
 if [[ " $* " == *" --full "* ]]; then
   $ESPTOOL --after no_reset erase_region 0x9000 0x7000 | grep -E "Erase completed|rror"
-  $ESPTOOL --after no_reset write_flash 0x290000 model/out/model_q4.bin | grep -E "Wrote|verified|rror"
-  python tools/model_trailer.py --check --build-dir "$B" || exit 1          # the model's trailer (docs/OTA.md): without it the tank runs rules
-  $ESPTOOL --after no_reset write_flash 0xA8F000 "$B/model_trailer.bin" | grep -E "Wrote|verified|rror"
+  write_model
   ( cd "$B" && $ESPTOOL write_flash "@flash_args" | grep -E "Wrote|verified|rror" )
 else
+  [[ " $* " == *" --model "* ]] && write_model   # a new model, the tank's save (nvs) untouched
   # otadata too: after an over-the-air update the board boots ota_1, and an app written to ota_0 alone would never run
   $ESPTOOL write_flash 0xA90000 "$B/ota_data_initial.bin" 0x10000 "$B/pocket_tank.bin" | grep -E "Wrote|verified|rror"
 fi

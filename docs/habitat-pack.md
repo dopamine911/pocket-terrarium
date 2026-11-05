@@ -115,7 +115,7 @@ cannot carry both brains: the model partition is 8 MB (`firmware/partitions.csv`
 
 | World | Bin | Model | Habitats |
 |---|---|---|---|
-| terrarium (the default) | the lizards, walking | the lizard model (schema L1); until P6 the v4 fish model over `advisor_core.c`'s TEMPORARY FISH-MODEL BRIDGE | desert (v1), jungle (planned) |
+| terrarium (the default) | the lizards, walking | the lizard model `lizard_v1` (schema L1; `model/out/model_q4_lizard.bin`) | desert (v1), jungle (planned) |
 | aquarium | pocket-tank's fish, swimming, on the same packs | the fish model (schema v4) | freshwater (today's tank), reef and jellyfish (planned) |
 
 Jellyfish drift rather than decide; in an aquarium habitat they would be a
@@ -144,5 +144,7 @@ idf.py -B <dir> -DSDKCONFIG=<dir>/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defa
 ```
 
 `tankcore` defines `PT_WORLD` (PUBLIC: `main` and `llm` see the same world) and `main` embeds the tokenizer
-world.h names for the world (`PT_FW_TOKENIZER_*`) as `tokenizer.bin`. The host test `firmware/host_test/decide_host.c`
+world.h names for the world (`PT_FW_TOKENIZER_*`) as `tokenizer.bin`. Each bin runs its own world's model alone
+(`advisor_core_init` refuses the other's); the flash scripts write the build's world's model with
+`--model` (`tools/model_trailer.py --print-model` names it). The host test `firmware/host_test/decide_host.c`
 is the fish model's: build it with `-DPT_WORLD=1` (its header has the line).
