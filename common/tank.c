@@ -759,6 +759,9 @@ void tank_init(tank_t *t, uint32_t seed) {
 #define TRUST_PER_S        0.012f /* trust a fish earns a second under a resting finger (0.3.6: was 0.02;
                                    * Strato: "a bit slower" so the seahorse's double is worth having) */
 #define SEAHORSE_TRUST_X   2.0f   /* ... times this while the seahorse hangs on the finger */
+static bool hand_draws(const tank_t *t, const fish_t *f);   /* THE WALK: a lizard answering the settled hand */
+static int lizard_hand_target(const tank_t *t, int idx, float *x, float *hand_x);
+
 
 /* THE HAND's place (tank.h tank_hand_point): in the terrarium the keeper's hand rests on the ground - the point of the
    ground's walking lines nearest the finger (a rock beside it, the sand under it), its path returned; -1 in the aquarium */
@@ -777,6 +780,12 @@ static int hand_ground(const tank_t *t, float *x, float *y) {
 void tank_hand_point(const tank_t *t, float *x, float *y) { hand_ground(t, x, y); }
 bool tank_at_finger(const tank_t *t, int i) {   /* (hold_time, not hold_active: the tick consumes the
                                                    flag, and the time drops to 0 the frame the finger lifts) */
+    if (PT_TERRARIUM) {
+        const fish_t *f = &t->fish[i];
+        if (!tank_swims(t, i) || !hand_draws(t, f) || f->hide >= 0) return false;
+        float x; const int surf = lizard_hand_target(t, i, &x, NULL);
+        return f->surf == surf && fabsf(f->x - x) <= LZ_ARRIVE_PX;
+    }
     float hx, hy; tank_hand_point(t, &hx, &hy);
     return t->hold_time >= HOLD_ATTRACT_S
         && tank_dist(t->fish[i].x, t->fish[i].y, hx, hy) < HOLD_GATHERED_PX;
@@ -3497,6 +3506,11 @@ void tank_touch_tap(tank_t *t, float x, float y) {
     } else if (t->tap_count >= 3) tank_startle(t, x, y);   /* aggressive: engage */
 }
 
+static void hold_approach(tank_t *t, int i) {
+    t->fish[i].ms_bits |= MS_FIRST_HOLD_APPROACH;
+    if (!t->hold_approached) { t->hold_approached = true; t->hold_approaches++; tank_emit(TEV_INVESTIGATE, i); }
+}
+
 /* per-frame bookkeeping for the touch state machine */
 static void touch_tick(tank_t *t, float dt) {
     t->tap_burst_t += dt;
@@ -3551,11 +3565,10 @@ static void touch_tick(tank_t *t, float dt) {
              * actually travelled (same day: a fish already sitting under the
              * finger used to be credited at 1.5 s without moving). The
              * tank's hold_approaches counter still counts the hold once. */
-            if (draw_begins) f->hold_far = d >= HOLD_APPROACH_FROM;
-            if (f->hold_far && d < HOLD_APPROACH_AT) {
-                f->ms_bits |= MS_FIRST_HOLD_APPROACH;
-                if (!t->hold_approached) { t->hold_approached = true; t->hold_approaches++; tank_emit(TEV_INVESTIGATE, i); }
-            }
+            if (!PT_TERRARIUM) {
+                if (draw_begins) f->hold_far = d >= HOLD_APPROACH_FROM;
+                if (f->hold_far && d < HOLD_APPROACH_AT) hold_approach(t, i);
+            }   /* a lizard: its actual hand-directed walk and arrival below, not the aquarium ring's distances */
         }
     } else {
         t->hold_time = 0; t->hold_approached = false;
@@ -4702,6 +4715,7 @@ static void update_fish(tank_t *t, int idx, float dt) {
 #define LZ_PLACE_NEAR_PX 40.0f      /* investigate alone: a place this near is the one it is at */
 typedef struct {
     bool    go;                     /* walk to (surf, x) (false: it stays where it stands) */
+    bool    hand;                   /* this plan answers the hand, not a goal or a dash through the same place */
     int     surf;                   /* ... on this path of the ground */
     float   x;
     float   lane;                   /* the floor depth it settles at once there (a walk keeps its own) */
@@ -4845,16 +4859,16 @@ static void lizard_spook(tank_t *t, int i) {
 }
 /* THE HAND (tank.h THE WALK): a settled hold draws a lizard - trusting, not too hungry, awake, not overheating, not frightened */
 static bool hand_draws(const tank_t *t, const fish_t *f) {
-    return t->hold_active && t->hold_time >= HOLD_ATTRACT_S && f->trust >= 4.0f && f->hunger < HOLD_HUNGER_VETO
+    return t->hold_time >= HOLD_ATTRACT_S && f->trust >= 4.0f && f->hunger < HOLD_HUNGER_VETO
         && tank_activity_phase(t) == PHASE_ACTIVE && f->heat < HEAT_HOT && f->spook_s <= 0;
 }
 /* ... to the hand's place on the ground (tank_hand_point: up a rock if that is nearest the finger), beside it: the first one
    LZ_HAND_GAP to its left, the next to its right, then further out - a side its ground has no room for skipped - facing it,
    flicking its tongue */
-static void lizard_hand(tank_t *t, int idx, walk_plan_t *w) {
+static int lizard_hand_target(const tank_t *t, int idx, float *target_x, float *hand_x) {
     const fish_t *f = &t->fish[idx];
     float gx, gy; int gs = hand_ground(t, &gx, &gy); if (gs < 0) gs = 0;   /* (-1: not a terrarium's - the walk is only ever one's) */
-    float x0, x1; walk_span(t, f, &tank_terrain(t)->path[gs], 0, &x0, &x1);
+    float x0, x1; walk_span(t, f, &tank_terrain(t)->path[gs], gs == 0 && f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
     int rank = 0;
     for (int i = 0; i < idx; i++) rank += tank_swims(t, i) && hand_draws(t, &t->fish[i]);
     float x = clampf(gx - LZ_HAND_GAP, x0, x1);              /* (no slot with room: as near as its ground lets it) */
@@ -4863,7 +4877,13 @@ static void lizard_hand(tank_t *t, int idx, walk_plan_t *w) {
         if (s < x0 || s > x1) continue;
         if (n++ == rank) { x = s; break; }
     }
-    w->go = true; w->surf = gs; w->x = x; w->lane = 0;
+    *target_x = x; if (hand_x) *hand_x = gx;
+    return gs;
+}
+static void lizard_hand(tank_t *t, int idx, walk_plan_t *w) {
+    float gx; w->surf = lizard_hand_target(t, idx, &w->x, &gx);
+    const float x = w->x;
+    w->go = w->hand = true; w->lane = 0;
     w->face = gx >= x ? 1 : -1; w->pace = 0.9f; w->stops = 0.8f; w->flick = true; w->pose = LZ_POSE_FLICK;
 }
 /* where its way to (to, tx) comes onto path `to` - its own x when it is on it already (the side it approaches from) */
@@ -4925,7 +4945,7 @@ static void lizard_explore_pick(tank_t *t, fish_t *f) {
 static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
     fish_t *f = &t->fish[idx];
     const terrain_t *tr = tank_terrain(t);
-    w->go = false; w->surf = f->surf; w->x = f->x; w->lane = 0; w->pose = LZ_POSE_STAND; w->face = 0;
+    w->go = w->hand = false; w->surf = f->surf; w->x = f->x; w->lane = 0; w->pose = LZ_POSE_STAND; w->face = 0;
     w->pace = 1; w->stops = 1; w->flick = false; w->enter = -1; w->stay_in = false; w->prey = -1; w->in_reach = false;
     goal_id_t g = f->goal.id;
     const bool starving = f->hunger >= 8.0f && tank_food_sight(t, idx, NULL, NULL, NULL);
@@ -5131,6 +5151,7 @@ static void update_lizard(tank_t *t, int idx, float dt) {
     f->goal_age += dt; f->ask_age += dt;
 
     /* 4. the plan, and a moment's hesitation over a torn decision (it stands; in a hide it stays in) - never in the rap's dash */
+    const int from_surf = f->surf;
     walk_plan_t w; lizard_plan(t, idx, &w);
     if (f->hesitate > 0) {
         f->hesitate -= dt;
@@ -5234,6 +5255,7 @@ static void update_lizard(tank_t *t, int idx, float dt) {
        leg's point (the lunge runs on to the prey); its middle on the path's line, the floor's lane drifting - to the
        middle on its way to a ramp's foot - but not while it turns about: it stands, its y too (on a narrowing floor - the
        bowl's, the watch's corners - a drift across the depth moves the glass's edge, and the footing would push it along) */
+    const float step_x = f->x;
     if (speed > 0) {
         float step = speed * dt * cosf(terrain_tilt(path, f->x, f->facing));
         if (pose != LZ_POSE_LUNGE && fabsf(dx) < step) step = fabsf(dx);
@@ -5250,6 +5272,15 @@ static void update_lizard(tank_t *t, int idx, float dt) {
         }
     }
     walk_ground(t, f);
+    /* The aquarium's 140 -> 100 px ring test missed ordinary lizard approaches from nearby. Here the walk itself is
+       the evidence: it must really step while answering the hand, then reach its own reachable slot on the right path.
+       Already standing there, a cursor moved over it, a dash, a hunt or a point below the hand's rock earns nothing. */
+    if (w.hand && w.go) {
+        const bool stepped = speed > 0 && f->x != step_x;
+        if (stepped) f->hold_far = true;
+        if (f->hold_far && (stepped || f->surf != from_surf) && f->hide < 0 &&
+            f->surf == w.surf && fabsf(f->x - w.x) <= LZ_ARRIVE_PX) hold_approach(t, idx);
+    } else f->hold_far = false;
     f->slope += clampf(terrain_tilt(path, f->x, f->facing) - f->slope, -LZ_SLOPE_RATE * dt, LZ_SLOPE_RATE * dt);   /* its body takes the ground's slope */
     f->speed = speed; f->target_speed = speed;
     f->yaw = f->turn_s > 0 ? f->facing * (1 - 2 * clampf(f->turn_s / p->turn_s, 0, 1)) : f->facing;   /* a turn swings it through head-on */

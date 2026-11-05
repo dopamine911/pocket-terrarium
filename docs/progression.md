@@ -252,7 +252,7 @@ terrarium's 16 / 20, the aquarium's 13 / 17). Each is announced once, by notice.
 | Row | Bit | Name | Earned |
 |---|---|---|---|
 | lizard | MS_FIRST_MEAL_FROM_YOU | first meal from you | ate a cricket the keeper dropped, or a worm from the dish the keeper filled |
-| lizard | MS_FIRST_HOLD_APPROACH | came to your hand | walked up to the resting hand |
+| lizard | MS_FIRST_HOLD_APPROACH | came to your hand | actually walked under the hand's draw and arrived at its own reachable spot beside the hand, on that ground |
 | lizard | MS_FIRST_CATCH (new, bit 14) | first cricket caught | its first catch, anyone's cricket (tank.c `lizard_catch`) |
 | lizard | MS_FIRST_BUBBLES | first bask | basked on the basking spot |
 | lizard | MS_FIRST_SHED (new, bit 15) | first clean shed | a shed came off clean without sticking (`shed_done`) |
@@ -263,6 +263,13 @@ terrarium's 16 / 20, the aquarium's 13 / 17). Each is announced once, by notice.
 | tank | TMS_FIRST_ADULT (new, bit 19) | first adult | a lizard reached adult - at its clean growth shed |
 | tank | TMS_FIRST_PLAY_SESSION | first dig together | two lizards digging at once |
 | tank | TMS_FIRST_CLEANING, TMS_CHANGED_SOMEONE, TMS_FIRST_SALE | as the fish's | the glass's smudges, a personality drifted, a lizard sold |
+
+The hand's arrival uses the same ground and per-lizard slot as the walk (within `LZ_ARRIVE_PX`), not the aquarium's
+140-pixel start / 100-pixel arrival ring. A nearby lizard that really walks up qualifies; one already resting beside
+the hand, or merely close beneath its rock, does not. Each qualifying lizard gets its badge and one notice; the hold's
+tally increments only once. Hungry, frightened, overheating or inactive lizards cannot earn this credit by passing
+the cursor for another reason. The badge and tally save normally; opening the milestones page only acknowledges an
+earned badge. The terrarium's hatchling checklist has no HOLD gate (it uses clean sheds), so no claim is needed.
 
 No badge in the terrarium, and silent there (notice.c): MS_FIRST_GRASS (never set), MS_FIRST_FOLLOW (still set by an
 investigation: it reveals the card's social slider), TMS_FIRST_FEEDING (the first meal from you says it), TMS_FIRST_TRIM,

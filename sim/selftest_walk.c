@@ -29,7 +29,8 @@
  *                                    misses by the cold, the stage, a cricket mid-hop or frightened; a starving lizard on
  *                                    the rule stub catches one on the move in a bound; a catch is one meal; the dish
  *   ./fishsim --selftest-gestures    THE HAND (on the ground nearest the finger: the trusting come, the wary stay, trust for
- *                                    both; over the high rock, up it), THE RAP (a fish's stress and trust, the dash for
+ *                                    both; nearby arrivals, idle/no-travel, one tally and every badge/notice/save; the
+ *                                    correct rock's route, eligibility vetoes), THE RAP (a fish's stress and trust, the dash for
  *                                    cover, in while the fright lasts, out), a tap on a lizard along its body, the tools
  *   ./fishsim --selftest-terr-pay    the terrarium's sand dollars: keeper meals (a cricket from the hand, a worm from the
  *                                    dish the keeper filled; once a lizard per SD_MEAL_GAP_S; the tank's own, nothing) and
@@ -1005,9 +1006,159 @@ int selftest_crickets(void) {
 }
 
 /* ================================================================ --selftest-gestures */
+/* An ordinary nearby approach used to miss the aquarium's 140 px start-distance snapshot even after the lizard
+   walked to its hand slot. Assert the walk, every lizard's badge, the once-per-hold tally and the real notice/save path. */
+static int gesture_hand_arrivals(tank_t *t) {
+    fresh(t, 616, 2, false);
+    const terrain_t *tr = tank_terrain(t);
+    const float hx = tank_floor_x(0.5f), hy = terrain_y(&tr->path[0], hx);
+    float start[2], arrived[2] = { -1, -1 };
+    for (int i = 0; i < 2; i++) {
+        fish_t *f = &t->fish[i];
+        f->facing = i ? -1 : 1; f->yaw = f->facing;
+        stand(t, i, 0, hx + (i ? 120 : -120)); force(t, i, GOAL_LZ_REST);
+        f->trust = 7; f->hunger = 2; f->energy = 10; f->shed_s = 1e5f;
+        f->walk_s = 1000; f->pause_s = i ? 8 : 0;   /* the second one comes later, not just the fastest one's badge */
+        start[i] = f->x;
+    }
+    progression_tick(t, DT); notice_sync(t);
+    for (float s = 0; s < 45; s += DT) {
+        tank_touch_hold(t, hx, hy); tank_tick(t, DT, advisor_force); progression_tick(t, DT);
+        for (int i = 0; i < 2; i++) {
+            fish_t *f = &t->fish[i];
+            f->hunger = 2; f->energy = 10;
+            if ((f->ms_bits & MS_FIRST_HOLD_APPROACH) && arrived[i] < 0) arrived[i] = s + DT;
+        }
+    }
+    for (int i = 0; i < 2; i++) {
+        const fish_t *f = &t->fish[i];
+        const float target = hx + (i ? LZ_HAND_GAP : -LZ_HAND_GAP);
+        if (f->surf != 0 || fabsf(f->x - target) > LZ_ARRIVE_PX + 0.1f || fabsf(f->x - start[i]) < 60)
+            WF("nearby hand fixture: lizard %d at %.1f (started %.1f), not its reachable slot %.1f on the floor", i, f->x, start[i], target);
+    }
+    if (arrived[0] < 0 || arrived[1] <= arrived[0] || t->hold_approaches != 1 ||
+        !tank_at_finger(t, 0) || !tank_at_finger(t, 1))
+        WF("nearby hand arrival: both started 120 px from the hand and walked %.1f / %.1f px to their slots; badges %d / %d, arrivals %.1f / %.1f s, holds %d (want both badges, later second arrival, one hold)",
+           fabsf(t->fish[0].x - start[0]), fabsf(t->fish[1].x - start[1]),
+           !!(t->fish[0].ms_bits & MS_FIRST_HOLD_APPROACH), !!(t->fish[1].ms_bits & MS_FIRST_HOLD_APPROACH),
+           arrived[0], arrived[1], t->hold_approaches);
+    notice_tick(t, DT, true);   /* a covering page delays the notices, never the earned credit */
+    if (notice_current() || notice_pending() != 2) WF("the two hand badges queued %d notices under a page", notice_pending());
+    unsigned announced = 0;
+    for (int k = 0; k < 2; k++) {
+        notice_tick(t, 7, false);
+        const notice_t *n = notice_current();
+        if (!n || n->kind != NOTICE_MILESTONE || n->bit != MS_FIRST_HOLD_APPROACH || n->fish < 0 || n->fish >= 2 ||
+            (announced & (1u << n->fish)))
+            WF("nearby hand arrival: missing, wrong or repeated hand milestone notice %d", k);
+        announced |= 1u << n->fish;
+        notice_tick(t, 7, false); notice_tick(t, 7, false);
+    }
+    notice_tick(t, 7, false);
+    if (notice_current() || notice_pending()) WF("the hand badges announced more than once");
+    tank_tick(t, DT, advisor_force);   /* lift, then hold over the same resting company: no new approach */
+    for (float s = 0; s < 8; s += DT) { tank_touch_hold(t, hx, hy); tank_tick(t, DT, advisor_force); }
+    if (t->hold_approaches != 1) WF("a new hold over the resting company counted as another approach");
+    progression_ack_milestones(t);
+    if (!progression_save(t)) WF("the hand badges could not be saved");
+    tank_init(t, 617); progression_wake(t, 0);
+    if (t->n_fish != 2 || t->hold_approaches != 1) WF("the saved hand approach tally was lost");
+    for (int i = 0; i < 2; i++) if (!(t->fish[i].ms_bits & MS_FIRST_HOLD_APPROACH) || !(t->fish[i].ms_seen & MS_FIRST_HOLD_APPROACH))
+        WF("lizard %d lost its earned/acknowledged hand badge after a load", i);
+    printf("selftest-gestures: nearby lizards started 120 px out, walked to both hand slots and earned both badges (%.1f / %.1f s), one hold, one notice each; acknowledged badges and tally survived a save\n", arrived[0], arrived[1]);
+
+    /* Already at the hand's real slot, without walking: company, not a first approach. */
+    fresh(t, 618, 1, false); t->n_fish = 1;
+    fish_t *f = &t->fish[0];
+    f->facing = 1; stand(t, 0, 0, hx - LZ_HAND_GAP); force(t, 0, GOAL_LZ_REST);
+    f->trust = 7; f->hunger = 2; f->energy = 10;
+    const float idle_x = f->x;
+    for (float s = 0; s < 8; s += DT) { tank_touch_hold(t, hx, hy); tank_tick(t, DT, advisor_force); }
+    if (fabsf(f->x - idle_x) > 0.01f || (f->ms_bits & MS_FIRST_HOLD_APPROACH) || t->hold_approaches || !tank_at_finger(t, 0))
+        WF("already beside the hand: moved %.2f px, badge %d, holds %d, company %d",
+           f->x - idle_x, !!(f->ms_bits & MS_FIRST_HOLD_APPROACH), t->hold_approaches, tank_at_finger(t, 0));
+
+    /* Moving the cursor's slot onto a lizard during a pause is not the lizard completing its walk to the hand. */
+    fresh(t, 624, 1, false); t->n_fish = 1; f = &t->fish[0];
+    f->facing = 1; stand(t, 0, 0, hx - 120); force(t, 0, GOAL_LZ_REST);
+    f->trust = 7; f->hunger = 2; f->energy = 10; f->walk_s = 1000;
+    const float before_walk = f->x;
+    for (float s = 0; s < 3.5f; s += DT) { tank_touch_hold(t, hx, hy); tank_tick(t, DT, advisor_force); }
+    if (f->x <= before_walk + 1 || (f->ms_bits & MS_FIRST_HOLD_APPROACH)) WF("the moving-cursor fixture did not begin an unfinished hand walk");
+    const float paused_x = f->x;
+    f->pause_s = 100;
+    for (float s = 0; s < 6; s += DT) { tank_touch_hold(t, paused_x + LZ_HAND_GAP, hy); tank_tick(t, DT, advisor_force); }
+    if (fabsf(f->x - paused_x) > 0.01f || (f->ms_bits & MS_FIRST_HOLD_APPROACH) || t->hold_approaches)
+        WF("moving the hand over a paused lizard counted as its arrival (moved %.2f px, holds %d)", f->x - paused_x, t->hold_approaches);
+
+    /* Just below a ledge is visually near, but the hand is up on it. The lizard has to walk around to its ramp and
+       climb before it is company or earns the badge; proximity through the rock is not arrival. */
+    fresh(t, 619, 1, false); t->n_fish = 1; f = &t->fish[0];
+    const terrain_path_t *ledge = &tr->path[1];
+    const float rock_x = 0.5f * (ledge->x[0] + ledge->x[ledge->n - 1]), rock_y = terrain_y(ledge, rock_x);
+    const float rock_slot = rock_x - LZ_HAND_GAP;
+    f->facing = 1; stand(t, 0, 0, rock_slot); force(t, 0, GOAL_LZ_REST);
+    f->trust = 7; f->hunger = 2; f->energy = 10;
+    terrain_hop_t hop;
+    const float near = tank_dist(f->x, f->y, rock_x, rock_y);
+    if (near >= 140 || !terrain_route(tr, f->surf, f->x, 1, rock_slot, &hop) || hop.cost < 200)
+        WF("the nearby ledge fixture does not prove a short visual distance and a long real route");
+    const float route = hop.cost;
+    float climbed = -1, walked = 0;
+    for (float s = 0; s < 240 && climbed < 0; s += DT) {
+        const float x0 = f->x, y0 = f->y;
+        tank_touch_hold(t, rock_x, rock_y); tank_tick(t, DT, advisor_force);
+        f->hunger = 2; f->energy = 10; walked += tank_dist(x0, y0, f->x, f->y);
+        const bool there = f->surf == 1 && fabsf(f->x - rock_slot) <= LZ_ARRIVE_PX + 0.1f;
+        if (!there && (tank_at_finger(t, 0) || (f->ms_bits & MS_FIRST_HOLD_APPROACH) || t->hold_approaches))
+            WF("the hand on a ledge credited proximity through rock: path %d x %.1f, wanted path 1 x %.1f", f->surf, f->x, rock_slot);
+        if (there && (f->ms_bits & MS_FIRST_HOLD_APPROACH) && tank_at_finger(t, 0)) climbed = s + DT;
+    }
+    if (climbed < 0 || walked < 200 || t->hold_approaches != 1)
+        WF("the hand on a nearby ledge: %.1f px visually, route %.1f, walked %.1f; arrival %.1f s, holds %d", near, route, walked, climbed, t->hold_approaches);
+    printf("selftest-gestures: already idling beside the hand earns nothing; %.0f px below a ledge is not arrival until the real %.0f px route is walked (%.1f s)\n", near, route, climbed);
+
+    /* Other reasons to cross the held cursor are not answering it: a hungry/hot investigation, nighttime cover or
+       a panicked dash for cover. Cover is reached by entering the hide, not by matching its nominal x: the walk
+       clamps the route's endpoint to the body's footing at its floor lane (notably the watch's rounded corner).
+       The investigations use an interior point so their endpoint does not depend on that corner clamp. */
+    static const char *const veto[] = { "nighttime", "hungry", "panicked", "overheating" };
+    for (int k = 0; k < 4; k++) {
+        fresh(t, 620 + k, 1, false); t->n_fish = 1; f = &t->fish[0];
+        const bool shelter = k == 0 || k == 2;
+        float cover_x, cover_y; tank_hide_point(t, 0, &cover_x, &cover_y);
+        if (!shelter) cover_x = tank_floor_x(0.25f);
+        const float held_x = cover_x + LZ_HAND_GAP;
+        f->facing = -1; stand(t, 0, 0, tank_floor_x(shelter ? 0.85f : 0.95f));
+        force(t, 0, shelter ? GOAL_LZ_HIDE : GOAL_LZ_INVESTIGATE);
+        f->trust = 7; f->energy = 10; f->hunger = k == 1 ? 8 : 2;
+        f->explore_set = true; f->explore_surf = 0; f->explore_x = cover_x;
+        if (k == 0) lights(t, false);
+        if (k == 2) { f->spook_s = 1000; f->spook_hide = 0; }
+        const float from = f->x;
+        float reached = -1;
+        for (float s = 0; s < 120 && reached < 0; s += DT) {
+            if (k == 3) { f->body_c = tank_species(t)->t_hot + 2; f->heat = HEAT_HOT + 1; }
+            tank_touch_hold(t, held_x, cover_y); tank_tick(t, DT, advisor_force);
+            f->hunger = k == 1 ? 8 : 2; f->energy = 10;
+            if ((f->ms_bits & MS_FIRST_HOLD_APPROACH) || t->hold_approaches || tank_at_finger(t, 0))
+                WF("%s travel was credited as a hand approach (x %.1f -> %.1f, holds %d)", veto[k], from, f->x, t->hold_approaches);
+            if (shelter ? f->hide == 0 : f->surf == 0 && fabsf(f->x - cover_x) <= LZ_ARRIVE_PX + 0.1f) reached = s + DT;
+        }
+        if (reached < 0 || from - f->x < 140)
+            WF("the %s veto fixture never really walked past the hand (x %.1f -> %.1f, target %.1f, hide %d, pose %s)",
+               veto[k], from, f->x, cover_x, f->hide, LZ_POSE_NAMES[f->pose]);
+        printf("selftest-gestures: %s veto: walked %.1f px in %.1f s to %s (nominal x %.1f, actual %.1f), no credit\n",
+               veto[k], from - f->x, reached, shelter ? "hide 0" : "the interior spot", cover_x, f->x);
+    }
+    printf("selftest-gestures: nighttime, hungry, panicked and overheating travel past a held cursor earns no hand credit\n");
+    return 0;
+}
+
 int selftest_gestures(void) {
     s_name = "selftest-gestures";
     tank_t *t = &s_t;
+    if (gesture_hand_arrivals(t)) return 1;
 
     /* 1. THE HAND: a finger resting on the glass is the keeper's hand resting in the terrarium, on the ground nearest the
           finger (here the sand under it). A trusting lizard comes from across the sand and stands beside it - the

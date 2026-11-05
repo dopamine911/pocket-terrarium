@@ -82,7 +82,11 @@ docker build -f sim/Dockerfile --build-arg BOARD=round \
 In the window, use the mouse as the device's finger. Click a lizard for its
 card; drag down from the top to feed. With no tool selected, hold still on
 bare sand or a lizard for about three seconds: trusting, comfortable lizards
-approach the hand, which rests on the nearest ground. A deliberate hold
+approach the hand, which rests on the nearest ground. Each lizard that
+actually walks to its own spot beside that hand earns **came to your hand**,
+even when it started nearby; a lizard already resting there earns no
+approach just for staying put. The hold counts once, even if several come.
+A deliberate hold
 (over 0.7 seconds) on an unlocked desert decoration opens its MOVE page;
 locked decorations, the sand below them, and lizards in front leave the hold
 to the hand. Aquarium pieces never intercept terrarium holds, even if an

@@ -421,8 +421,8 @@ typedef struct {
     uint8_t pdepth, pdepth_want;   /* ... and against the pieces (phase 2): FISH_DEPTH_FRONT or _BEHIND, whatever
                              * a piece's own depth (that orders the pieces); taken up only in the clear of
                              * every piece. Never BEHIND at rest (D2: a resting fish stays in sight) */
-    bool   hold_far;        /* was HOLD_APPROACH_FROM+ px from the finger when this hold's draw
-                             * began (transient): only such a fish can earn a hold-approach */
+    bool   hold_far;        /* transient: a fish began this hold's draw HOLD_APPROACH_FROM+ px out; a lizard has
+                             * really stepped while answering this hand (cleared on release or a non-hand plan) */
     bool   hold_call;       /* answering a held finger (the last frame's steering, transient): it wants to be in
                              * sight - in front of the grass and the pieces - and a piece hiding it is swum out
                              * from round its nearest side first (Strato 11-01: "the fish would not be able to see
@@ -1379,8 +1379,9 @@ bool  tank_mist_soak(tank_t *t, int i);            /* the mister's hold on anima
  * a lizard of trust 4 and up, not too hungry (HOLD_HUNGER_VETO), awake (the active phase) and not overheating walks - and
  * climbs - to it and stands beside it, LZ_HAND_GAP from its x (the next one the other side, then further out; a side its
  * ground has no room for skipped), tongue-flicking it (FLICK); every lizard earns TRUST_PER_S while the hand rests, as a
- * fish does, and one that came from HOLD_APPROACH_FROM out to within HOLD_APPROACH_AT of the hand's place earns the
- * hold-approach badge (touch_tick, tank_at_finger: distances to the hand's place). The rap outranks the hand, the hand
+ * fish does. A lizard earns the hold-approach badge by really walking under the hand's draw and arriving within
+ * LZ_ARRIVE_PX of its own reachable slot on that path (update_lizard); starting beside it without walking earns nothing.
+ * tank_at_finger uses that same target and hand eligibility, not the aquarium ring's 140 / 100 px distances. The rap outranks the hand, the hand
  * the goal (the advisor keeps it). A TAP ON A LIZARD is its card: the platforms' hit test along its body (tank_tap_d2).
  * Drives run on its pack's rates (species_t: hunger, energy spent walking or digging and back lying still, curiosity
  * up except exploring or investigating - LZ_CURIOSITY_SPEND_X its rise spent then); stress settles 0.18 a second,
@@ -1601,12 +1602,12 @@ void  tank_grow_algae(tank_t *t, int steps);
 float tank_dist(float ax, float ay, float bx, float by);
 int   tank_nearest_food(const tank_t *t, const fish_t *f, float *dist_out);
 int   tank_nearest_friend(const tank_t *t, int fish_idx, float *dist_out);
-/* fish i has come to a resting finger (the hold is drawing fish, and it is at the finger's edge - a lizard: at the hand's
-   place, tank_hand_point) */
+/* fish i has come to a resting finger (the hold is drawing fish, and it is at the finger's edge); a lizard is eligible
+   for the hand and at its own reachable slot on the hand's ground, not merely close to it through a rock */
 bool  tank_at_finger(const tank_t *t, int fish_idx);
 /* where the resting finger's hand is: the finger itself (the aquarium: fish swim to it); the terrarium's hand rests on the
-   ground - the point of the ground's walking lines nearest the finger (THE WALK's THE HAND: lizards come to it, the trust's
-   and the hold-approach's distances are to it) */
+   ground - the point of the ground's walking lines nearest the finger (THE WALK's THE HAND: trust's distance is to it;
+   each lizard's arrival is at its reachable slot beside it) */
 void  tank_hand_point(const tank_t *t, float *x, float *y);
 /* a tap at (px, py) on animal i as if its middle were at (x, y) - the platforms test it at press time and now: the squared
    distance from the tap to its body, a fish's middle (as pocket-tank's taps always were), a lizard's body line nose to tail
