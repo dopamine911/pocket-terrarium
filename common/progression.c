@@ -2,6 +2,7 @@
 #include "setup.h"
 #include "render.h"
 #include "notice.h"
+#include "pt_util.h"
 #include "collection.h"
 #include "gift.h"
 #include "tank_events.h"
@@ -504,7 +505,6 @@ static uint16_t s_fry_seed;               /* the fry offer (progression_fry_*): 
 static double   s_fry_age;                /* ... its age in tank seconds (a double, as s_age) */
 static uint8_t  s_fry_sold;               /* ... bit k = fry k bought */
 
-static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 static void mark_dirty(void) { if (!s_dirty) { s_dirty = true; s_dirty_since = 0; } }
 bool progression_dirty(void) { return s_dirty; }
 

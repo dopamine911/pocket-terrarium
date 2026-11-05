@@ -3,6 +3,7 @@
  * the keeper trims. Everything is drawn
  * into a bare RGB565 buffer; night dims the palette. */
 #include "render.h"
+#include "pt_util.h"
 #include "advanced.h"
 #include "icons.h"
 #include "progression.h"
@@ -85,13 +86,6 @@ static inline void dirty_clear_span(int x0, int x1, int y) {   /* the span's mar
     row[w0] &= ~(0xFFFFFFFFu << (x0 & 31));
     for (int w = w0 + 1; w < w1; w++) row[w] = 0;
     row[w1] &= ~(0xFFFFFFFFu >> (31 - (x1 & 31)));
-}
-
-static uint16_t rgb565(uint32_t rgb, float dim) {
-    uint32_t r = (uint32_t)(((rgb >> 16) & 255) * dim);
-    uint32_t g = (uint32_t)(((rgb >> 8) & 255) * dim);
-    uint32_t b = (uint32_t)((rgb & 255) * dim);
-    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
 /* bounding box of everything drawn while g_bb_on (render_tank wraps each
@@ -525,15 +519,6 @@ static void fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint3
 }
 static void fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb) { fill_poly_a(c, xs, ys, n, rgb, 255); }
 
-static uint32_t mix(uint32_t a, uint32_t b, float p) {
-    int ar = a >> 16 & 255, ag = a >> 8 & 255, ab = a & 255;
-    int br = b >> 16 & 255, bg = b >> 8 & 255, bb = b & 255;
-    return ((uint32_t)(ar + (br - ar) * p) << 16) |
-           ((uint32_t)(ag + (bg - ag) * p) << 8) |
-            (uint32_t)(ab + (bb - ab) * p);
-}
-
-
 /* the turn (2026-09-29, was a roll that flattened the fish to a line): the
  * fish's yaw (tank.c) FORESHORTENS it along its length - side-on at +-1,
  * head-on at 0 - and the sign mirrors it, so its back stays up. The head's
@@ -776,8 +761,8 @@ static void draw_fish_core(ctx_t *c, const fish_t *f, float beat, bool asleep, f
     /* a burst streams the long fins back, a stop lets them billow forward */
     float surge = fminf(fmaxf((f->speed - f->speed_t) * (1 / 20.0f), -1), 1) * tr;
     float yh = yaw_ease(f->yaw), yt = yaw_ease(f->yaw_tail);
-    uint32_t body = mix(mix(f->color, 0xf25b65, stress * 0.22f), 0x7a8a8e, pale);
-    uint32_t fin  = mix(mix(f->fin, 0xf25b65, stress * 0.18f), 0x5a6a6e, pale);
+    uint32_t body = rgb_mix(rgb_mix(f->color, 0xf25b65, stress * 0.22f), 0x7a8a8e, pale);
+    uint32_t fin  = rgb_mix(rgb_mix(f->fin, 0xf25b65, stress * 0.18f), 0x5a6a6e, pale);
 #define BX(lx, ly) bend_x(&bd, lx, ly)
 #define BY(lx, ly) bend_y(&bd, lx, ly)
 #define TX(lx, ly) (f->x + yaw_at(yh, yt, lx) * (BX(lx, ly) * cp - BY(lx, ly) * sp) * f->size)
@@ -1187,8 +1172,8 @@ static inline void span_final(ctx_t *c, int x0, int x1, int y, const src_t *s, i
 static inline uint32_t water_rgb(int y) {
     float p = (float)y / TANK_BOT;                 /* the gradient runs surface to floor; under a bowl's sand line it holds */
     if (p > 1) p = 1;
-    return p < 0.45f ? mix(0x0a3c46, 0x08272f, p / 0.45f)
-                     : mix(0x08272f, 0x031015, (p - 0.45f) / 0.55f);
+    return p < 0.45f ? rgb_mix(0x0a3c46, 0x08272f, p / 0.45f)
+                     : rgb_mix(0x08272f, 0x031015, (p - 0.45f) / 0.55f);
 }
 
 /* Fronds are drawn OPAQUE from a per-row pre-tinted palette (2026-09-04):
@@ -1207,7 +1192,7 @@ static void veg_tint_fill(float dim) {
     for (int y = 0; y < TANK_H; y++) {
         uint32_t w = water_rgb(y);
         for (int k = 0; k < 4; k++)
-            g_veg_row[k][y] = rgb565(mix(w, frond[k], VEG_ALPHA / 255.0f), dim);
+            g_veg_row[k][y] = rgb565(rgb_mix(w, frond[k], VEG_ALPHA / 255.0f), dim);
     }
     g_veg_row_dim = dim;
 }
@@ -1595,16 +1580,11 @@ static void castle_tint_fill(float dim) {
         int y = CASTLE_FY - CASTLE_ROWS + r;
         uint32_t w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y);
         for (int k = 0; k < CT_N; k++) {
-            g_castle_row[0][k][r] = rgb565(mix(w, CASTLE_RGB[k], k == CT_INSIDE ? 0.6f : keep), dim);
-            g_castle_row[1][k][r] = rgb565(mix(w, CASTLE_RGB[k], k == CT_INSIDE ? 0.6f : gate), dim);
+            g_castle_row[0][k][r] = rgb565(rgb_mix(w, CASTLE_RGB[k], k == CT_INSIDE ? 0.6f : keep), dim);
+            g_castle_row[1][k][r] = rgb565(rgb_mix(w, CASTLE_RGB[k], k == CT_INSIDE ? 0.6f : gate), dim);
         }
     }
     g_castle_dim = dim; g_castle_dzk = g_dz_castle;
-}
-static inline uint32_t chash(int a, int b) {
-    uint32_t h = (uint32_t)a * 73856093u ^ (uint32_t)b * 19349663u;
-    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-    return h;
 }
 /* moss creeps up from the base: 4 px cells, a chance that fades with height,
  * feathered per pixel so the patches have ragged edges */
@@ -2029,15 +2009,15 @@ static void coral_tint_fill(uint32_t rgb, float dim) {
     float haze = decor_haze(0.90f, g_dz_coral);
     uint32_t tone[CO_N];
     tone[CO_NONE]  = 0;
-    tone[CO_RIM]   = mix(rgb, 0x30060e, 0.58f);
+    tone[CO_RIM]   = rgb_mix(rgb, 0x30060e, 0.58f);
     tone[CO_BODY]  = rgb;
-    tone[CO_SHADE] = mix(rgb, 0x000000, 0.24f);
-    tone[CO_LIT]   = mix(rgb, 0xfff0b0, 0.36f);
-    tone[CO_TIP]   = mix(rgb, 0xffe8a0, 0.58f);
+    tone[CO_SHADE] = rgb_mix(rgb, 0x000000, 0.24f);
+    tone[CO_LIT]   = rgb_mix(rgb, 0xfff0b0, 0.36f);
+    tone[CO_TIP]   = rgb_mix(rgb, 0xffe8a0, 0.58f);
     for (int r = 0; r < CORAL_H; r++) {
         int y = CORAL_FY - CORAL_H + r;
         uint32_t w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y);
-        for (int k = 1; k < CO_N; k++) ds()->co_row[k][r] = rgb565(mix(w, tone[k], k == CO_TIP ? haze + 0.04f : haze), dim);   /* a light haze: the art's colour stays saturated */
+        for (int k = 1; k < CO_N; k++) ds()->co_row[k][r] = rgb565(rgb_mix(w, tone[k], k == CO_TIP ? haze + 0.04f : haze), dim);   /* a light haze: the art's colour stays saturated */
     }
     g_coral_rgb = rgb; g_coral_dim = dim; g_coral_dzk = g_dz_coral;
 }
@@ -2059,7 +2039,7 @@ static void draw_crown(ctx_t *c, float ox, float oy, int n_t, float a0, float a1
                        int seed, float clock, int *bx0, int *by0, int *bx1, int *by1) {
     *bx0 = *by0 = 1 << 20; *bx1 = *by1 = -1;
     if (n_t < 1) return;
-    uint32_t bead = mix(pale, 0xffffff, 0.55f);
+    uint32_t bead = rgb_mix(pale, 0xffffff, 0.55f);
     for (int k = 0; k < n_t; k++) {
         float a = n_t == 1 ? (a0 + a1) * 0.5f : a0 + (a1 - a0) * k / (n_t - 1);
         float sway = 0.22f * fast_sin(clock * 1.3f + (k + seed) * 0.9f);
@@ -2093,7 +2073,7 @@ static void draw_coral_crown(ctx_t *c, int cx, uint32_t rgb, float growth, float
     float ox = cx - CORAL_W / 2 + CORAL_TOP_X * CORAL_CELL + 1, oy = CORAL_FY - CORAL_TOP_Y * CORAL_CELL - 1;
     float len = CORAL_TENT_L * (0.35f + 0.65f * phase);
     /* a fan from ~29 deg left of up to 29 deg right, past the horizontal */
-    draw_crown(c, ox, oy, CORAL_TENT, -3.14159f * 0.16f, -3.14159f * 0.84f, len, mix(rgb, 0xffffff, 0.55f), 0, clock, bx0, by0, bx1, by1);
+    draw_crown(c, ox, oy, CORAL_TENT, -3.14159f * 0.16f, -3.14159f * 0.84f, len, rgb_mix(rgb, 0xffffff, 0.55f), 0, clock, bx0, by0, bx1, by1);
 }
 /* a low mound of floor stones round a piece's base (2026-09-24): the same
  * pebble tones and position hash as the floor, an ellipse half_w wide whose
@@ -2114,7 +2094,7 @@ static void draw_floor_mound(ctx_t *c, int cx, int half_w, int rise, int dz, boo
             uint32_t tone = (h2 >> 4) % 16;
             uint32_t col = tone < 2 ? 0x2e3b2c : tone < 5 ? 0x22301f : tone < 8 ? 0x1a2418 : 0x101a12;
             float up = (float)(fl - y) / rise;                           /* 0 at the floor line, 1 at the crest */
-            if (up > 0) col = mix(col, 0x56684f, 0.25f + 0.40f * up);   /* the hump rises into the light; its skirt is the floor */
+            if (up > 0) col = rgb_mix(col, 0x56684f, 0.25f + 0.40f * up);   /* the hump rises into the light; its skirt is the floor */
             if (up > 0.15f && (chash(x, y) & 15) == 0) col = 0x6e7f66;   /* a few lit grains */
             uint16_t *p = &CTX_PX(c, x, y);
             *p = FB_SWAP16(rgb565(col, c->dim)); TOUCH_PX(c, x, y);
@@ -2312,8 +2292,8 @@ static void pk_tint_fill(float dim) {
         uint32_t w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y);
         for (int k = 1; k < PK_EMIT; k++) {
             uint32_t col = PK_RGB[k];
-            if (night && k < PK_STEM_D) col = mix(col, 0xff6a10, 0.18f);
-            ds()->pk_row[k][r] = rgb565(mix(w, col, haze), k >= PK_STEM_D ? dim : rd);
+            if (night && k < PK_STEM_D) col = rgb_mix(col, 0xff6a10, 0.18f);
+            ds()->pk_row[k][r] = rgb565(rgb_mix(w, col, haze), k >= PK_STEM_D ? dim : rd);
         }
     }
     g_pk_dim = dim; g_pk_dzk = g_dz_pk;
@@ -2801,8 +2781,8 @@ static void vo_tint_fill(float dim) {
         float warm = night ? 0.22f * (1 - r / 40.0f) : 0;
         for (int k = 1; k < VO_EMIT; k++) {
             uint32_t col = VO_RGB[k];
-            if (warm > 0) col = mix(col, 0xff5a10, warm);
-            ds()->vo_row[k][r] = rgb565(mix(w, col, haze), dim);
+            if (warm > 0) col = rgb_mix(col, 0xff5a10, warm);
+            ds()->vo_row[k][r] = rgb565(rgb_mix(w, col, haze), dim);
         }
     }
     g_vo_dim = dim; g_vo_dzk = g_dz_vo;
@@ -2878,7 +2858,7 @@ static void draw_volcano_bubbles(ctx_t *c, int cx, double clock, bool night, int
         float r = 1.7f + 1.5f * ph;
         if (ph > 0.84f) r *= (1 - ph) / 0.16f;
         if (r < 0.6f) continue;
-        uint32_t col = ph < 0.35f ? mix(0xffd060, 0xf8862a, ph / 0.35f) : ph < 0.7f ? mix(0xf8862a, 0xe04818, (ph - 0.35f) / 0.35f) : mix(0xe04818, 0xa02810, (ph - 0.7f) / 0.3f);
+        uint32_t col = ph < 0.35f ? rgb_mix(0xffd060, 0xf8862a, ph / 0.35f) : ph < 0.7f ? rgb_mix(0xf8862a, 0xe04818, (ph - 0.35f) / 0.35f) : rgb_mix(0xe04818, 0xa02810, (ph - 0.7f) / 0.3f);
         if (night) fill_ellipse(&ce, x, y, r + 1.2f, r + 1.2f, col, 50);
         fill_ellipse(&ce, x, y, r, r, col, night ? 255 : 230);
         px_blend(&ce, (int)(x - r * 0.4f), (int)(y - r * 0.4f), 0xfff2c0, 150);
@@ -2944,7 +2924,6 @@ static const uint32_t SNAIL_RGB[SN_NONE] = {
 #define SNAIL_SOLE_DY   6.0f                               /* the sole below snail_y (the sprite's centre) */
 #define SNAIL_TINT_FLOOR 0.84f
 #define SNAIL_TINT_GLASS 0.90f
-static inline int sn_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 /* within w of the segment (x0,y0)-(x1,y1); *u = 0..1 along it */
 static inline bool sn_seg(float lx, float ly, float x0, float y0, float x1, float y1, float w, float *u) {
     float vx = x1 - x0, vy = y1 - y0, l2 = vx * vx + vy * vy;
@@ -2985,7 +2964,7 @@ static int snail_upright_tone(int lx, int ly, float top, float clock, const sn_s
         int tone = sn_shell_tone(w < 0.5f ? 1 : w < 0.74f ? 2 : 3, (-dx * 0.55f - dy * 0.83f) / R, r > R - 1.3f);
         if (ar < 2.2f) tone = 3;                                   /* the apex whorl is tight and dark */
         { float gx = (dx + 3.4f) * 0.8f, gy = dy + 4.6f; if (gx * gx + gy * gy < 4.0f) tone = 0; }   /* a wet gleam */
-        return SN_S0 + sn_clamp(tone, 0, 4);
+        return SN_S0 + clampi(tone, 0, 4);
     }
     /* the foot: a low lens under the shell, the head rising at the front */
     if (lx >= -15 && lx <= 13 && ly >= top && ly <= 0) {
@@ -2994,7 +2973,7 @@ static int snail_upright_tone(int lx, int ly, float top, float clock, const sn_s
         if (ly > -0.9f) tone = 2;                                  /* the belly line */
         if (r < R + 1.8f && dy > 0 && tone < 3) tone++;            /* the shell's shadow */
         if (ly > -2.2f && tone <= 1 && fast_sin(lx * 1.1f + clock * 3.0f + TAU) > 0.7f) tone = 0;   /* a pedal wave runs back */
-        if ((chash(lx, ly) & 7) == 0) tone = sn_clamp(tone + 1, 0, 3);
+        if ((chash(lx, ly) & 7) == 0) tone = clampi(tone + 1, 0, 3);
         return SN_F0 + tone;
     }
     /* the head */
@@ -3028,7 +3007,7 @@ static int snail_glass_body(float lx, float ly, float sx, float sy, float clock,
             else if (edge > 0.62f && lit < 0 && tone < 1) tone = 1; /* the shadow side falls off */
             if (alx < 1.2f && ly > 2 && tone < 2) tone = 2;        /* the pedal groove */
             if (ly < -5 && edge < 0.5f && tone > 1) tone = 1;
-            if ((chash((int)floorf(lx), (int)floorf(ly)) & 7) == 0) tone = sn_clamp(tone + 1, 0, 3);
+            if ((chash((int)floorf(lx), (int)floorf(ly)) & 7) == 0) tone = clampi(tone + 1, 0, 3);
             if (alx < 1.5f && ly >= 7.4f && ly <= 8.8f) return SN_EYE;   /* the mouth */
             return SN_F0 + tone;
         }
@@ -3041,7 +3020,7 @@ static int snail_glass_body(float lx, float ly, float sx, float sy, float clock,
         int tone = sn_shell_tone(lobe > 0.15f ? 1 : 2, lit, sr > 0.88f);
         if (sr < 0.78f) tone++;                                    /* shadow where the foot meets it */
         { float gx = sx + 5.0f, gy = sy + 7.8f; if (gx * gx + gy * gy < 2.9f) tone = 0; }   /* gleam */
-        return SN_S0 + sn_clamp(tone, 0, 4);
+        return SN_S0 + clampi(tone, 0, 4);
     }
     return SN_NONE;
 }
@@ -3060,7 +3039,7 @@ typedef struct { int y; uint32_t w; uint16_t have; src_t s[SN_NONE]; } sn_row_t;
 static inline void snail_put(ctx_t *c, int x, int y, int tone, float tint, sn_row_t *r) {
     if (tone == SN_NONE || !CTX_IN(c, x, y)) return;
     if (r->y != y) { r->y = y; r->have = 0; r->w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y); }
-    if (!(r->have >> tone & 1)) { r->s[tone] = src_color(mix(r->w, SNAIL_RGB[tone], tint), c->dim); r->have |= (uint16_t)(1u << tone); }
+    if (!(r->have >> tone & 1)) { r->s[tone] = src_color(rgb_mix(r->w, SNAIL_RGB[tone], tint), c->dim); r->have |= (uint16_t)(1u << tone); }
     px_blend_s(c, x, y, &r->s[tone], 255);
 }
 /* ON THE GLASS the shell and the empty corners depend only on the heading:
@@ -3245,7 +3224,7 @@ static void draw_urchin(ctx_t *c, const tank_t *t) {
         int y = cy + ly;
         uint32_t w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y);
         src_t pal[UR_NONE];
-        for (int k = 0; k < UR_NONE; k++) pal[k] = src_color(mix(w, URCHIN_RGB[k], UR_TINT), c->dim);
+        for (int k = 0; k < UR_NONE; k++) pal[k] = src_color(rgb_mix(w, URCHIN_RGB[k], UR_TINT), c->dim);
         const uint8_t *row = tn + (ly + 16) * 37;
         for (int lx = -18; lx <= 18; lx++) {
             int tone = row[lx + 18];
@@ -3655,7 +3634,7 @@ static void cr_draw_disc(ctx_t *c, const tank_t *t, float cx, float cy, float sc
     for (int y = (int)floorf(cy - r); y <= (int)ceilf(cy + r); y++) {
         if (y < 0 || y >= TANK_H) continue;
         const uint32_t w = water_rgb(y);
-        src_t gold = src_color(mix(w, CR_RGB[CRT_SD], CR_TINT), c->dim), dark = src_color(mix(w, CR_RGB[CRT_SDD], CR_TINT), c->dim), glint = src_color(CR_RGB[CRT_W], c->dim);
+        src_t gold = src_color(rgb_mix(w, CR_RGB[CRT_SD], CR_TINT), c->dim), dark = src_color(rgb_mix(w, CR_RGB[CRT_SDD], CR_TINT), c->dim), glint = src_color(CR_RGB[CRT_W], c->dim);
         for (int x = (int)floorf(cx - r); x <= (int)ceilf(cx + r); x++) {
             const float ddx = (x + 0.5f - cx) / sc, ddy = (y + 0.5f - cy) / sc, e2 = ddx * ddx + ddy * ddy;
             if (e2 > CR_DISC_R * CR_DISC_R) continue;
@@ -3714,8 +3693,8 @@ static void draw_crab(ctx_t *c, const tank_t *t) {
             const uint32_t w = water_rgb(y);
             src_t pal[CRT_N];
             for (int k = 1; k < CRT_N; k++) {
-                uint32_t rgb = mix(w, CR_RGB[k], CR_TINT);
-                if (dark > 0 && k != CRT_W && k != CRT_E && k != CRT_SD && k != CRT_SDD) rgb = mix(rgb, 0x050304, dark);
+                uint32_t rgb = rgb_mix(w, CR_RGB[k], CR_TINT);
+                if (dark > 0 && k != CRT_W && k != CRT_E && k != CRT_SD && k != CRT_SDD) rgb = rgb_mix(rgb, 0x050304, dark);
                 pal[k] = src_color(rgb, c->dim);
             }
             for (int gx = 0; gx < CR_GW; gx++) {
@@ -3748,8 +3727,8 @@ static void draw_crab(ctx_t *c, const tank_t *t) {
             if (!have) {
                 uint32_t w = water_rgb(y);
                 for (int k = 1; k < CRT_N; k++) {
-                    uint32_t rgb = mix(w, CR_RGB[k], CR_TINT);
-                    if (dark > 0 && k != CRT_W && k != CRT_E && k != CRT_SD && k != CRT_SDD) rgb = mix(rgb, 0x050304, dark);
+                    uint32_t rgb = rgb_mix(w, CR_RGB[k], CR_TINT);
+                    if (dark > 0 && k != CRT_W && k != CRT_E && k != CRT_SD && k != CRT_SDD) rgb = rgb_mix(rgb, 0x050304, dark);
                     pal[k] = src_color(rgb, c->dim);
                 }
                 have = true;
@@ -3825,7 +3804,6 @@ static inline float sh_seg(float px, float py, float x0, float y0, float x1, flo
     return sqrtf(dx * dx + dy * dy);
 }
 static inline float sh_tail_hw(float frac) { return 2.4f - 1.8f * powf(frac, 0.8f); }
-static inline int sh_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 /* the tail's spine: a bezier lead-in from the body's base and a spiral; on a
  * blade the spiral is centred on the blade (local x SX, half-width SW) and
  * the upper half of each loop is flagged behind it */
@@ -3893,7 +3871,7 @@ static uint8_t sh_tone(float lx, float ly, float t, float fin, const decor_scrat
         if (ly > 11.0f + nod + 0.6f + u * 1.2f) tone = SHT_3;
         if (d > hw - 0.7f && ly > 11.0f + nod) tone = SHT_4;
         if (u > 0.9f) tone = SHT_4;
-        if ((chash((int)lx, (int)ly) & 7) == 0) tone = sh_clamp(tone + 1, 1, 5);
+        if ((chash((int)lx, (int)ly) & 7) == 0) tone = clampi(tone + 1, 1, 5);
         return SHB_ON | tone;
     }
     /* the coronet: short blunt nubs, the middle one tallest (Strato 10-15: the
@@ -3913,7 +3891,7 @@ static uint8_t sh_tone(float lx, float ly, float t, float fin, const decor_scrat
         if (lit < -0.45f) tone = SHT_3;
         if (r > 0.82f && lit < 0.1f) tone = SHT_4;
         if (de < 2.75f && (lx < ex || ly < ey)) tone = SHT_1;            /* the pale ring over the eye */
-        if ((chash((int)lx, (int)ly) & 7) == 0) tone = sh_clamp(tone + 1, 0, 5);
+        if ((chash((int)lx, (int)ly) & 7) == 0) tone = clampi(tone + 1, 0, 5);
         return SHB_ON | tone;
     }
     d = ly > 10 && ly < 17.5f && lx > 4 && lx < 13 + jut ? sh_seg(lx, ly, 8.6f + jut, 11.8f + nod, 8.2f, 14.2f, &u) : 99;   /* the throat joins head and body (its top goes with the head) */
@@ -3938,7 +3916,7 @@ static uint8_t sh_tone(float lx, float ly, float t, float fin, const decor_scrat
                 if (un < -0.78f) tone = SHT_4; else if (un < -0.45f) tone = SHT_3;
                 if (un > -0.45f && un < 0.1f && ridge > 1.6f && ly < 20) tone = SHT_2;
             }
-            if ((chash((int)lx, (int)ly + 7) & 7) == 0) tone = sh_clamp(tone + 1, 0, 5);
+            if ((chash((int)lx, (int)ly + 7) & 7) == 0) tone = clampi(tone + 1, 0, 5);
             return SHB_ON | tone;
         }
     }
@@ -3962,7 +3940,7 @@ static uint8_t sh_tone(float lx, float ly, float t, float fin, const decor_scrat
             if (fmodf(frac * 60.0f, 2.6f) < 0.8f) tone = SHT_3;             /* the rings down the tail */
             if (dd > hw - 0.75f) tone = (sc->sh_fl[k] & 2) ? SHT_4 : SHT_3;  /* the shaded edge */
             if (frac > 0.93f) tone = SHT_4;
-            if ((chash((int)lx, (int)ly + 3) & 7) == 0) tone = sh_clamp(tone + 1, 0, 5);
+            if ((chash((int)lx, (int)ly + 3) & 7) == 0) tone = clampi(tone + 1, 0, 5);
             return SHB_ON | SHB_TAIL | ((sc->sh_fl[k] & 1) ? SHB_BEHIND : 0) | tone;
         }
     }
@@ -3979,8 +3957,8 @@ static void sh_sprite(decor_scratch_t *sc, uint8_t *out, float t, int pose, floa
         const float *a = sc->sh_pts[i], *b = sc->sh_pts[i + 1];
         float hwa = hwb; hwb = sh_tail_hw(b[2] / L);
         float hw = hwa + 0.6f;
-        int x0 = sh_clamp((int)floorf(fminf(a[0], b[0]) - hw), 0, SH_W - 1), x1 = sh_clamp((int)ceilf(fmaxf(a[0], b[0]) + hw), 0, SH_W - 1);
-        int y0 = sh_clamp((int)floorf(fminf(a[1], b[1]) - hw), 0, SH_H - 1), y1 = sh_clamp((int)ceilf(fmaxf(a[1], b[1]) + hw), 0, SH_H - 1);
+        int x0 = clampi((int)floorf(fminf(a[0], b[0]) - hw), 0, SH_W - 1), x1 = clampi((int)ceilf(fmaxf(a[0], b[0]) + hw), 0, SH_W - 1);
+        int y0 = clampi((int)floorf(fminf(a[1], b[1]) - hw), 0, SH_H - 1), y1 = clampi((int)ceilf(fmaxf(a[1], b[1]) + hw), 0, SH_H - 1);
         for (int y = y0; y <= y1; y++)
             for (int x = x0; x <= x1; x++) {
                 float px = x + 0.5f, py = y + 0.5f, u;
@@ -4153,7 +4131,7 @@ static void draw_seahorse(ctx_t *c, const tank_t *t) {
             int tone = b & 15;
             if (pal_y != py) {                                             /* this row's tones, tinted with its water */
                 uint32_t w = water_rgb(py < 0 ? 0 : py >= TANK_H ? TANK_H - 1 : py);
-                for (int k = 0; k < SHT_N; k++) pal[k] = src_color(mix(w, SH_RGB[k], SH_TINT), c->dim);
+                for (int k = 0; k < SHT_N; k++) pal[k] = src_color(rgb_mix(w, SH_RGB[k], SH_TINT), c->dim);
                 pal_y = py;
             }
             px_blend_s(c, px, py, &pal[tone], SH_ALPHA[tone]);
@@ -4311,16 +4289,16 @@ static void cl_tint_fill(int scheme, float dim) {
     for (int e = 0; e < CLE_N; e++) {
         uint32_t c = base[e];
         tone[CL_TONE(e, CLV_BODY)]  = c;
-        tone[CL_TONE(e, CLV_LIT)]   = mix(c, 0xfff0b0, e == CLE_ROCK ? 0.22f : 0.36f);
-        tone[CL_TONE(e, CLV_RIM)]   = mix(c, e == CLE_ROCK ? 0x2a2620 : 0x20060e, 0.55f);
-        tone[CL_TONE(e, CLV_SHADE)] = mix(c, 0x000000, 0.24f);
-        tone[CL_TONE(e, CLV_DEEP)]  = e == CLE_ROCK ? 0x6f9a3a : e == CLE_CORAL ? mix(c, 0xffe8a0, 0.58f)
-                                    : e == CLE_TUBE ? mix(c, 0x100418, 0.65f) : e == CLE_BRAIN ? mix(c, 0x0a3040, 0.45f) : mix(c, 0xe8ff80, 0.40f);
+        tone[CL_TONE(e, CLV_LIT)]   = rgb_mix(c, 0xfff0b0, e == CLE_ROCK ? 0.22f : 0.36f);
+        tone[CL_TONE(e, CLV_RIM)]   = rgb_mix(c, e == CLE_ROCK ? 0x2a2620 : 0x20060e, 0.55f);
+        tone[CL_TONE(e, CLV_SHADE)] = rgb_mix(c, 0x000000, 0.24f);
+        tone[CL_TONE(e, CLV_DEEP)]  = e == CLE_ROCK ? 0x6f9a3a : e == CLE_CORAL ? rgb_mix(c, 0xffe8a0, 0.58f)
+                                    : e == CLE_TUBE ? rgb_mix(c, 0x100418, 0.65f) : e == CLE_BRAIN ? rgb_mix(c, 0x0a3040, 0.45f) : rgb_mix(c, 0xe8ff80, 0.40f);
     }
     for (int r = 0; r < CL_H; r++) {
         int y = CL_FY - CL_H + r;
         uint32_t w = water_rgb(y < 0 ? 0 : y >= TANK_H ? TANK_H - 1 : y);
-        for (int k = 1; k < CL_TONES; k++) ds()->cl_row[k][r] = rgb565(mix(w, tone[k], haze), dim);
+        for (int k = 1; k < CL_TONES; k++) ds()->cl_row[k][r] = rgb565(rgb_mix(w, tone[k], haze), dim);
     }
     g_cl_scheme = scheme; g_cl_dim = dim; g_cl_dzk = g_dz_cl;
 }
@@ -4384,7 +4362,7 @@ static void draw_cluster_crown(ctx_t *c, int cx, int scheme, float growth, float
         float ox = x0 + (CL_CX + (hx - CL_CX) * s) * CL_CELL + 1, oy = CL_FY - hy * s * CL_CELL - 1;
         float spread = 0.30f + 0.08f * n;                    /* radians each side of up, widening as the fan fills */
         int qx0, qy0, qx1, qy1;
-        draw_crown(c, ox, oy, n, -1.5708f - spread, -1.5708f + spread, len, mix(rgb, 0xffffff, 0.55f), k * 7, clock, &qx0, &qy0, &qx1, &qy1);
+        draw_crown(c, ox, oy, n, -1.5708f - spread, -1.5708f + spread, len, rgb_mix(rgb, 0xffffff, 0.55f), k * 7, clock, &qx0, &qy0, &qx1, &qy1);
         if (qx1 >= qx0) { if (qx0 < *bx0) *bx0 = qx0; if (qy0 < *by0) *by0 = qy0; if (qx1 > *bx1) *bx1 = qx1; if (qy1 > *by1) *by1 = qy1; }
     }
 }
@@ -4695,7 +4673,7 @@ static inline uint32_t floor_rgb(int x, int y) {
         if (dx * dx + dy * dy <= 1.0f) col = dy < -0.25f ? 0x44544a : (h >> 20) % 2 ? 0x334238 : 0x2a372c;   /* lit from above */
     }
     float depth = (float)(y - top) / (TANK_H - top);
-    return mix(col, 0x02080a, depth < 0 ? 0 : depth * 0.55f);
+    return rgb_mix(col, 0x02080a, depth < 0 ? 0 : depth * 0.55f);
 #else
     uint32_t h2 = (uint32_t)((x * 73856093u) ^ (y * 19349663u));
     uint32_t tone = (h2 >> 4) % 16;
@@ -7589,11 +7567,45 @@ bool render_tool_chip_hit(const tank_t *t, float x, float y) {
 
 
 /* ---- a small pixel font (2026-09-11) ----
- * 5x7 glyphs - upper case, digits, a little punctuation - drawn as scale x
- * scale blocks, so one table reads at 2x for a caption and 3x for a
- * button. The renderer's first text (the milestones page can borrow it for
- * labels). Lower case maps to upper; anything else advances a cell. */
-static const uint8_t FONT5X7[][7] = {
+ * 5x7 glyphs drawn as scale x scale blocks, so one table reads at 2x for a
+ * caption and 3x for a button. One table, every printable ASCII character
+ * (render.h): the tank's text draws its upper-case set from it (glyph), the
+ * update page's case-sensitive text all of it - a network's name or a
+ * passphrase has to show exactly as typed. Rows are 5 bits, high bit left. */
+const uint8_t render_font5x7[95][7] = {
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /*   */
+    { 0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04 }, /* ! */
+    { 0x0a, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x00 }, /* " */
+    { 0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a }, /* # */
+    { 0x04, 0x0f, 0x14, 0x0e, 0x05, 0x1e, 0x04 }, /* $ */
+    { 0x19, 0x1a, 0x02, 0x04, 0x08, 0x0b, 0x13 }, /* % */
+    { 0x0c, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0d }, /* & */
+    { 0x0c, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00 }, /* ' */
+    { 0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02 }, /* ( */
+    { 0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08 }, /* ) */
+    { 0x00, 0x04, 0x15, 0x0e, 0x15, 0x04, 0x00 }, /* * */
+    { 0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00 }, /* + */
+    { 0x00, 0x00, 0x00, 0x00, 0x0c, 0x04, 0x08 }, /* , */
+    { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 }, /* - */
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c }, /* . */
+    { 0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10 }, /* / */
+    { 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e }, /* 0 */
+    { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e }, /* 1 */
+    { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f }, /* 2 */
+    { 0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e }, /* 3 */
+    { 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 }, /* 4 */
+    { 0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e }, /* 5 */
+    { 0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e }, /* 6 */
+    { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 }, /* 7 */
+    { 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e }, /* 8 */
+    { 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c }, /* 9 */
+    { 0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00 }, /* : */
+    { 0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x04, 0x08 }, /* ; */
+    { 0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02 }, /* < */
+    { 0x00, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00 }, /* = */
+    { 0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08 }, /* > */
+    { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04 }, /* ? */
+    { 0x0e, 0x11, 0x01, 0x0d, 0x15, 0x15, 0x0e }, /* @ */
     { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 }, /* A */
     { 0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e }, /* B */
     { 0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e }, /* C */
@@ -7620,35 +7632,51 @@ static const uint8_t FONT5X7[][7] = {
     { 0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11 }, /* X */
     { 0x11, 0x11, 0x11, 0x0a, 0x04, 0x04, 0x04 }, /* Y */
     { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f }, /* Z */
-    { 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e }, /* 0 */
-    { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e }, /* 1 */
-    { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f }, /* 2 */
-    { 0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e }, /* 3 */
-    { 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 }, /* 4 */
-    { 0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e }, /* 5 */
-    { 0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e }, /* 6 */
-    { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 }, /* 7 */
-    { 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e }, /* 8 */
-    { 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c }, /* 9 */
-    { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04 }, /* ? */
-    { 0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04 }, /* ! */
-    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c }, /* . */
-    { 0x00, 0x00, 0x00, 0x00, 0x0c, 0x04, 0x08 }, /* , */
-    { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 }, /* - */
-    { 0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00 }, /* : */
-    { 0x0c, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00 }, /* ' */
-    { 0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10 }, /* / */
-    { 0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00 }, /* + */
-    { 0x19, 0x1a, 0x02, 0x04, 0x08, 0x0b, 0x13 }, /* % */
-    { 0x00, 0x00, 0x08, 0x15, 0x02, 0x00, 0x00 }, /* ~ (the battery page's "about") */
-    { 0x00, 0x15, 0x0e, 0x1f, 0x0e, 0x15, 0x00 }, /* * (the family page's hidden copy, 0.4) */
-    { 0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02 }, /* < (the passport's machine line) */
+    { 0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e }, /* [ */
+    { 0x10, 0x08, 0x08, 0x04, 0x02, 0x02, 0x01 }, /* \ */
+    { 0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e }, /* ] */
+    { 0x04, 0x0a, 0x11, 0x00, 0x00, 0x00, 0x00 }, /* ^ */
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f }, /* _ */
+    { 0x08, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00 }, /* ` */
+    { 0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f }, /* a */
+    { 0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1e }, /* b */
+    { 0x00, 0x00, 0x0e, 0x10, 0x10, 0x11, 0x0e }, /* c */
+    { 0x01, 0x01, 0x0d, 0x13, 0x11, 0x11, 0x0f }, /* d */
+    { 0x00, 0x00, 0x0e, 0x11, 0x1f, 0x10, 0x0e }, /* e */
+    { 0x06, 0x09, 0x08, 0x1c, 0x08, 0x08, 0x08 }, /* f */
+    { 0x00, 0x0f, 0x11, 0x11, 0x0f, 0x01, 0x0e }, /* g */
+    { 0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11 }, /* h */
+    { 0x04, 0x00, 0x0c, 0x04, 0x04, 0x04, 0x0e }, /* i */
+    { 0x02, 0x00, 0x06, 0x02, 0x02, 0x12, 0x0c }, /* j */
+    { 0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12 }, /* k */
+    { 0x0c, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e }, /* l */
+    { 0x00, 0x00, 0x1a, 0x15, 0x15, 0x11, 0x11 }, /* m */
+    { 0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11 }, /* n */
+    { 0x00, 0x00, 0x0e, 0x11, 0x11, 0x11, 0x0e }, /* o */
+    { 0x00, 0x00, 0x1e, 0x11, 0x1e, 0x10, 0x10 }, /* p */
+    { 0x00, 0x00, 0x0d, 0x13, 0x0f, 0x01, 0x01 }, /* q */
+    { 0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10 }, /* r */
+    { 0x00, 0x00, 0x0e, 0x10, 0x0e, 0x01, 0x1e }, /* s */
+    { 0x08, 0x08, 0x1c, 0x08, 0x08, 0x09, 0x06 }, /* t */
+    { 0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0d }, /* u */
+    { 0x00, 0x00, 0x11, 0x11, 0x11, 0x0a, 0x04 }, /* v */
+    { 0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0a }, /* w */
+    { 0x00, 0x00, 0x11, 0x0a, 0x04, 0x0a, 0x11 }, /* x */
+    { 0x00, 0x00, 0x11, 0x11, 0x0f, 0x01, 0x0e }, /* y */
+    { 0x00, 0x00, 0x1f, 0x02, 0x04, 0x08, 0x1f }, /* z */
+    { 0x02, 0x04, 0x04, 0x08, 0x04, 0x04, 0x02 }, /* { */
+    { 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 }, /* | */
+    { 0x08, 0x04, 0x04, 0x02, 0x04, 0x04, 0x08 }, /* } */
+    { 0x00, 0x00, 0x08, 0x15, 0x02, 0x00, 0x00 }, /* ~ */
 };
+/* the tank's own set: upper case (lower case maps to it), digits, a little punctuation - anything else advances
+ * a cell. Its '*' is a sparkle (the family page's hidden copy, 0.4), not the ASCII asterisk. */
 static const char FONT_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?!.,-:'/+%~*<";
+static const uint8_t FONT_STAR[7] = { 0x00, 0x15, 0x0e, 0x1f, 0x0e, 0x15, 0x00 };
 static const uint8_t *glyph(char ch) {
     if (ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
-    const char *p = ch ? strchr(FONT_CHARS, ch) : NULL;
-    return p ? FONT5X7[p - FONT_CHARS] : NULL;
+    if (!ch || !strchr(FONT_CHARS, ch)) return NULL;
+    return ch == '*' ? FONT_STAR : render_font5x7[ch - 32];
 }
 static int text_w(const char *s, int scale) { int n = (int)strlen(s); return n ? n * 6 * scale - scale : 0; }
 static void draw_text(ctx_t *c, int x, int y, int scale, uint32_t rgb, const char *s) {
@@ -8463,20 +8491,19 @@ static bool g_ms_whole_dbg;                                   /* the selftest's 
 void render_frame_begin(void) { g_rframe++; }
 void render_milestones_counts(int *kept, int *whole, int why[MS_WHY_N]) { *kept = g_ms_kept_n; *whole = g_ms_whole_n; if (why) memcpy(why, g_ms_why, sizeof g_ms_why); }
 void render_debug_page_whole(bool on) { g_ms_whole_dbg = on; }
-static uint32_t ms_hash(uint32_t h, uint32_t v) { for (int b = 0; b < 4; b++) { h ^= (v >> (b * 8)) & 255; h *= 16777619u; } return h; }
 /* everything the still page is drawn from (a new one: the page drawn whole) */
 static uint32_t ms_key(const tank_t *t, const fry_req_t *req, int nreq, bool staged) {
-    uint32_t h = ms_hash(2166136261u, (uint32_t)t->n_fish);
+    uint32_t h = bake_hash(2166136261u, (uint32_t)t->n_fish);
     for (int i = 0; i < t->n_fish; i++) {
         const fish_t *f = &t->fish[i];
-        for (int k = 0; k < (int)sizeof f->name && f->name[k]; k++) h = ms_hash(h, (uint8_t)f->name[k]);
-        h = ms_hash(h, f->stage); h = ms_hash(h, f->accent); h = ms_hash(h, f->ms_bits); h = ms_hash(h, f->ms_seen);
+        for (int k = 0; k < (int)sizeof f->name && f->name[k]; k++) h = bake_hash(h, (uint8_t)f->name[k]);
+        h = bake_hash(h, f->stage); h = bake_hash(h, f->accent); h = bake_hash(h, f->ms_bits); h = bake_hash(h, f->ms_seen);
     }
-    h = ms_hash(h, (uint32_t)nreq); h = ms_hash(h, staged);
-    for (int k = 0; k < nreq; k++) { h = ms_hash(h, (uint32_t)req[k].kind); h = ms_hash(h, req[k].met); h = ms_hash(h, (uint32_t)(int)(MSP_ICON * req[k].frac + 0.5f)); }
-    h = ms_hash(h, t->sd_unlocks); h = ms_hash(h, t->tank_ms_bits); h = ms_hash(h, t->tank_ms_seen); h = ms_hash(h, (uint32_t)g_ms_tpage);
-    h = ms_hash(h, g_ms_caption[0] != 0); h = ms_hash(h, g_gm.on); h = ms_hash(h, render_gift_up(t));
-    if (g_ms_caption[0]) { h = ms_hash(h, g_ms_tip); h = ms_hash(h, (uint32_t)ms_modal_y(t)); h = ms_hash(h, (uint32_t)ms_modal_h(t)); }
+    h = bake_hash(h, (uint32_t)nreq); h = bake_hash(h, staged);
+    for (int k = 0; k < nreq; k++) { h = bake_hash(h, (uint32_t)req[k].kind); h = bake_hash(h, req[k].met); h = bake_hash(h, (uint32_t)(int)(MSP_ICON * req[k].frac + 0.5f)); }
+    h = bake_hash(h, t->sd_unlocks); h = bake_hash(h, t->tank_ms_bits); h = bake_hash(h, t->tank_ms_seen); h = bake_hash(h, (uint32_t)g_ms_tpage);
+    h = bake_hash(h, g_ms_caption[0] != 0); h = bake_hash(h, g_gm.on); h = bake_hash(h, render_gift_up(t));
+    if (g_ms_caption[0]) { h = bake_hash(h, g_ms_tip); h = bake_hash(h, (uint32_t)ms_modal_y(t)); h = bake_hash(h, (uint32_t)ms_modal_h(t)); }
     return h;
 }
 /* the NEW FRY row's label: the GROW gate's fish can reach over its last letter, so the kept page puts it back first

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "gift.h"
 #include "progression.h"
+#include "pt_util.h"
 
 /* the blob: magic, version, the three counts, the record size; then the
    GIVEN notes, the ARRIVING notes (uid, nonce, peer, the passport's length
@@ -24,8 +25,6 @@ gift_book_t *gift_of(const void *tank) {
     for (int i = 0; i < 4; i++) if (s_att[i].t == tank && tank) return s_att[i].b;
     return NULL;
 }
-static void put32(uint8_t *b, int o, uint32_t v) { b[o] = (uint8_t)v; b[o + 1] = (uint8_t)(v >> 8); b[o + 2] = (uint8_t)(v >> 16); b[o + 3] = (uint8_t)(v >> 24); }
-static uint32_t get32(const uint8_t *b, int o) { return b[o] | (uint32_t)b[o + 1] << 8 | (uint32_t)b[o + 2] << 16 | (uint32_t)b[o + 3] << 24; }
 
 static bool save(const gift_book_t *b) {   /* false: not on the flash */
     if (!b->persist) return true;
@@ -39,12 +38,12 @@ static bool save(const gift_book_t *b) {   /* false: not on the flash */
     for (int list = 0; list < 2; list++) {
         const gift_note_t *n = list ? b->arriving : b->given; int k = list ? b->n_arr : b->n_given;
         for (int i = 0; i < k; i++, p += GIFT_REC) {
-            put32(p, 0, n[i].uid); put32(p, 4, n[i].nonce); put32(p, 8, n[i].peer);
+            le_put32(p, 0, n[i].uid); le_put32(p, 4, n[i].nonce); le_put32(p, 8, n[i].peer);
             int w = passport_write(&n[i].pp, p + 13, GIFT_PP); p[12] = (uint8_t)(w > 0 ? w : 0);
-            put32(p, GIFT_REC_V1, (uint32_t)(n[i].held > 0 ? n[i].held : 0));
+            le_put32(p, GIFT_REC_V1, (uint32_t)(n[i].held > 0 ? n[i].held : 0));
         }
     }
-    for (int i = 0; i < b->n_recv; i++, p += 8) { put32(p, 0, b->recv[i].uid); put32(p, 4, b->recv[i].nonce); }
+    for (int i = 0; i < b->n_recv; i++, p += 8) { le_put32(p, 0, b->recv[i].uid); le_put32(p, 4, b->recv[i].nonce); }
     bool ok = persist_port_blob_save(GIFT_NVS_KEY, buf, len);
     free(buf);
     return ok;
@@ -64,16 +63,16 @@ void gift_load(gift_book_t *b) {
                 int k = list ? na : ng;
                 for (int i = 0; i < k && p + rec <= end; i++, p += rec) {
                     gift_note_t n; memset(&n, 0, sizeof n);
-                    n.uid = get32(p, 0); n.nonce = get32(p, 4); n.peer = get32(p, 8);
+                    n.uid = le_get32(p, 0); n.nonce = le_get32(p, 4); n.peer = le_get32(p, 8);
                     int w = p[12] <= GIFT_PP ? p[12] : 0;
                     if (!n.uid || !w || !passport_read(&n.pp, p + 13, w)) continue;   /* (a note we cannot read: it was never there) */
-                    if (rec >= GIFT_REC) n.held = (float)get32(p, GIFT_REC_V1);
+                    if (rec >= GIFT_REC) n.held = (float)le_get32(p, GIFT_REC_V1);
                     if (list && b->n_arr < GIFT_NOTES) b->arriving[b->n_arr++] = n;
                     else if (!list && b->n_given < GIFT_NOTES) b->given[b->n_given++] = n;
                 }
             }
             for (int i = 0; i < nr && p + 8 <= end && b->n_recv < GIFT_RECEIVED; i++, p += 8) {
-                b->recv[b->n_recv].uid = get32(p, 0); b->recv[b->n_recv].nonce = get32(p, 4); b->n_recv++;
+                b->recv[b->n_recv].uid = le_get32(p, 0); b->recv[b->n_recv].nonce = le_get32(p, 4); b->n_recv++;
             }
         }
     }

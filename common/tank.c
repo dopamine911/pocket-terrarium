@@ -3,6 +3,7 @@
  * ~0.55 for the 448-wide tank. */
 #include "tank.h"
 #include "tank_events.h"
+#include "pt_util.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -78,16 +79,12 @@ static uint8_t critter_depth_roll(const tank_t *t, float x, uint32_t salt) {   /
     float r = depth_hash(t, x, 0, salt);
     return r < 0.22f ? FISH_DEPTH_BEHIND : r < 0.55f ? FISH_DEPTH_THROUGH : FISH_DEPTH_FRONT;
 }
-static float clampf(float v, float lo, float hi) {
-    return v < lo ? lo : v > hi ? hi : v;
-}
 static float norm_ang(float a) {
     if (!(fabsf(a) < 64.0f)) a = remainderf(a, TAU);   /* never a spin: a huge angle (a bug elsewhere) is folded, inf becomes NaN */
     while (a >  3.14159265f) a -= TAU;
     while (a < -3.14159265f) a += TAU;
     return a;
 }
-static float lerpf(float a, float b, float p) { return a + (b - a) * p; }
 
 float tank_dist(float ax, float ay, float bx, float by) {
     float dx = ax - bx, dy = ay - by;
@@ -1574,11 +1571,6 @@ static void shrimp_scatter(tank_t *t, float x, float y, float radius);   /* belo
 #define CR_NEAR_PX      16.0f    /* this near its shelter's x: its feet ease onto the piece's own floor line */
 #define VOLCANO_BASE_CELL 4.0f   /* the cone's foot (render.c VO_BASE), cell rows up from the sprite's bottom */
 #define VOLCANO_TOP_CELL  100.0f /* the far rim's top (VO_TOP) */
-static uint32_t cr_hash(int a, int b) {                          /* render.c's chash, the same bits */
-    uint32_t h = (uint32_t)a * 73856093u ^ (uint32_t)b * 19349663u;
-    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-    return h;
-}
 float tank_volcano_half(float y, int s) {                        /* render.c vo_half, the same rock (sinf for its fast_sin) */
     float u = (y - VOLCANO_BASE_CELL) / (VOLCANO_TOP_CELL - VOLCANO_BASE_CELL);
     if (u < 0) u = 0;
@@ -1587,7 +1579,7 @@ float tank_volcano_half(float y, int s) {                        /* render.c vo_
     float g = s < 0 ? (u - 0.32f) / 0.16f : (u - 0.58f) / 0.12f;
     h += (s < 0 ? 5.0f : 2.5f) * expf(-g * g);
     h += 1.2f * sinf(y * 0.47f + (s < 0 ? 0.3f : 2.1f)) + 0.8f * sinf(y * 0.19f + (s < 0 ? 1.7f : 0.2f));
-    h += (float)((int)(cr_hash((int)y >> 2, s + 5) % 3) - 1) * 0.6f;
+    h += (float)((int)(chash((int)y >> 2, s + 5) % 3) - 1) * 0.6f;
     return h;
 }
 static float crab_lo(void) { return TANK_FX0 + DECOR_MARGIN + CR_HALF_W; }

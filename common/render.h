@@ -560,7 +560,9 @@ void render_rect_blend(uint16_t *fb, int stride, int x, int y, int w, int h, uin
 void render_rect_edge(uint16_t *fb, int stride, int x, int y, int w, int h, uint32_t rgb);
 void render_ring(uint16_t *fb, int stride, float cx, float cy, float r, uint32_t rgb);   /* the card's selection ring */
 void render_button(uint16_t *fb, int stride, int x, int y, int w, int h, uint32_t fill, uint32_t edge, const char *label, int scale);
-/* one 5x7 glyph from any table (rows: 5 bits, high bit left) at scale - the case-sensitive font in update.c draws with it */
+/* the 5x7 font, every printable ASCII character (index ch - 32); rows: 5 bits, high bit left */
+extern const uint8_t render_font5x7[95][7];
+/* one 5x7 glyph from any table at scale - the update page's case-sensitive text draws with it */
 void render_glyph(uint16_t *fb, int stride, int x, int y, int scale, uint32_t rgb, const uint8_t *rows);
 /* an adult fish facing right at (x,y), body length ~42 x size px, tail
  * swimming on `clock` - the setup's live preview of a colour choice. `form`
