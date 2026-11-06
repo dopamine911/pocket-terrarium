@@ -85,12 +85,70 @@ python3 harness.py selftest                            # planner, guard, margins
   the harness (or its ssh) and rerunning `run` adopts running jobs and collects finished ones.
 - **Outputs**, per job in `out/harness/<run>/s<seed>/`: `ckpt.pt`, `model_q4.bin`,
   `model_fp32.bin`, the probe JSONs, the logs, and `manifest.json`. The manifest records the git
-  SHA, dataset hash, configs, host/card, image ID, torch/HIP, s/iter, peak memory and best val.
+  SHA, dataset hash, configs, host/card, image ID, torch/HIP, s/iter, peak memory, and the
+  kept checkpoint's val loss, goal NLL and goal accuracy.
+- **Goal metrics** (train.py, every eval): on whole held-out docs, the label goal's NLL under the
+  device's softmax over the goal tokens only (`goal_nll`), how often the top goal is the label
+  (`goal_acc`), and the loss on the decision tokens. `val_loss` is mostly the state words, which
+  the device never generates. A run's `loss = "decision"` (`train.py --loss decision`) trains on
+  the tokens after `->` only and keeps the checkpoint with the best goal NLL.
 - **Report**, in `out/harness/<run>/report.md`: jobs, every row × seed × panel with its limit,
   the seed-to-seed sd against the panel-to-panel spread, each seed's smallest margin, the
-  selected seed, and the check against `[validate]` if the run has one. Selection takes the
-  widest smallest margin. Seeds within the binding rows' panel spread of it (at least
-  `tie_floor`, 0.005) are tied and go to the lower val loss.
+  selected seed, and the check against `[validate]` if the run has one. Margins are scaled by
+  the row's headroom (limit to best possible: 1 for a rate, 5/33 for the A11 slope - the least-squares slope of a 0/1 step over bold 0..9, its true
+  maximum - and 0 for a `<=` row), so a row pinned near its floor (A12, limit 0.05) can't decide every ranking.
+  Selection takes the widest smallest scaled margin. Seeds within the binding rows' scaled panel
+  spread of it (at least `tie_floor`, 0.005) are tied and go to the lower goal NLL. This replaced the earlier ranking (raw margins, then
+  validation loss), so a seed selected from a report made before it may not be the one selected
+  now: compare old and new selections knowing the policy changed, not only the model.
+- **Teacher agreement**, `model/agree.py --ckpt A.pt B.pt ...`: a fixed, student-independent
+  state set (seed 777, 300 states), K = 3 teacher answers each, cached in
+  `out/agree_teacher_cache.jsonl` so further checkpoints cost no teacher calls. It reports greedy
+  agreement (A1 without its noise), expected agreement under the device's sampling, the
+  teacher's own self-agreement, their ratio, and NLL, each with a 95% bootstrap CI.
+  `--api rules` runs it offline; `--selftest` checks the arithmetic.
+- **Curiosity panel**, `model/curiosity.py student --ckpt ... --out FILE`: matched states in which
+  only `curiosity` varies (0/3/6/9; nine cases: calm, hungry, hot, cold, stressed, exhausted,
+  sleep, shed, a solitary lizard with another near), the checkpoints' goal probabilities on them,
+  and the paired 9-0 change per case. `teacher` mode asks the teacher for the same states
+  (capped, cached, resumable) and writes focused `{state, goal}` labels. No thresholds: it
+  describes. Measured on the l1-focus2 checkpoints, see issue #7.
+
+## Size sweep
+
+`model/run_size_sweep.sh` trains six sizes around the 14M (`harness/models.toml`: 384x4, 256x8,
+256x6, 256x4, 192x6, 192x4; dim and the FFN width are multiples of the q4 group size 64), each
+with the loss on every token and on the decision tokens only, three seeds per run, on the same
+data, iterations and probes as `l1-focus2` (`harness/runs/size-*.toml`). Training mode is the
+default; `SWEEP_MODE=opportunistic` shares the cards with the served models. It needs no teacher.
+The result is `out/harness/size-report.md` (`model/size_report.py`): per run the parameters,
+q4 size, the q4 runner's speed on this machine (`out/runq4`, `gcc -O3 -o out/runq4 runq4.c -lm`),
+a pendant speed projected from the pendant's measured 11.9 tok/s at 14M (a projection:
+memory bandwidth differs between an x86 core and the ESP32-S3), goal NLL and accuracy, how many
+seeds pass every probe row, the worst scaled margin and the rows a seed fails. A smaller model
+passes only if every seed passes every row; the table is evidence, not a promotion rule.
+
+The sweep can be interrupted and rerun, and it can fail part-way, so the report says what it holds:
+- `report.json` records the configured seeds (`harness.py report`). The "seeds passing" cell is
+  out of those: a run with a seed not collected reads `1/3 **INCOMPLETE: seeds 2, 3 not collected**`,
+  never `1/1`. A report from before the seed set was recorded (the `l1-focus2` baselines) reads
+  `(seed set not recorded)`, and a report without goal metrics shows `-` for them.
+- The script skips a run only when its report holds every configured seed
+  (`size_report.py --complete RUN`); a report written after a failed job is rerun, and the harness
+  resumes the jobs already done.
+- The pendant projection needs `--reference RUN`, the run whose speed here is scaled to the
+  measured 11.9 tok/s (the script passes `l1-focus2`). Without the baseline's report there is no
+  projection, and a named reference that is missing is an error; another model's speed is never
+  substituted.
+- Exit status: 0 only when every run is complete and the table was written; 1 when a run failed or
+  is incomplete or the table could not be generated (the log says which).
+
+Measured on the pendant (1.75C, 2026-11-06): the 256x4 decision-only model (3.2M, 1.72 MB, seed 2 of
+`size-d256-n4-decision`), flashed as model partition + trailer only (`lz_d256n4`; the app and the
+save untouched), decides in about 1.18 s at 40.6-41.3 tok/s with 84 KB of internal heap free, against
+about 4 s at 11.9 tok/s for the 14M. The projection from the x86 runner (51.6 tok/s) was 25% high.
+Sim census A15 (crickets per lit lizard-hour, bar >= 4; one catch is about 0.44) over 30 terrariums:
+the 14M missed 0, 256x4 missed 5 (each at 3.6-4.0), 192x4 missed 2; the means match (about 5.6-5.8).
 
 ## Extra tools
 

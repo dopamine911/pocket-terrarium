@@ -1,0 +1,20 @@
+# Size sweep: 384 wide, 4 deep (7.10M), loss on every token.
+# Same data, seeds, iterations and probes as l1-focus2, so the rows compare directly.
+
+model = "l1-d384-n4"
+dataset = "l1-focus2"
+iters = 5000
+batch = 64
+lr = 6e-4
+seeds = [1337, 1, 2]
+mode = "training"
+cpu = false
+export = true
+
+[[probes]]
+n = 400
+seed = 11
+
+[[probes]]
+n = 400
+seed = 23

@@ -1,0 +1,21 @@
+# Size sweep: 256 wide, 8 deep (6.44M), loss on the decision tokens.
+# Same data, seeds, iterations and probes as l1-focus2, so the rows compare directly.
+
+model = "l1-d256-n8"
+dataset = "l1-focus2"
+iters = 5000
+batch = 64
+lr = 6e-4
+loss = "decision"
+seeds = [1337, 1, 2]
+mode = "training"
+cpu = false
+export = true
+
+[[probes]]
+n = 400
+seed = 11
+
+[[probes]]
+n = 400
+seed = 23

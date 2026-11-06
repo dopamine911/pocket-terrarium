@@ -145,6 +145,8 @@ def validate_config(cfg):
             errs.append(f"run {n}: lr must be a float")
         if run.get("mode", "training") not in ("training", "opportunistic"):
             errs.append(f"run {n}: mode must be training or opportunistic")
+        if run.get("loss", "all") not in ("all", "decision"):
+            errs.append(f"run {n}: loss must be all (every token) or decision (the tokens after `->`)")
         if not isinstance(run.get("tie_floor", TIE_FLOOR), float) or run.get("tie_floor", TIE_FLOOR) < 0:
             errs.append(f"run {n}: tie_floor must be a float >= 0")
         for p in run.get("probes", []):
@@ -425,7 +427,8 @@ def job_spec(cfg, job, seed, data_sha, device):
     return {"run": run["name"], "job": job, "seed": seed, "device": device, "schema": str(model["schema"]),
             "data": f"data/{data_sha}.jsonl",
             "train": {"iters": run["iters"], "batch": run["batch"], "lr": run["lr"], "dim": model["dim"],
-                      "n_layers": model["n_layers"], "n_heads": model["n_heads"], "max_seq_len": model["max_seq_len"]},
+                      "n_layers": model["n_layers"], "n_heads": model["n_heads"], "max_seq_len": model["max_seq_len"],
+                      "loss": run.get("loss", "all")},
             "probes": run.get("probes", []), "export": run.get("export", True)}
 
 
@@ -692,7 +695,8 @@ def cmd_status(cfg, args):
 # ---------------------------------------------------------------- the job (inside the container)
 
 ITER_RE = re.compile(r"^iter (\d+)/(\d+) loss ([\d.]+) \(([\d.]+)s/iter\)")
-DONE_RE = re.compile(r"^done: best val_loss ([\d.]+).*?(?:peak GPU memory (\d+) MiB)?$")
+DONE_RE = re.compile(r"^done: kept iter (\d+): val_loss ([\d.]+) goal_nll ([\d.]+) goal_acc ([\d.]+) "
+                     r"decision_loss ([\d.]+), .*?([\d.]+)M params(?:, peak GPU memory (\d+) MiB)?$")
 
 
 def parse_train_log(text):
@@ -703,9 +707,10 @@ def parse_train_log(text):
             out.update(iters_done=int(m[1]), loss=float(m[3]), s_per_iter=float(m[4]))
         m = DONE_RE.match(line)
         if m:
-            out["best_val"] = float(m[1])
-            if m[2]:
-                out["peak_gpu_mib"] = int(m[2])
+            out.update(kept_iter=int(m[1]), best_val=float(m[2]), goal_nll=float(m[3]), goal_acc=float(m[4]),
+                       decision_loss=float(m[5]), params_m=float(m[6]))
+            if m[7]:
+                out["peak_gpu_mib"] = int(m[7])
         if " docs -> " in line:
             out["docs"] = int(line.split()[0])
     return out
@@ -732,7 +737,7 @@ def cmd_job(args):
                              "--device", spec["device"], "--seed", str(spec["seed"]), "--iters", str(t["iters"]),
                              "--batch", str(t["batch"]), "--lr", str(t["lr"]), "--dim", str(t["dim"]),
                              "--n-layers", str(t["n_layers"]), "--n-heads", str(t["n_heads"]),
-                             "--max-seq-len", str(t["max_seq_len"])])
+                             "--max-seq-len", str(t["max_seq_len"]), "--loss", t["loss"]])
         for p in spec["probes"] if rc == 0 else []:
             rc = stage(f"probe_p{p['seed']}_n{p['n']}",
                        ["probe_l1.py", "--ckpt", ckpt, "--n", str(p["n"]), "--seed", str(p["seed"]),
@@ -774,6 +779,32 @@ def margin(value, threshold):
     return value - lim if m[1][0] == ">" else lim - value
 
 
+# the most the A11 sweep's least-squares slope over bold 0..9 can be for probabilities in [0, 1]: the step
+# [0,0,0,0,0,1,1,1,1,1] gives 12.5 / 82.5 = 5/33 (probe_l1.slope). Not 1/9, the slope of a line from 0 at bold 0 to 1
+# at bold 9, which a step beats
+A11_SLOPE_MAX = 5 / 33
+
+
+def headroom(name, threshold):
+    """the room a row has between its limit and the best value it can take: a rate or a paired
+    difference tops out at 1, the A11 sweep's slope over bold 0..9 at A11_SLOPE_MAX (5/33), a <= row
+    bottoms out at 0"""
+    m = LIMIT_RE.match(threshold or "")
+    if not m:
+        return None
+    lim = float(m[2])
+    room = ((A11_SLOPE_MAX if "slope" in name else 1.0) - lim) if m[1][0] == ">" else lim
+    return room if room > 0 else None
+
+
+def scaled_margin(value, name, threshold):
+    """the margin as a share of the row's headroom: 1 = as good as the row can be, 0 = at the limit.
+    Raw margins cap at the tightest limit (A12's 0.05), so a row near its floor would decide every
+    ranking; scaled, rows with room to spare are compared fairly"""
+    mg, room = margin(value, threshold), headroom(name, threshold)
+    return None if mg is None or room is None else mg / room
+
+
 def row_key(name):
     """a short unique key for probe_l1's row names"""
     name = name.strip()
@@ -790,7 +821,8 @@ def row_key(name):
 
 
 def seed_stats(probes_by_seed):
-    """{seed: [probe json per panel]} -> rows {key: {threshold, values {seed: [per panel]}}}, per-seed min margin"""
+    """{seed: [probe json per panel]} -> rows {key: {threshold, values {seed: [per panel]}}}, and per
+    seed the smallest scaled margin (the binding row and panel, and its raw margin)"""
     rows, per_seed = {}, {}
     for seed, panels in probes_by_seed.items():
         worst = None
@@ -799,34 +831,39 @@ def seed_stats(probes_by_seed):
                 k = row_key(r["row"])
                 row = rows.setdefault(k, {"name": r["row"], "threshold": r["threshold"], "values": {}})
                 row["values"].setdefault(seed, [None] * len(panels))[pi] = r["value"]
-                mg = margin(r["value"], r["threshold"])
-                if mg is not None and (worst is None or mg < worst[0]):
-                    worst = (mg, k, pi)
+                sm = scaled_margin(r["value"], r["row"], r["threshold"])
+                if sm is not None and (worst is None or sm < worst[0]):
+                    worst = (sm, k, pi, margin(r["value"], r["threshold"]))
         per_seed[seed] = {"min_margin": worst[0] if worst else None, "binding_row": worst[1] if worst else None,
-                          "binding_panel": worst[2] if worst else None,
+                          "binding_panel": worst[2] if worst else None, "raw_margin": worst[3] if worst else None,
                           "passed": all(p.get("passed") for p in panels)}
     for row in rows.values():
         flat = [v for vs in row["values"].values() for v in vs if v is not None]
         means = [sum(vs) / len(vs) for vs in row["values"].values() if None not in vs]
         mgs = [margin(v, row["threshold"]) for v in flat]
+        room = headroom(row["name"], row["threshold"])
         row["stats"] = {"mean": statistics.fmean(flat), "min": min(flat), "max": max(flat),
                         "sd_all": statistics.stdev(flat) if len(flat) > 1 else 0.0,
                         "sd_between_seeds": statistics.stdev(means) if len(means) > 1 else 0.0,
                         "panel_spread": statistics.fmean(max(vs) - min(vs) for vs in row["values"].values()),
-                        "min_margin": min(mgs) if None not in mgs else None}
+                        "min_margin": min(mgs) if None not in mgs else None,
+                        "headroom": room,
+                        "min_scaled": min(mgs) / room if None not in mgs and room else None}
     return rows, per_seed
 
 
 def tie_band(per_seed, rows, floor):
-    """how far below the best smallest margin a seed still counts as tied: the probe's own noise on
-    the rows that bind (their mean panel-to-panel spread), and never less than floor"""
-    spreads = [rows[p["binding_row"]]["stats"]["panel_spread"] for p in per_seed.values() if p["binding_row"]]
+    """how far below the best smallest scaled margin a seed still counts as tied: the probe's own
+    noise on the rows that bind (their mean panel-to-panel spread, scaled by the row's headroom),
+    and never less than floor"""
+    spreads = [rows[p["binding_row"]]["stats"]["panel_spread"] / rows[p["binding_row"]]["stats"]["headroom"]
+               for p in per_seed.values() if p["binding_row"]]
     return max([floor, *spreads])
 
 
 def select_seed(per_seed, val_loss, band=0.0):
-    """widest smallest margin; seeds within band of it are tied and go to the lower validation loss
-    (then the wider margin). None when no seed has a margin"""
+    """widest smallest (scaled) margin; seeds within band of it are tied and go to the lower
+    validation loss (then the wider margin). None when no seed has a margin"""
     cands = [s for s, v in per_seed.items() if v["min_margin"] is not None]
     if not cands:
         return None
@@ -871,13 +908,16 @@ def write_report(cfg):
         if ps and None not in ps:
             panels_by_seed[s] = ps
     meta = read_json(os.path.join(run_dir(name), "run.json"), {})
-    val = {s: m.get("train", {}).get("best_val") for s, m in jobs.items()}
+    # ties go to the lower goal NLL (the device's own decision), or val loss for jobs from before it was measured
+    goal = {s: m.get("train", {}).get("goal_nll") for s, m in jobs.items()}
+    tiebreak_by = "goal NLL" if jobs and None not in goal.values() else "val loss"
+    tiebreak = goal if tiebreak_by == "goal NLL" else {s: m.get("train", {}).get("best_val") for s, m in jobs.items()}
     rows, per_seed = seed_stats(panels_by_seed) if panels_by_seed else ({}, {})
     band = tie_band(per_seed, rows, run.get("tie_floor", TIE_FLOOR)) if per_seed else 0.0
-    chosen = select_seed(per_seed, val, band)
+    chosen = select_seed(per_seed, tiebreak, band)
     L = [f"# Run {name}", "",
          f"model {run['model']}, dataset {run['dataset']} (sha256 {next(iter(jobs.values()))['dataset_sha256'][:12] if jobs else '-'}), "
-         f"{run['iters']} iters, batch {run['batch']}, lr {run['lr']}, mode {meta.get('mode', '-')}; "
+         f"{run['iters']} iters, batch {run['batch']}, lr {run['lr']}, loss {run.get('loss', 'all')}, mode {meta.get('mode', '-')}; "
          f"{len(jobs)}/{len(run['seeds'])} seeds collected.", ""]
     walls = [m["wall_s"] for m in jobs.values()]
     if meta.get("started") and meta.get("ended"):
@@ -896,44 +936,50 @@ def write_report(cfg):
         L += [f"Lab in training mode for the whole run: {f'yes, {wall / 60:.1f} min' if trained else 'no'} "
               f"(at start: {seen}).", ""]
     L += ["## Jobs", "", "| seed | card | host | device | s/iter | train / job wall | peak GPU (torch) | "
-          "card mem peak (sysfs) | best val | attempts |", "|---|---|---|---|---|---|---|---|---|---|"]
+          "card mem peak (sysfs) | val loss | goal NLL | goal acc | kept iter | attempts |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s, m in jobs.items():
         t, v = m.get("train", {}), m.get("versions", {})
         tw = next((x["wall_s"] for x in m.get("stages", []) if x["stage"] == "train"), None)
         L.append(f"| {s} | {m['card']} | {m['host']} | {v.get('device_name', '-')} | {fmt(t.get('s_per_iter'), 2)} | "
                  f"{fmt(tw and tw / 60, 1)} / {m['wall_s'] / 60:.1f} min | {t.get('peak_gpu_mib', '-')} MiB | "
                  f"{m.get('card_mem_used_peak_mib', '-')} MiB (before {m.get('card_mem_used_before_mib', '-')}) | "
-                 f"{fmt(t.get('best_val'), 4)} | {m['attempts']} |")
+                 f"{fmt(t.get('best_val'), 4)} | {fmt(t.get('goal_nll'), 4)} | {fmt(t.get('goal_acc'), 3)} | "
+                 f"{t.get('kept_iter', '-')} | {m['attempts']} |")
     if jobs:
         v = next(iter(jobs.values())).get("versions", {})
-        L += ["", f"torch {v.get('torch')} (HIP {v.get('hip')}); git {next(iter(jobs.values()))['git']}", ""]
+        L += ["", "goal NLL / acc: on the job's held-out docs, the label goal under the device's softmax over the goal "
+              "tokens only, and how often its top goal is the label (the teacher's own repeat agreement bounds it).",
+              "", f"torch {v.get('torch')} (HIP {v.get('hip')}); git {next(iter(jobs.values()))['git']}", ""]
     if rows:
         seeds = list(panels_by_seed)
         pnames = [f"p{p['seed']}" for p in probes]
         L += ["## Rows by seed and panel", "", "| row (limit) | " + " | ".join(f"s{s} {' / '.join(pnames)}" for s in seeds)
-              + " | mean | sd seeds | panel spread | min margin |", "|---|" + "---|" * (len(seeds) + 4)]
+              + " | mean | sd seeds | panel spread | min margin (scaled) |", "|---|" + "---|" * (len(seeds) + 4)]
         for k, r in rows.items():
             st = r["stats"]
             cells = [" / ".join(fmt(x) for x in r["values"].get(s, [])) for s in seeds]
             L.append(f"| {k} ({r['threshold']}) | " + " | ".join(cells) +
                      f" | {fmt(st['mean'])} | {fmt(st['sd_between_seeds'])} | {fmt(st['panel_spread'])} | "
-                     f"{fmt(st['min_margin'], sign=True)} |")
-        L.append("| **smallest margin** | " + " | ".join(
-            f"**{fmt(per_seed[s]['min_margin'], sign=True)}** ({per_seed[s]['binding_row']}, {pnames[per_seed[s]['binding_panel']]})"
+                     f"{fmt(st['min_margin'], sign=True)} ({fmt(st['min_scaled'], 2, sign=True)}) |")
+        L.append("| **smallest scaled margin** | " + " | ".join(
+            f"**{fmt(per_seed[s]['min_margin'], 2, sign=True)}** ({per_seed[s]['binding_row']}, "
+            f"{pnames[per_seed[s]['binding_panel']]}, raw {fmt(per_seed[s]['raw_margin'], sign=True)})"
             for s in seeds) + " | | | | |")
         L += ["", "sd seeds: the standard deviation of the per-seed means (training-seed variance); panel spread: the mean "
               "max - min across one seed's panels (probe sampling noise). A row whose sd seeds is near its min margin "
-              "can flip on another seed.", ""]
+              "can flip on another seed. Scaled: the margin as a share of the row's headroom (limit to best possible: "
+              "1 for a rate or a paired difference, 5/33 for the A11 slope, 0 for a <= row); 1 is perfect, 0 the limit.", ""]
         ranked = sorted(seeds, key=lambda s: per_seed[s]["min_margin"] if per_seed[s]["min_margin"] is not None else -9, reverse=True)
         best = per_seed[ranked[0]]["min_margin"]
-        L += ["## Selection", "", f"Rule: the widest smallest margin over every limited row and panel. Seeds within "
-              f"{band:.3f} of the widest are tied (the binding rows' panel spread, at least {run.get('tie_floor', TIE_FLOOR)}) "
-              "and go to the lower val loss.", ""]
+        L += ["## Selection", "", f"Rule: the widest smallest scaled margin over every limited row and panel. Seeds "
+              f"within {band:.3f} of the widest are tied (the binding rows' scaled panel spread, at least "
+              f"{run.get('tie_floor', TIE_FLOOR)}) and go to the lower {tiebreak_by}.", ""]
         for i, s in enumerate(ranked, 1):
             p = per_seed[s]
             tied = best is not None and p["min_margin"] is not None and p["min_margin"] >= best - band - 1e-9
-            L.append(f"{i}. seed {s}: smallest margin {fmt(p['min_margin'], sign=True)} on {p['binding_row']}, "
-                     f"val {fmt(val.get(s), 4)}, {'all rows pass' if p['passed'] else 'a row FAILS'}"
+            L.append(f"{i}. seed {s}: smallest scaled margin {fmt(p['min_margin'], 3, sign=True)} on {p['binding_row']}, "
+                     f"{tiebreak_by} {fmt(tiebreak.get(s), 4)}, {'all rows pass' if p['passed'] else 'a row FAILS'}"
                      + (", tied for best" if tied and len(seeds) > 1 else "") + ("  <- selected" if s == chosen else ""))
         sel = jobs.get(chosen)
         if sel:
@@ -955,7 +1001,7 @@ def write_report(cfg):
     with open(os.path.join(run_dir(name), "report.md"), "w") as f:
         f.write("\n".join(L) + "\n")
     write_json(os.path.join(run_dir(name), "report.json"),
-               {"run": name, "jobs": jobs, "rows": {k: {**r, "values": {str(s): v for s, v in r["values"].items()}}
+               {"run": name, "seeds": list(run["seeds"]), "jobs": jobs, "rows": {k: {**r, "values": {str(s): v for s, v in r["values"].items()}}
                                                      for k, r in rows.items()},
                 "per_seed": {str(s): v for s, v in per_seed.items()}, "selected": chosen, "validation": vres})
     say(f"report: out/harness/{name}/report.md" + (f"; selected seed {chosen}" if chosen is not None else ""))
@@ -1024,9 +1070,12 @@ def selftest():
     assert parse_poll("@@\nrunning\n@@\niter 50/5000 loss 1.2 (0.15s/iter)\n@@\n")[:2] == ("running", "iter 50/5000 loss 1.2 (0.15s/iter)")
     assert parse_poll("@@\n@@\n@@\n")[0] == "gone" and parse_poll("@@\nexited\n@@\n@@\n")[0] == "gone"
     t = parse_train_log("50968 docs -> 1 train / 1 val tokens, device=cuda\niter 50/100 loss 2.0 (0.20s/iter)\n"
-                        "iter 100/100 loss 1.5 (0.16s/iter)\ndone: best val_loss 0.7445, checkpoint x, peak GPU memory 812 MiB")
-    assert t == {"docs": 50968, "iters_done": 100, "loss": 1.5, "s_per_iter": 0.16, "best_val": 0.7445, "peak_gpu_mib": 812}, t
-    assert parse_train_log("done: best val_loss 0.9, checkpoint x")["best_val"] == 0.9
+                        "iter 100/100 loss 1.5 (0.16s/iter)\ndone: kept iter 100: val_loss 0.7445 goal_nll 0.5012 "
+                        "goal_acc 0.8123 decision_loss 0.4100, checkpoint /w/x/ckpt.pt, 14.21M params, peak GPU memory 812 MiB")
+    assert t == {"docs": 50968, "iters_done": 100, "loss": 1.5, "s_per_iter": 0.16, "kept_iter": 100, "best_val": 0.7445,
+                 "goal_nll": 0.5012, "goal_acc": 0.8123, "decision_loss": 0.41, "params_m": 14.21, "peak_gpu_mib": 812}, t
+    assert "peak_gpu_mib" not in parse_train_log("done: kept iter 9: val_loss 0.9 goal_nll 0.6 goal_acc 0.7 "
+                                                 "decision_loss 0.5, checkpoint x, 0.11M params")
     # margins and selection, on rows as probe_l1 writes them
     for v, th, want in ((0.918, ">= 0.86", 0.058), (0.001, "<= 0.05", 0.049), (0.402, "< 0.45", 0.048),
                         (0.07, "> 0", 0.07), (0.975, ">= 0.10 (now and then)", 0.875), (0.3, "-", None), (0.3, "", None)):
@@ -1045,13 +1094,21 @@ def selftest():
                             1: [probe(0.949, 0.0, 0.411), probe(0.954, 0.0, 0.406)],
                             2: [probe(0.918, 0.001, 0.402), probe(0.932, 0.001, 0.381)]})
     assert set(rows) == {"A2", "A11", "A12", "content", "A11 slope", "P(last kept | active, bored 0-1, any last) (report)"}
-    assert [round(per[s]["min_margin"], 3) for s in (1337, 1, 2)] == [0.027, 0.039, 0.048], per
+    # scaled by headroom: content's limit 0.45 leaves 0.45 of room, so its raw +0.027/+0.039/+0.048 become 0.06/0.087/0.107
+    assert [round(per[s]["min_margin"], 3) for s in (1337, 1, 2)] == [0.06, 0.087, 0.107], per
+    assert [round(per[s]["raw_margin"], 3) for s in (1337, 1, 2)] == [0.027, 0.039, 0.048], per
     assert per[2]["binding_row"] == "content" and per[2]["binding_panel"] == 0
-    band = tie_band(per, rows, TIE_FLOOR)   # content binds every seed; its panel spreads 0.028 / 0.005 / 0.021
-    assert abs(band - statistics.fmean([0.028, 0.005, 0.021])) < 1e-9, band
+    band = tie_band(per, rows, TIE_FLOOR)   # content binds every seed; its panel spreads 0.028 / 0.005 / 0.021, / 0.45
+    assert abs(band - statistics.fmean([0.028, 0.005, 0.021]) / 0.45) < 1e-9, band
+    # A12 near its floor no longer decides: raw, x (A12 +0.049) beats y (A12 +0.045); scaled, y's wider content wins
+    _, xy = seed_stats({"x": [probe(0.95, 0.001, 0.39)], "y": [probe(0.95, 0.005, 0.35)]})
+    assert xy["x"]["binding_row"] == "content" and select_seed(xy, {}) == "y", xy
+    assert abs(scaled_margin(0.065, "A11 slope of P(explore+investigate), bold 0..9", "> 0") - 0.065 * 33 / 5) < 1e-9
+    assert abs(headroom("A11 slope of P(explore+investigate), bold 0..9", "> 0") - 5 / 33) < 1e-12   # the true maximum: a step at bold 4/5
+    assert scaled_margin(0.3, "P(hunt | ...) (report)", "-") is None and headroom("x", "<= 0") is None
     assert select_seed(per, {}) == 2                                   # no band: the widest alone
     assert select_seed(per, {1337: 0.70, 1: 0.7506, 2: 0.7445}, band) == 2   # s1 tied (0.009 below), s1337 not (0.021)
-    assert select_seed(per, {1337: 0.70, 1: 0.7400, 2: 0.7445}, band) == 1   # inside the band the val loss decides
+    assert select_seed(per, {1337: 0.70, 1: 0.7400, 2: 0.7445}, band) == 1   # inside the band the tie-break decides
     assert select_seed(per, {}, band) == 2                             # no val losses: the wider margin
     assert select_seed(per, {1337: 0.70}, 0.05) == 1337                # a band wide enough ties all three
     tie = {1: {"min_margin": 0.04}, 2: {"min_margin": 0.04}}
@@ -1064,6 +1121,15 @@ def selftest():
     off = {"tolerance": 0.03, "rows": {"A2": {"2": [0.95, 0.932]}}}   # 0.918 vs 0.95: 0.032 out
     assert not validate(off, rows, 2)["rows_ok"]
     assert not validate({"rows": {"A9": {"2": [0.9, 0.9]}}}, rows, 2)["ok"]   # a reference row the probe lacks
+    # report.json names the configured seeds, so size_report.py can tell a partial run from a whole one
+    with tempfile.TemporaryDirectory() as tmp:
+        saved_out = globals()["OUT"]
+        globals()["OUT"] = tmp
+        try:
+            write_report({"run": {"name": "r", "model": "m", "dataset": "d", "iters": 1, "batch": 1, "lr": 0.1, "seeds": [5, 7, 9]}})
+            assert read_json(os.path.join(tmp, "r", "report.json"))["seeds"] == [5, 7, 9]
+        finally:
+            globals()["OUT"] = saved_out
     print("selftest OK: config refusals, guard (memory, lab mode, teacher, busy, too small), GTT accounting, "
           "card waves, poll states, train-log parsing, margins, the section-6 smallest margins "
           "(+0.027 / +0.039 / +0.048 -> seed 2), ties, validation")
