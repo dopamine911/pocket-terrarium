@@ -6,7 +6,7 @@
 #include "render.h"
 
 bool boot_show_on(void) { return false; }
-bool boot_show_ready(void) { return render_scene_buf(NULL) && (render_grass_loop_n() > 0 || !render_grass_loop_warming()); }
+bool boot_show_ready(void) { return render_scene_buf(NULL); }   /* (no grass loop here: never warming, never n > 0 - the scene alone is the wait) */
 void boot_show_end(void) {}
 bool boot_show_begin(const tank_t *t, bool fill, void *(*alloc)(size_t), void (*release)(void *)) { (void)t; (void)fill; (void)alloc; (void)release; return false; }
 bool boot_show_frame(const tank_t *t, uint16_t *fb, float ts, bool loop_whole, float bake_frac) { (void)t; (void)fb; (void)ts; (void)loop_whole; (void)bake_frac; return false; }

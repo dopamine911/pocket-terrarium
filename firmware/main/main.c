@@ -141,6 +141,7 @@ static bool s_prefetch_pending; static uint16_t *s_prefetch_fb; static unsigned 
 #else
 #define GRASS_LOOP_MOMENTS 88                           /* the 1.8 and the pendant at the 25 fps ceiling */
 #endif
+#if !PT_TERRARIUM                                       /* aquarium only: the grass loop's memory (render_set_grass_loop, below) is the aquarium scene's */
 static int s_gl_refused;
 static unsigned s_gl_calls; static size_t s_gl_plan_free;   /* the loop's allocations so far (each is the plan's), and PSRAM free after the last */
 static void *gl_alloc(size_t n) {                       /* the loop's memory (64-byte aligned for the prefetch's DMA), only while PSRAM keeps its headroom */
@@ -152,6 +153,7 @@ static void *gl_alloc(size_t n) {                       /* the loop's memory (64
     if (p) s_gl_plan_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     return p;
 }
+#endif
 static void gl_free(void *p) { heap_caps_free(p); }
 #define USE_RESTORE 0                                   /* 0: the DMA prefetch (measured better on a grown tank); 1: the dirty restore */
 #define USE_FLUSH_TASK 0                                /* 0: the plain flush (2026-10-23: the task's CPU fill preempts the render - a wash; its GDMA
@@ -745,7 +747,10 @@ static bool s_loaded; static int64_t s_load_t0;                                 
 static bool s_loading_last = true;   /* last frame's LOADING (true until the first frame decides): the notices wait it out (0.4, a keeper:
                                         the UPDATED card came up under the boot show, chimed, and was gone before the tank showed) */
 static bool s_load_swap;                                                                /* ... this boot is a SWAP IN: FILLING THE TANK (any other: WAKING THE TANK) */
-static bool s_show_tried; static int64_t s_show_t0; static int s_show_frames; static int64_t s_show_whole_us;                                     /* THE BOOT SHOW (boot_show.c): tried this boot, and since when */
+static bool s_show_tried; static int64_t s_show_t0;                                                                                                  /* THE BOOT SHOW (boot_show.c): tried this boot, and since when */
+#if !PT_TERRARIUM                                       /* aquarium only: the show's frame count and the loop's whole moment (the terrarium has no show) */
+static int s_show_frames; static int64_t s_show_whole_us;
+#endif
 static void *show_alloc(size_t n) {                                                     /* its memory, from what the grass loop left - never the last of it */
     if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < n + 384 * 1024) return NULL;
     return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1237,7 +1242,9 @@ void device_dirty_mask_for_radio(bool radio) {
     if (!held) xSemaphoreGive(s_render_lock);
     ESP_LOGI(TAG, "dirty mask %s | internal heap %u KB", radio ? "to PSRAM: the radio comes up" : "back in internal RAM: the radio is down", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 }
+#if !PT_TERRARIUM                                       /* aquarium only: the bake task's tallies (and the grass loop's log line) */
 static int64_t s_bake_us, s_bake_wait_us; static int s_bake_slices, s_bake_takes, s_bake_timeouts;
+#endif
 static volatile int64_t s_bake_deadline; static int64_t s_flush_avg_us = 18000;   /* the bake's window: the flush (its running average), never into the next frame's start */
 #define TANK_STACK 12288                         /* (director `stacks`: the high-water marks these were sized by - 11-02 on Strato's square,
                                                     a boot, a rebake, MY TANKS, ~25 decisions: the tank used 4.5 KB, the bake 1.8, the advisor 2.9) */
@@ -1250,7 +1257,9 @@ static TaskHandle_t s_tank_h, s_bake_h;
    for the decision to end. A cap stretches the rebake (the grass drawn live meanwhile) by what it keeps from the decisions:
    director `bakecap MS` (0 = no cap) */
 #define BAKE_CAP_US 350000
-static int64_t s_bake_cap_us = BAKE_CAP_US, s_bake_dec_us; static uint32_t s_bake_seq; static int s_bake_capped;
+static int64_t s_bake_cap_us = BAKE_CAP_US; static int s_bake_capped;
+#if !PT_TERRARIUM                                       /* aquarium only: the bake task slices the grass loop, which the terrarium does not have */
+static int64_t s_bake_dec_us; static uint32_t s_bake_seq;
 static void bake_task(void *arg) {
     (void)arg;
     for (;;) {
@@ -1274,6 +1283,7 @@ static void bake_task(void *arg) {
         if (r) taskYIELD(); else vTaskDelay(pdMS_TO_TICKS(4));
     }
 }
+#endif
 static void start_tank_task(void *arg) {
     (void)arg;
     ESP_LOGI(TAG, "starting the tank task: internal heap %u KB free (largest block %u KB)",
@@ -1282,17 +1292,17 @@ static void start_tank_task(void *arg) {
     /* the tank task FIRST (0.4, the 11-02 evening sweep: the bake's stack went first, and on the square / pendant - ~50 KB
        free, the largest block 18-19 KB - the tank's could find no block: no frames, no PWR key). The bake only from what
        is left, BAKE_SPARE kept beside it; without it the grass loop slices on the render core (render_grass_loop_bake_more) */
+#if !PT_TERRARIUM
     render_set_grass_loop_task(false);
+#endif
     if (xTaskCreatePinnedToCore(tank_task, "tank", TANK_STACK, NULL, 4, &s_tank_h, 0) != pdPASS)
         ESP_LOGE(TAG, "THE TANK TASK COULD NOT START: no internal RAM for its stack");
-#if PT_TERRARIUM
-    const bool bake = false;
-#else
+#if !PT_TERRARIUM                                       /* aquarium only: the bake task beside the tank's, and the grass loop it slices */
     const size_t big = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     const bool bake = s_render_lock && big >= BAKE_STACK + BAKE_SPARE
                    && xTaskCreatePinnedToCore(bake_task, "bake", BAKE_STACK, NULL, 6, &s_bake_h, 1) == pdPASS;
-#endif
     render_set_grass_loop_task(bake);
+#endif
 #if PT_TERRARIUM
     ESP_LOGI(TAG, "tank task up; terrarium scene rebakes are frame-budgeted | internal heap %u KB free (largest block %u KB)",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
@@ -1491,9 +1501,9 @@ static void tank_task(void *arg) {
                 /* THE BOOT SHOW plays on a moment past the loop: the fish come last. It begins on EVERY start by day, loop or no
                    loop (0.3.9.6: 0.3.9.5 parked the loop and, unmeant, the show with it - this path began only while the loop warmed,
                    so no start and no SWAP IN played it); its grass is drawn live then (boot_show.c) */
-                if (render_grass_loop_warming() || boot_show_on() || (!s_show_tried && !tank.night)) {
+                if ((!PT_TERRARIUM && render_grass_loop_warming()) || boot_show_on() || (!s_show_tried && !tank.night)) {   /* (the terrarium has no grass loop to warm) */
                     if (!s_load_t0) { s_load_t0 = now; ESP_LOGI(TAG, "loading: %s (%s)", s_load_swap ? "FILLING THE TANK" : "WAKING THE TANK",
-                                                                render_grass_loop_is_on() ? "the grass loop's first bake" : "the boot show, the loop off"); }
+                                                                !PT_TERRARIUM && render_grass_loop_is_on() ? "the grass loop's first bake" : "the boot show, the loop off"); }
                     loading = now - s_load_t0 < 15000000LL;
                     if (!loading) { s_loaded = true; ESP_LOGW(TAG, "loading: 15 s and the loop is not whole - the tank as it is"); }
                 } else if (s_load_t0) { s_loaded = true; ESP_LOGI(TAG, "loading: the tank is ready after %lld ms", (now - s_load_t0) / 1000); }
@@ -1501,6 +1511,7 @@ static void tank_task(void *arg) {
             s_loading_last = loading;
             touch_port_set_quiet(loading);             /* the boot show takes no tap (0.4, the 11-02 sweep) */
             { static int s_valid_frames; if (s_ota_pending && !loading && ++s_valid_frames >= OTA_VALID_FRAMES) ota_valid_now("the tank is on the glass"); }
+#if !PT_TERRARIUM                                       /* aquarium only: the grass loop's replan */
             {   /* THE LOOP PLANNED UP AGAIN (0.4, Strato 11-02 on the square: "the grass looks too steppy" - the band grew while a page held
                    PSRAM, the plan was squeezed to 18 moments of 48, and nothing but a restart planned it again). A plan that came out short
                    of GRASS_LOOP_MOMENTS is tried again once PSRAM free is clearly more than when it was planned (GL_UP_GAIN: a page's memory
@@ -1529,11 +1540,16 @@ static void tank_task(void *arg) {
                     render_grass_loop_on(false); render_grass_loop_on(true);
                 }
             }
+#endif
             if (!loading && boot_show_on()) boot_show_end();   /* (a page over it, or out of time: its memory back) */
             if (page && !USE_RESTORE) render_fb_primed(NULL, 0);
             else if (loading) {
+#if !PT_TERRARIUM                                       /* aquarium only: the loop bakes while the tank waits */
                 int baked = render_grass_loop_bake_more(&tank, 2);
                 if (baked == 0 && (!boot_show_on() || render_grass_loop_warming())) render_tank(&tank, fb[cur], TANK_W);   /* (a tank frame until the loop can bake: its look settles) */
+#else
+                render_tank(&tank, fb[cur], TANK_W);            /* (no loop to bake, no show: the tank frame as it is) */
+#endif
                 if (!s_show_tried && boot_show_ready()) {     /* the loop has its memory (the show's comes from what is left), or there is none to wait for */
                     s_show_tried = true;
                     size_t before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -1623,6 +1639,7 @@ static void tank_task(void *arg) {
             if (touch_port_confirm_up())         /* reset prompt: over everything, fish still swim */
                 render_confirm_reset(fb[cur], TANK_W, touch_port_confirm_frac());
             if (loading) {                       /* (over everything: the whole frame) */
+#if !PT_TERRARIUM                                       /* aquarium only: the boot show and the loop's loading frame */
                 if (boot_show_on()) {
                     int ln = render_grass_loop_n();
                     s_show_frames++;
@@ -1636,16 +1653,20 @@ static void tank_task(void *arg) {
                                       s_show_frames, s_show_frames * 1e6f / (float)(now - s_show_t0 + 1));
                     }
                 } else if (s_show_tried && render_grass_loop_warming()) render_loading(fb[cur], TANK_W, shelf_now()->name, tank.clock, s_load_swap ? NULL : WORLD_STR("WAKING THE TANK", "WAKING THE TERRARIUM"));
-                else if (!s_show_tried) memset(fb[cur], 0, (size_t)TANK_W * TANK_H * sizeof(uint16_t));   /* (dark until the show starts; no show and no loop: the tank frame drawn above) */
+                else
+#endif
+                if (!s_show_tried) memset(fb[cur], 0, (size_t)TANK_W * TANK_H * sizeof(uint16_t));   /* (dark until the show starts; no show and no loop: the tank frame drawn above) */
                 if (USE_RESTORE) render_touch_all();
             }
             int64_t t1 = esp_timer_get_time();
             if (sel >= 0) { card_us += t1 - tc; card_frames++; }
             s_bake_deadline = esp_timer_get_time() + s_flush_avg_us - 500;   /* THE SECOND CORE: the bake task has the flush's window */
+#if !PT_TERRARIUM                                       /* aquarium only: the grass loop's parts */
             const uint16_t *gsc = NULL, *gband = NULL; size_t gtop = 0, goff = 0, glen = 0; unsigned gep = 0;   /* THE GRASS LOOP's parts for the
                                                                prefetch below, taken while the render lock is still held: the bake on core 1
                                                                rebakes the bands once it is given (0.4 rc hardening); the DMA starts after it */
             const bool gl_parts = !USE_RESTORE && !page && s_amc && render_grass_loop_parts(tank.clock + FRAME_MIN_MS / 1000.0f, &gsc, &gtop, &gband, &goff, &glen, &gep);
+#endif
             render_unlock();
             /* the next frame's scene prefetch starts BEFORE this frame's flush (2026-10-03): the copy
                into the idle framebuffer takes ~14 ms, and started after the flush it had only the
@@ -1660,11 +1681,14 @@ static void tank_task(void *arg) {
                 display_port_flush_wait(fb[cur ^ 1]);       /* the other buffer's flush (last frame's) must be over before the prefetch writes it */
                 uint16_t *next = fb[cur ^ 1];
                 const uint16_t *scene = render_scene_buf(&s_prefetch_ep);
+#if !PT_TERRARIUM
                 if (gl_parts && next && next != fb[cur] &&                  /* THE GRASS LOOP: the scene above the grass, the next frame's band below it */
                     (gtop == 0 || esp_async_memcpy(s_amc, next, (void *)gsc, gtop, amc_cb, (void *)1) == ESP_OK) &&
                     esp_async_memcpy(s_amc, (uint8_t *)next + goff, (void *)gband, glen, amc_cb, NULL) == ESP_OK) {
                     s_prefetch_ep = gep; s_prefetch_fb = next; s_prefetch_pending = true;
-                } else if (!page && s_amc && scene && next && next != fb[cur] &&
+                } else
+#endif
+                if (!page && s_amc && scene && next && next != fb[cur] &&
                     esp_async_memcpy(s_amc, next, (void *)scene, PLAN_FB_ALLOC, amc_cb, NULL) == ESP_OK) {
                     s_prefetch_fb = next; s_prefetch_pending = true;
                 }
@@ -1700,6 +1724,7 @@ static void tank_task(void *arg) {
                                                  k - pk, w - pw, why[0] - pwhy[0], why[1] - pwhy[1], why[2] - pwhy[2], why[3] - pwhy[3], why[4] - pwhy[4], why[5] - pwhy[5]);
                   pk = k; pw = w; memcpy(pwhy, why, sizeof why); }
                 int64_t fw, fs; display_port_flush_prof(&fw, &fs);
+#if !PT_TERRARIUM                                       /* aquarium only: the grass cache, the grass loop and the swim depth */
                 { int64_t gu; int gn; render_grass_cache_prof(&gu, &gn); if (gn) ESP_LOGI("display", "grass cache: %d rebuilds, %.1f ms each", gn, gu / 1e3f / gn); }
                 { int ln, lb, lr; int64_t lus; render_grass_loop_prof(&ln, &lb, &lus, &lr);
                   int au, ac; render_grass_loop_arena(&au, &ac);
@@ -1716,6 +1741,7 @@ static void tank_task(void *arg) {
                                      bx[0][0], bx[0][1], bx[0][2], bx[0][3], nb > 1 ? " ..." : ""); } }
                 { int64_t du; int dn; render_depth_prof(&du, &dn);       /* SWIM DEPTH (0.3.9.4): its own cost */
                   if (dn) ESP_LOGI("display", "swim depth: %.2f ms a frame (%.2f ms a hidden fish, %.1f of them a frame)", du / 1e3f / frames, du / 1e3f / dn, dn / (float)frames); }
+#endif
                 if (s_restore_n) { ESP_LOGI("display", "restore: %.1f ms a frame x%d (on the flush task)", s_restore_us / 1e3f / s_restore_n, s_restore_n); s_restore_us = 0; s_restore_n = 0; }
                 { int64_t ft, fc; int ff; display_port_flush_async_prof(&ft, &ff, &fc);
                   if (ff) ESP_LOGI("display", "flush task: %.1f ms a frame (copies %.1f, wire wait %.1f, send calls %.1f) x%d", ft / 1e3f / ff, fc / 1e3f / ff, fw / 1e3f / ff, fs / 1e3f / ff, ff); }
@@ -1935,8 +1961,10 @@ void app_main(void) {
     if (vig) render_set_vignette_cache(vig);
     /* dirty mask (20 KB): internal SRAM if it fits - it is cleared and read
        every frame, and in PSRAM that was ~1.5 ms; PSRAM fallback */
+#if !PT_TERRARIUM                                       /* aquarium only: the coral / cluster tables */
     { void *ds = heap_caps_malloc(render_decor_scratch_size(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);   /* the coral / cluster tables: PSRAM, never .bss */
       if (ds) render_set_decor_scratch(ds); else ESP_LOGW(TAG, "decor scratch: no PSRAM (%u B) - falling back to internal", (unsigned)render_decor_scratch_size()); }
+#endif
     uint32_t *dirty = NULL;                  /* (internal only with the tank task's stack and BAKE_SPARE still free beside it - 0.4, the 11-02 evening
                                                 sweep: it took what it found, 20-29 KB, and the tank task came after it. Every board runs at 20-29 KB
                                                 free with its mask, the tank's and the bake's stacks in: this margin keeps the mask in on all four) */

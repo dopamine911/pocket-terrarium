@@ -1,6 +1,6 @@
 /* aquarium.c - the aquarium as a world module (mechanics.h mech_aquarium): its creatures' frames and nights, the fright a knock
  * on the glass gives them, and the trust a hitched seahorse passes on. tank.c calls these at its fixed points for every module
- * present, in the order the tick and the night always ran them (issue #4 phase 3; the creatures themselves: critters/*.c) */
+ * present, in the order the tick and the night always ran them (issue #4 phase 3; the creatures themselves: the files of critters/) */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"
