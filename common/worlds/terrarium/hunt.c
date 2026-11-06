@@ -1,4 +1,4 @@
-/* tr_hunt.c - THE HUNT's prey and its meal, the mealworm farm, the hatchling
+/* hunt.c - THE HUNT's prey and its meal, the mealworm farm, the hatchling (the walk's, walk.c)
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

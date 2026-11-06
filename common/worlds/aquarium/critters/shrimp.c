@@ -1,4 +1,4 @@
-/* aq_shrimp.c - the shrimp school (SD_ITEM_SHRIMP)
+/* critters/shrimp.c - the aquarium's shrimp school (SD_ITEM_SHRIMP), a creature of the aquarium module (aquarium.c)
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

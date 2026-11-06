@@ -1,4 +1,4 @@
-/* aq_swim.c - the aquarium's swim, a movement module (locomotion.h loco_swim): a fish's goal -> target, its steering, its depth,
+/* swim.c - the aquarium's swim, a movement module (locomotion.h loco_swim): a fish's goal -> target, its steering, its depth,
  * the doors, its meals (update_fish). Moved out of tank.c (issue #4 phase 3) with its bodies unchanged; see tank.h for the rules */
 #include "tank.h"
 #include "tank_events.h"

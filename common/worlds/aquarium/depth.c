@@ -1,5 +1,5 @@
-/* aq_depth.c - SWIM DEPTH: in front of, behind or through the grass and the pieces (docs/swim-depth.md)
- * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
+/* depth.c - SWIM DEPTH: in front of, behind or through the grass and the pieces (docs/swim-depth.md), for the swim, the seahorse,
+ * the shrimp and the floor critters (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"

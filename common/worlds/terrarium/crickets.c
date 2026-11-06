@@ -1,5 +1,5 @@
-/* tr_crickets.c - THE CRICKETS and the dish; the food every animal sees
- * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
+/* crickets.c - THE CRICKETS and the dish, a food module (mechanics.h food_crickets): the prey every lizard sees
+ * (issue #4 phase 3: moved out of tank.c verbatim; the feed, trickle, night and sight are tank.c's former terrarium branches) */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"

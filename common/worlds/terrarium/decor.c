@@ -1,5 +1,5 @@
-/* tr_decor.c - the terrarium's decorations
- * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
+/* decor.c - the terrarium's decorations: their size, and where each may stand (the terrarium module's, terrarium.c)
+ * (issue #4 phase 3: moved out of tank.c; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"

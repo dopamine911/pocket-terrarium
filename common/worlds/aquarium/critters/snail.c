@@ -1,4 +1,4 @@
-/* aq_snail.c - the snail (SD_ITEM_SNAIL)
+/* critters/snail.c - the aquarium's snail (SD_ITEM_SNAIL), a creature of the aquarium module (aquarium.c)
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

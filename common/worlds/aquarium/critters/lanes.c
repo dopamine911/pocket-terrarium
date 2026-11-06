@@ -1,4 +1,4 @@
-/* aq_lanes.c - THE LANES the floor critters walk (tank.h)
+/* critters/lanes.c - THE LANES the floor critters walk (tank.h): the snail, the urchin and the crab share them
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

@@ -1,4 +1,4 @@
-/* aq_seahorse.c - the seahorse (SD_ITEM_SEAHORSE)
+/* critters/seahorse.c - the aquarium's seahorse (SD_ITEM_SEAHORSE), a creature of the aquarium module (aquarium.c)
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

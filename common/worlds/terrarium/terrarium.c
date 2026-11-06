@@ -1,5 +1,5 @@
-/* tr_mech.c - the terrarium as a world module (mechanics.h): what it adds to a tank besides its walkers and its crickets -
- * the shed and the mister, and the decorations it sells
+/* terrarium.c - the terrarium as a world module (mechanics.h mech_terrarium): what it adds to a tank besides its walkers and its
+ * crickets - the shed and the mister, and the decorations it sells
  * (issue #4 phase 3) */
 #include "tank.h"
 #include "tank_priv.h"

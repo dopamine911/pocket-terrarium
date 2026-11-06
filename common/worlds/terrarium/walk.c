@@ -1,4 +1,4 @@
-/* tr_walk.c - the terrarium's walk: the ground, the plan, the lizard's frame (update_lizard)
+/* walk.c - the terrarium's walk, a movement module (locomotion.h loco_walk): the ground, the plan, the lizard's frame (update_lizard)
  * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
 #include "tank.h"
 #include "tank_events.h"

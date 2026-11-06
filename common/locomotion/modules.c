@@ -13,8 +13,8 @@
 #include "packs/compat.h"
 #include "world.h"
 
-#define HAVE_AQUARIUM 1    /* (step 2 of the split: both worlds' files are still compiled into every bin, so both are listed; step 3 moves them under */
-#define HAVE_TERRARIUM 1   /*  common/worlds/<world>/ and says (PT_WORLD == PT_WORLD_AQUARIUM) and (PT_WORLD == PT_WORLD_TERRARIUM) here) */
+#define HAVE_AQUARIUM (PT_WORLD == PT_WORLD_AQUARIUM)
+#define HAVE_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)
 
 #if HAVE_AQUARIUM
 extern const loco_ops_t loco_swim;

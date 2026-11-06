@@ -1,5 +1,5 @@
-/* aq_pellets.c - the aquarium's food: the pellets
- * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
+/* pellets.c - the aquarium's food, a food module (mechanics.h food_pellets): the pellets (tank_nearest_food moved out of tank.c
+ * verbatim; the feed, trickle, tick, night and sight are tank.c's former aquarium branches; issue #4 phase 3) */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"
