@@ -210,7 +210,8 @@ WATER LAND BASK SHORE CRICKET MEALWORM GREENS PELLET LAMP HIDES.
   gives WALK and SLITHER).
 - **Firmware provides** (`firmware_caps()`, `common/packs/caps.h`, `CAPS_FW`): a build constant. Terrarium: WALK LAND BASK LAMP HIDES
   CRICKET MEALWORM. Aquarium: SWIM WATER PELLET. A PT_ALL_PACKS build (the simulator and the tools): both worlds' union.
-  `firmware_caps()` is the **one place that changes in phase 3** (the module split); the simulator may override it with
+  `firmware_caps()` says it, beside the module list in `common/locomotion/modules.c` (`docs/modules.md`): the two places the step that
+  builds both worlds into one image changes, nothing around them; the simulator may override it with
   `firmware_caps_override(bool on, caps_t caps)` (declared only `#if PT_ALL_PACKS`), which is how the tests give a build a
   single module or both.
 - **Model provides** (`model_provides()`): the goal words of the loaded model's manifest, the one whose tag is
@@ -330,7 +331,7 @@ bytes are free to go as soon as the pack is loaded.
   runtime id (species 3..249, habitat 3..30) when it is added; that id is a handle for this run only and is never stored.
 - **Habitats and species.** `species_t.habitats` is derived: the registry recomputes it from `habitat_uid[]` whenever a
   pack is added. Manifests and habitats are loaded before species (the built-in table and the folder scan both do it).
-- **Capabilities.** `firmware_caps()` (`common/packs/caps.h`: the constants `CAPS_FW_*` are the one place phase 3 changes) and
+- **Capabilities.** `firmware_caps()` (`common/packs/caps.h`: the constants `CAPS_FW_*`, beside the module list `common/locomotion/modules.c`) and
   `model_provides()` (`common/packs/manifest.c`; "Capabilities") are the two providers
   the pair check reads. **The model manifest registry** (`common/packs/manifest.c`, `model_manifest_t`: name, uid, builtin,
   tag, goals) is the third registry beside species and habitats, with a pool of its own: this build's built-in manifests

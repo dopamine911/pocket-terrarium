@@ -52,7 +52,8 @@ void caps_list(caps_t set, char *out, size_t n);
 /* the movement a habitat's areas carry: water carries swimming, land walking and slithering (a habitat provides the room to move) */
 caps_t caps_moves_of_areas(caps_t areas);
 
-/* WHAT THIS FIRMWARE PROVIDES - the one place it is said (phase 3 changes this function and nothing around it): the modules and
+/* WHAT THIS FIRMWARE PROVIDES - the one place it is said (the step that builds both worlds into one image changes this and the module
+ * list, common/locomotion/modules.c, and nothing around them): the modules and
  * mechanics its engine has. The terrarium's bin walks on land under a lamp, among hides, and feeds crickets and the dish's
  * mealworms; the aquarium's swims in water and drops pellets; the simulator and the tools (PT_ALL_PACKS) carry both worlds'
  * packs, so they report the two together (a cross-world pair is still refused at the tank - by the model: manifest.h) */
