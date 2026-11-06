@@ -29,15 +29,16 @@
 #define PTPK_FILE_MAX     (PTPK_HEADER_BYTES + PTPK_BODY_MAX)
 enum { PTPK_KIND_SPECIES = 1, PTPK_KIND_HABITAT = 2, PTPK_KIND_MODEL = 3 };
 
-/* spare pool slots, of each kind, for packs found at run time: the firmware's are for the card (phase 4), the simulator's for a
-   folder of packs and the tests' (the pool's size is this plus the built-in packs: species.c). A model's manifest comes with a
-   model, one at a time: MANIFEST_SPARE */
+/* spare pool slots, of each kind, for packs found at run time: the simulator's are for a folder of packs and the tests'; the
+   firmware has NONE until the card library (issue #4 phase 4) needs some - on the 1.75C the aquarium already runs on a few KB of
+   internal heap (issue: aquarium heap), and every spare costs a species_t (576 B) and a habitat_t (400 B) of .bss. The pool's
+   size is this plus the built-in packs (species.c). A model's manifest comes with a model, one at a time: MANIFEST_SPARE */
 #if PT_ALL_PACKS
 #define PACKS_SPARE    12
 #define MANIFEST_SPARE 4
 #else
-#define PACKS_SPARE    2
-#define MANIFEST_SPARE 1
+#define PACKS_SPARE    0
+#define MANIFEST_SPARE 0
 #endif
 
 /* the header of an opened file: body points into the caller's bytes */

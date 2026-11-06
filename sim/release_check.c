@@ -67,29 +67,23 @@ int main(void) {
     const species_t *s = species_get(SPECIES_DEFAULT); const habitat_t *h = habitat_get(HABITAT_DEFAULT);
     if (!s || !h || !packs_compatible(s, h, why, sizeof why)) PF("the world's default pair is not held: %s", why);
 
-    /* the other world's species is refused at load, naming the module - before its habitat is loaded and after */
-    for (int pass = 0; pass < 2; pass++) {
-        if (offer(other_s, why, sizeof why) != PACKS_REFUSED) PF("the other world's species (%s) loaded%s", other_s, pass ? " with its habitat" : "");
-        if (!strstr(why, module) || !strstr(why, "no such module")) PF("the other world's species was refused for \"%s\", want the module %s named", why, module);
-        if (species_count() != 1) PF("a refused species changed the registry (%d)", species_count());
-        if (pass == 0 && offer(other_h, why, sizeof why) != PACKS_ADDED) PF("the other world's habitat (%s) was refused: %s - a habitat needs nothing", other_h, why);
+    /* a release image has no spare slot (ptpk.h PACKS_SPARE 0: the card library's, phase 4): nothing found at run time is added, and the
+       other world's species is refused - with no room (the slot is asked for first), never into the registry */
+    const char *others[] = { other_s, other_h, other_m };
+    for (int k = 0; k < 3; k++) {
+        if (offer(others[k], why, sizeof why) != PACKS_REFUSED) PF("%s loaded into an image with no spare slot", others[k]);
+        if (!strstr(why, "no room")) PF("%s was refused for \"%s\", want \"no room\" (no spare slot)", others[k], why);
     }
+    if (species_count() != 1 || habitat_count() != 1 || manifest_count() != 1) PF("a refused pack changed the registry (%d / %d / %d)", species_count(), habitat_count(), manifest_count());
     if (offer(own_s, why, sizeof why) != PACKS_SAME || offer(own_h, why, sizeof why) != PACKS_SAME || offer(own_m, why, sizeof why) != PACKS_SAME) PF("the world's own packs, found again in a folder, were not the same files: %s", why);
-    if (offer(other_m, why, sizeof why) != PACKS_ADDED || !manifest_by_tag(PT_TERRARIUM ? PT_MODEL_TAG_AQUARIUM : PT_MODEL_TAG_TERRARIUM)) PF("the other world's model manifest (%s) was refused: %s", other_m, why);
     if (model_provides() != m) PF("another manifest took the place of this build's model's");
-
-    /* the pair check by what is loaded: this world's held, the other world's habitat not the species' */
-    const habitat_t *oh = NULL;
-    for (int i = 0; i < habitat_count(); i++) if (habitat_at(i) != h) oh = habitat_at(i);
-    if (!oh) PF("the other world's habitat is not loaded");
-    if (packs_compatible(s, oh, why, sizeof why) || !strstr(why, "does not live in")) PF("the species lives in the other world's habitat (%s)", why);
     if (!packs_compatible(s, h, why, sizeof why)) PF("the world's own pair is no longer held: %s", why);
+    (void)module;
 
-    /* what the image says to a card: the other world's pack is not offered here (and it never reached the registry) */
     packs_drop_loaded();
     if (species_count() != 1 || habitat_count() != 1 || manifest_count() != 1) PF("packs_drop_loaded left %d / %d / %d", species_count(), habitat_count(), manifest_count());
     printf("release-check (%s): one pack of each kind and the %s model's manifest only; firmware_caps %08x is this world's constant and the other's engine's capabilities are not in it; "
-           "the %s is refused at load naming %s, with its habitat loaded or not (the %s, the other model's manifest load: they need nothing); the world's own pair held, the other habitat not its species'\n",
-           PT_WORLD_NAME, PT_MODEL_TAG, (unsigned)firmware_caps(), PT_TERRARIUM ? "fish pack" : "gecko pack", module, PT_TERRARIUM ? "freshwater" : "desert");
+           "the other world's species, habitat and model manifest are all refused (no spare slot: the card library's, phase 4) and the registry is unchanged; the world's own pair held\n",
+           PT_WORLD_NAME, PT_MODEL_TAG, (unsigned)firmware_caps());
     return 0;
 }

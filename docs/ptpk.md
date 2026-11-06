@@ -316,8 +316,9 @@ pack is inline: a name is a `char[]`, the morphs and patterns are arrays, nothin
 bytes are free to go as soon as the pack is loaded.
 
 - **The pool.** The registry holds loaded packs in a fixed array - no malloc on the device path: this build's built-in
-  packs (counted from the table in `common/packs/builtin.h`) plus a few spare slots for packs found at run time (a few of
-  each kind in the firmware, more in the simulator). `species_commit` / `habitat_commit` / the manifest registry refuse a
+  packs (counted from the table in `common/packs/builtin.h`) plus spare slots for packs found at run time (none in the firmware
+  until the card library of phase 4 needs them - each costs a `species_t` of 576 B and a `habitat_t` of 400 B of `.bss`, and the 1.75C's
+  aquarium runs on a few KB of internal heap; twelve in the simulator). `species_commit` / `habitat_commit` / the manifest registry refuse a
   pack when it is full.
 - **Built-in packs.** `common/packs/builtin.c` lists them (manifests and habitats first; a species lists its habitats by uid and names the goals of the manifests). The
   firmware ships no `.ptpk` bytes: only the structs and the encoder. `packs_init()` (idempotent; the firmware calls it
@@ -335,7 +336,7 @@ bytes are free to go as soon as the pack is loaded.
   `model_provides()` (`common/packs/manifest.c`; "Capabilities") are the two providers
   the pair check reads. **The model manifest registry** (`common/packs/manifest.c`, `model_manifest_t`: name, uid, builtin,
   tag, goals) is the third registry beside species and habitats, with a pool of its own: this build's built-in manifests
-  (one in a release image, two in the simulator) plus a few spare slots. A manifest from a folder or the card loads into a
+  (one in a release image, two in the simulator) plus spare slots (none in the firmware yet). A manifest from a folder loads into a
   spare slot; its tag must be new (the same tag under another uid is refused).
 - **One entry point.** `packs_add(blob, n, origin, ...)` takes the bytes of one file of any kind (species, habitat, model
   manifest): the built-in packs (origin `PACKS_BUILTIN`), the simulator's folder (`POCKET_PACKS_DIR`, default `../packs`,
