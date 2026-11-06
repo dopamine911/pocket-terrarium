@@ -15,6 +15,7 @@
 #include <string.h>
 #include "render.h"
 #include "tank.h"
+#include "icons.h"
 
 #define TAU 6.2831853f
 
@@ -220,6 +221,7 @@ extern const uint16_t *g_primed_fb;
 extern unsigned  g_primed_epoch;
 extern uint8_t  *g_vig;                  /* per-pixel vignette alpha (static) */
 extern bool      g_vig_filled;
+extern bool g_no_animals;                       /* THE EDITOR (0.3.9.4, Strato): a placement page up - every creature hidden, the frame rate to the drag */
 
 /* vignette alpha at (x,y); matches the classic per-pixel loop */
 static inline int vig_alpha(int x, int y) {
@@ -244,5 +246,30 @@ void  fill_ellipse(ctx_t *c, float cx, float cy, float rx, float ry, uint32_t rg
 float fast_sin(float x);                                      /* sine from a 256-entry table (phases non-negative) */
 void  fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb, int alpha);   /* filled convex polygon, points in world space */
 void  fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb);
+#if PT_NET
+void  link_badge_draw(ctx_t *c, int cx, int cy, int r, int badge, int a);   /* the link's badges (a visitor's over its fish: the aquarium's scene draws them) */
+#endif
 void  draw_algae(ctx_t *c, const tank_t *t);                  /* the film on the glass (both worlds' sponge wipes it) */
+
+/* ---- the pages' drawing primitives (render.c): the pixel font, boxes, rings, icons - the world scenes' cards and the body types' glyphs use them */
+int  text_w(const char *s, int scale);                        /* the width of s at a scale */
+void draw_text(ctx_t *c, int x, int y, int scale, uint32_t rgb, const char *s);
+void rect_fill(ctx_t *c, int x, int y, int w, int h, uint32_t rgb);
+void rect_edge(ctx_t *c, int x, int y, int w, int h, uint32_t rgb);
+void ring(ctx_t *c, float cx, float cy, float r, uint32_t rgb);
+void blit_icon(ctx_t *c, int x, int y, const icon_t *ic, int alpha);
+void blit_icon_scaled(ctx_t *c, int x, int y, const icon_t *ic, int s, bool lit);   /* the same art at an integer scale, lit or as the silhouette */
+void shade_box(ctx_t *c, int x, int y, int w, int h);          /* the toolbox's backdrop: an eighth of the water through, the rest the card's dark */
+void button(ctx_t *c, int x, int y, int W, int H, uint32_t fill, uint32_t edge, const char *label, int scale);
+
+/* the pages' four colours */
+#define MSP_INK       0x031015
+#define MSP_DIM       0x2a3f45
+#define MSP_QUIET     0x7f9aa1      /* quiet TEXT on the panels: a price out of reach, YOU HAVE, the settings' notes (0.3.9.1, Machito on Discord: MSP_DIM text
+                                         "nearly impossible" to read, worse with the brightness down). ~6:1 on the panel; white and teal stay brighter.
+                                         MSP_DIM stays for shapes: dividers, the dots, the silhouettes */
+#define MSP_TEAL      0x9fd8e2
+
+/* the shop icon's size: the row's slot (Strato 10-19: the 64 px one ran into the next row) - the shelf's little tanks are as big */
+#define SHELF_THUMB 32
 #endif

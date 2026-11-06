@@ -5,12 +5,15 @@
  * of render_core.h, the pages) and reaches the world through one descriptor, world_view(), never by asking which world it is.
  * A world defines its descriptor in common/worlds/<world>/view.c, the scene behind it beside it (scene.c).
  *
- * Today a bin has ONE world compiled in (sim/Makefile and tankcore/CMakeLists.txt glob common/worlds/<PT_WORLD>/*.c), so world_view()
+ * Today a bin has ONE world compiled in (sim/Makefile and tankcore/CMakeLists.txt glob the directory common/worlds/<PT_WORLD>), so world_view()
  * is that world's own definition; the step that builds both worlds into one image replaces it with the pick of a tank's world and
  * nothing else here changes. The animals are dispatched apart, per animal and by its species' body (body.h). */
 #ifndef WORLD_VIEW_H
 #define WORLD_VIEW_H
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include "render_core.h"
 #include "tank.h"
 
 typedef struct world_view_s {
@@ -18,7 +21,21 @@ typedef struct world_view_s {
 
     /* ---- the scene ---- */
     void (*render)(const tank_t *t, uint16_t *fb, int stride);  /* render_tank: the whole tank frame - scene, animals, what lives on the glass */
-    void (*scene_reset)(uint16_t *scene);                       /* render_set_scene_cache: the scene cache is a new one - the world's own caches start again */
+    void (*scene_reset)(uint16_t *scene);                       /* render_set_scene_cache: the scene cache is a new one - the world's own caches start again (NULL: none) */
+    const uint16_t *(*scene_alt)(unsigned *epoch);              /* render_scene_buf: the world's own cache of the scene when it is the current one (the aquarium's grass cache), with its epoch; NULL: none */
+
+    /* ---- the critters' cards (render_stats_card with a RENDER_CARD_* index, render.h): the critters a world has; NULL hooks: it has none ---- */
+    bool (*critter_here)(const tank_t *t, int card);            /* that critter is in the tank (its card would draw) */
+    int  (*critter_step)(const tank_t *t, int card, int dir);   /* the card the arrows step to */
+    int  (*critter_nav_hit)(int card, float x, float y);        /* -1 the left arrow, +1 the right, 0 neither */
+    void (*critter_card)(ctx_t *c, const tank_t *t, int card);  /* draws the card of a critter that is here, with its arrows */
+    bool (*crab_collect_hit)(const tank_t *t, float x, float y);/* the crab card's COLLECT */
+
+    /* ---- the shop's shelf (render_shop): living pieces shelved in a little tank of their own ---- */
+    void (*shelf_prepare)(const tank_t *t, uint16_t *fb, int stride);   /* before the page paints: every shelved living piece has its thumb (the frame is their scratch) */
+    bool (*shelf_thumb)(ctx_t *c, int x, int y, const tank_t *t, int item, int s);   /* an item's thumb in its slot: false = it has none (the board and its icon) */
+    const char *(*shelf_note)(const tank_t *t, int item, bool shelved, char *out, size_t n);   /* a piece's own line in its modal; NULL: the shared ones */
+    void (*shelf_leave)(void);                                  /* the shop is left: the thumbs are stale */
 } world_view_t;
 
 const world_view_t *world_view(void);
