@@ -359,7 +359,7 @@ static void card_draw(ctx_t c, const tank_t *t, int fish_idx) {
      * a full meter, and it drains as the fish gets hungry (a food icon next
      * to a growing bar read backwards) */
     struct { const icon_t *ic; float v; uint32_t rgb; } needs[4] = {
-        { WORLD_ICON(icon_hunger), 10.0f - f->hunger, 0xffbd59 },   /* (the terrarium's: a cricket) */
+        { world_view()->art.hunger, 10.0f - f->hunger, 0xffbd59 },   /* (the terrarium's: a cricket) */
         { &icon_energy, f->energy,         0x78d67d },
         { &icon_stress, f->stress,         0xf25b65 },
         { &icon_trust,  f->trust,          0xffd166 },
@@ -378,9 +378,9 @@ static void card_draw(ctx_t c, const tank_t *t, int fish_idx) {
     bool saw_bold = f->ms_bits & MS_FIRST_DART;
     bool saw_social = f->ms_bits & MS_FIRST_FOLLOW;
     bool saw_curious = f->ms_bits & (MS_INSPECTED | MS_FIRST_BUBBLES);
-    slider(&c, X + 8, Y + 152, W - 16, f->bold,             0xffffff, WORLD_ICON(icon_shy),      WORLD_ICON(icon_bold),    saw_bold);
-    slider(&c, X + 8, Y + 178, W - 16, f->sociable,         0x38dcc7, WORLD_ICON(icon_solo),     WORLD_ICON(icon_social),  saw_social);
-    slider(&c, X + 8, Y + 204, W - 16, f->curiosity / 10.0f, 0x6db9ff, WORLD_ICON(icon_cautious), WORLD_ICON(icon_curious), saw_curious);
+    slider(&c, X + 8, Y + 152, W - 16, f->bold,             0xffffff, world_view()->art.shy,      world_view()->art.bold,    saw_bold);
+    slider(&c, X + 8, Y + 178, W - 16, f->sociable,         0x38dcc7, world_view()->art.solo,     world_view()->art.social,  saw_social);
+    slider(&c, X + 8, Y + 204, W - 16, f->curiosity / 10.0f, 0x6db9ff, world_view()->art.cautious, world_view()->art.curious, saw_curious);
 
     /* the way onward (2026-09-16): a MORE button in the pages' dress at the
        foot of the card. The whole card was already the tap that opens the
@@ -1096,9 +1096,9 @@ void render_confirm_reset(uint16_t *fb, int stride, float frac) {
     const int X = RENDER_CONFIRM_X, Y = RENDER_CONFIRM_Y, W = RENDER_CONFIRM_W, H = RENDER_CONFIRM_H;
     rect_fill(&c, X, Y, W, H, 0x04141a);
     rect_edge(&c, X, Y, W, H, 0x9fd8e2); rect_edge(&c, X + 1, Y + 1, W - 2, H - 2, 0x1c2f36);
-    const char *title = WORLD_STR("RESET TANK?", "RESET TERRARIUM?");
+    const char *title = world_view()->text.reset_title;
     draw_text(&c, X + (W - text_w(title, 3)) / 2, Y + 20, 3, 0xffffff, title);
-    const char *l1 = WORLD_STR("START OVER WITH TWO FRY", "START OVER: TWO HATCHLINGS"), *l2 = "EVERYTHING ELSE IS LOST";
+    const char *l1 = world_view()->text.reset_line, *l2 = "EVERYTHING ELSE IS LOST";
     draw_text(&c, X + (W - text_w(l1, 2)) / 2, Y + 58, 2, 0x9fd8e2, l1);
     draw_text(&c, X + (W - text_w(l2, 2)) / 2, Y + 78, 2, 0x9fd8e2, l2);
     /* NO is the calm one; YES wears the stress red */
@@ -1616,11 +1616,11 @@ static int bit_index(uint32_t bit) { int i = 0; while (bit > 1u) { bit >>= 1; i+
 static const icon_t *fry_req_icon(int kind) {
     switch (kind) {
     case FRY_REQ_TRUST:  return &icon_trust;
-    case FRY_REQ_FEED:   return WORLD_ICON(icon_ms_first_feeding);
-    case FRY_REQ_HOLD:   return WORLD_ICON(icon_ms_first_hold_approach);
-    case FRY_REQ_CHANGE: return WORLD_ICON(icon_ms_tank_changed_someone);
+    case FRY_REQ_FEED:   return world_view()->art.req_feed;
+    case FRY_REQ_HOLD:   return world_view()->art.req_hold;
+    case FRY_REQ_CHANGE: return world_view()->art.req_change;
     case FRY_REQ_GRASS:  return &icon_ms_first_trimming;
-    case FRY_REQ_GLASS:  return WORLD_ICON(icon_ms_first_glass_cleaning);
+    case FRY_REQ_GLASS:  return world_view()->art.req_glass;
     default:             return world_view()->req_icon ? world_view()->req_icon(kind) : NULL;   /* (the terrarium's clean-shed badge's own art) */
     }
 }
@@ -1714,7 +1714,7 @@ static void ms_foot(const tank_t *t, ctx_t *c) {
         /* THE FOOT'S ICONS (0.4, 11-01: Strato's footer-icons-v4, working-assets/): 36 px sprites from 4 px in - the cog, two tanks on a
            bench, the PASSPORT (the visitor collection), a thick X - and OUR sand dollar (the shop's, 34 px) centered; no balance on the
            keeper page any more (the shop shows it) */
-        const icon_t *ic = b == MSF_UPG ? WORLD_ICON(icon_foot_sand_dollar) : b == MSF_SET ? &icon_foot_settings : b == MSF_TANKS ? WORLD_ICON(icon_foot_my_tanks)
+        const icon_t *ic = b == MSF_UPG ? world_view()->art.foot_coins : b == MSF_SET ? &icon_foot_settings : b == MSF_TANKS ? world_view()->art.foot_my_tanks
                          : b == MSF_VIS ? &icon_foot_passport : &icon_foot_close;
         blit_icon(c, x + (FS_SQ - ic->w) / 2, y + (FS_SQ - ic->h) / 2, ic, 255);
     }
@@ -1776,7 +1776,7 @@ static void ms_fry_label(ctx_t *c, int top, const ms_box_t *clip) {
         if (x0 > x1 || y0 > y1) return;
         cw.fb = &CTX_PX(c, x0, y0); cw.ox = x0; cw.oy = y0; cw.w = x1 - x0 + 1; cw.h = y1 - y0 + 1;
     }
-    draw_text(&cw, 92, top + 2, 2, MSP_TEAL, WORLD_STR("NEW FRY", "NEW EGG"));   /* (the terrarium's next arrival hatches from an egg) */
+    draw_text(&cw, 92, top + 2, 2, MSP_TEAL, world_view()->text.new_arrival);   /* (the terrarium's next arrival hatches from an egg) */
 }
 /* the moving things, in the page's order: each fish's portrait, the NEW FRY row's fry, the GROW gate's fish. Draws
    thing k (false: there is no thing k) and gives its zone (where nothing still is drawn) */
@@ -1999,9 +1999,9 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
             else
 #endif
             if (g_ms_sell_armed) snprintf(g_ms_sub, sizeof g_ms_sub, "TAP AGAIN TO SELL");
-            else if (can) snprintf(g_ms_sub, sizeof g_ms_sub, WORLD_STR("WORTH %d SAND DOLLARS", "WORTH %d DESERT ROSES"), worth);
+            else if (can) snprintf(g_ms_sub, sizeof g_ms_sub, world_view()->text.worth_fmt, worth);
             else if (g_ms_sell_asked) snprintf(g_ms_sub, sizeof g_ms_sub, f->away ? "VISITING NEXT DOOR" : !progression_keeps_two(t, g_ms_row)
-                                               ? WORLD_STR("KEEP AT LEAST TWO FISH", "KEEP AT LEAST TWO LIZARDS") : WORLD_STR("NAME THE NEW FRY FIRST", "NAME THE HATCHLING FIRST"));
+                                               ? world_view()->text.keep_two : world_view()->text.name_first);
             else g_ms_sub[0] = 0;                  /* (the line's room stays: the buttons never move) */
         }
         rect_fill(&c, X, Y, W, H, 0x04141a);
@@ -2174,12 +2174,12 @@ static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
     if (fry_row) {
         if (k < 0) {                                 /* the name: the tally, and when it comes */
             int met = 0; for (int i = 0; i < nreq; i++) met += req[i].met;
-            snprintf(g_ms_title, sizeof g_ms_title, WORLD_STR("NEW FRY", "NEW EGG"));   /* (the terrarium's arrival: an egg hatches in the humid hide) */
-            if (staged) { snprintf(g_ms_caption, sizeof g_ms_caption, WORLD_STR("EVERY STEP IS DONE. A FRY", "EVERY STEP IS DONE. AN EGG"));   /* the spawning, 2026-09-24 */
-                          snprintf(g_ms_caption2, sizeof g_ms_caption2, WORLD_STR("WILL BE BORN IN THE GRASS", "HATCHES IN THE HUMID HIDE"));
+            snprintf(g_ms_title, sizeof g_ms_title, "%s", world_view()->text.new_arrival);   /* (the terrarium's arrival: an egg hatches in the humid hide) */
+            if (staged) { snprintf(g_ms_caption, sizeof g_ms_caption, "%s", world_view()->text.steps_done);   /* the spawning, 2026-09-24 */
+                          snprintf(g_ms_caption2, sizeof g_ms_caption2, "%s", world_view()->text.born_where);
                           snprintf(g_ms_sub, sizeof g_ms_sub, "ON ITS WAY"); }
-            else { snprintf(g_ms_caption, sizeof g_ms_caption, WORLD_STR("WHEN ALL NEEDS ARE MET, A", "WHEN ALL NEEDS ARE MET, AN"));     /* Strato's words, 2026-09-14 */
-                   snprintf(g_ms_caption2, sizeof g_ms_caption2, WORLD_STR("NEW FRY IS READY TO BE BORN", "EGG HATCHES IN THE HIDE"));
+            else { snprintf(g_ms_caption, sizeof g_ms_caption, "%s", world_view()->text.needs_met);     /* Strato's words, 2026-09-14 */
+                   snprintf(g_ms_caption2, sizeof g_ms_caption2, "%s", world_view()->text.ready_to_be_born);
                    snprintf(g_ms_sub, sizeof g_ms_sub, "%d OF %d DONE", met, nreq); }
             g_ms_lit = staged; g_ms_icon = NULL; g_ms_fish = -1; g_ms_fry = true;
         } else if (k < nreq) {                       /* a gate: the words, and where it stands */
@@ -2194,7 +2194,7 @@ static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
     } else if (tank_row) {
         if (k < 0) {
             snprintf(g_ms_title, sizeof g_ms_title, "%.15s", world_view()->tank_word(t));   /* (a pack's name is up to 23: the title holds 15) */
-            snprintf(g_ms_caption, sizeof g_ms_caption, WORLD_STR("%d OF %d FISH SO FAR", "%d OF %d LIZARDS SO FAR"), t->n_fish, progression_pop_cap(t));
+            snprintf(g_ms_caption, sizeof g_ms_caption, world_view()->text.so_far_fmt, t->n_fish, progression_pop_cap(t));
             g_ms_lit = true; g_ms_icon = NULL; g_ms_fish = -1;
         } else {
             uint32_t bit = tank_badge(t, k)->bit; bool on = (t->tank_ms_bits & bit) != 0;
@@ -2459,7 +2459,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
     rect_fill(&c, X, Y, W, H, 0x04141a);
     rect_edge(&c, X, Y, W, H, MSP_TEAL); rect_edge(&c, X + 1, Y + 1, W - 2, H - 2, 0x1c2f36);
     char title[FISH_NAME_MAX + 16], caption[40] = "";
-    snprintf(title, sizeof title, "%s", WORLD_STR("THE TANK", "THE TERRARIUM"));
+    snprintf(title, sizeof title, "%s", world_view()->text.the_tank);
     const char *caption2 = NULL;                              /* a second line: the title and both move up */
     const icon_t *ic = NULL;
     const fish_t *f = fish >= 0 && fish < t->n_fish ? &t->fish[fish] : NULL;
@@ -2474,7 +2474,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
                 snprintf(title, sizeof title, "PACK MISSING");
                 snprintf(caption, sizeof caption, "%s", w[0] ? w : "A PACK THIS TANK USES");
             }
-            caption2 = WORLD_STR("THE TANK WAITS FOR IT", "THE TERRARIUM WAITS FOR IT");
+            caption2 = world_view()->text.the_tank_waits;
         } else if (kind == 7) {                               /* NOTICE_WRONG_BOARD (0.3.9.3): this version is another board's */
             const char *w = pt_board_words(board_port_hw());
             snprintf(title, sizeof title, "WRONG VERSION");
@@ -2483,7 +2483,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
         } else {
             snprintf(title, sizeof title, "AI MODEL DAMAGED");
             snprintf(caption, sizeof caption, "REINSTALL AT POCKETANK.COM");
-            caption2 = WORLD_STR("YOUR FISH ARE SAFE", "YOUR LIZARDS ARE SAFE");
+            caption2 = world_view()->text.animals_safe;
         }
         /* a warning triangle with an exclamation mark: the shape says it, not the hue */
         const int TH = 34, PX = X + W / 2, PY = Y + 14;      /* apex at the top, base TH below */
@@ -2506,7 +2506,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
         }
     } else if (kind == 4) {                                   /* NOTICE_UPDATED (2026-09-30): the first boot of a new release */
         snprintf(title, sizeof title, "UPDATED");
-        snprintf(caption, sizeof caption, WORLD_STR("YOUR TANK IS NOW V%s", "THIS IS NOW V%s"), PT_RELEASE);
+        snprintf(caption, sizeof caption, world_view()->text.now_version_fmt, PT_RELEASE);
         /* a tick in a ring, teal: the shape says it, not the hue */
         const int R = 22, PX = X + W / 2, PY = Y + 48;
         ring(&c, PX, PY, R, MSP_TEAL); ring(&c, PX, PY, R - 1, MSP_TEAL);
@@ -2514,7 +2514,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
         for (int i = 0; i < 12; i++) rect_fill(&c, PX - 6 + i, PY + 4 - i, 3, 3, MSP_TEAL);
     } else if (kind == 3) {                                   /* NOTICE_LOW_BATTERY */
         snprintf(title, sizeof title, "LOW BATTERY");
-        snprintf(caption, sizeof caption, "%s", WORLD_STR("PLEASE CHARGE THE TANK", "PLEASE CHARGE THE TERRARIUM"));
+        snprintf(caption, sizeof caption, "%s", world_view()->text.please_charge);
         /* the pill, large: outline + nub, the last sliver lit red */
         const int PW = 60, PH = 28, PX = X + (W - PW) / 2, PY = Y + 34;
         rect_edge(&c, PX, PY, PW, PH, 0x9fb4b8); rect_edge(&c, PX + 1, PY + 1, PW - 2, PH - 2, 0x9fb4b8);
@@ -2528,7 +2528,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
         for (int k = 0; k < world_view()->n_tank_badges; k++) if (world_view()->tank_badges[k].bit == bit) ic = world_view()->tank_badges[k].icon;
         int bi = 0; while (bi < 31 && !(bit & (1u << bi))) bi++;
         snprintf(caption, sizeof caption, "%s", bi < TMS_COUNT ? TMS_NAMES[bi] : "");
-        if (bit == TMS_FIRST_SALE) caption2 = WORLD_STR("FRY NOW IN THE SHOP", "HATCHLINGS NOW IN THE SHOP");   /* what the sale opened (0.3.5) */
+        if (bit == TMS_FIRST_SALE) caption2 = world_view()->text.newborns_in_shop;   /* what the sale opened (0.3.5) */
         if (!ic && t->n_fish) {                               /* a population milestone: the newest fish */
             const fish_t *n = &t->fish[t->n_fish - 1];
             render_fish_preview(fb, stride, X + W / 2, Y + 48, n->size * 1.6f, n->color, n->fin, n->accent, n, FISH_ROOM_CARD, t->clock);
@@ -2582,7 +2582,7 @@ static void shop_arrow(ctx_t *c, int x, int y, bool right, uint32_t rgb) {   /* 
     }
 }
 static void price_tag(ctx_t *c, int x, int y, int price, uint32_t rgb) {   /* the small coin + the number */
-    blit_icon(c, x, y - 1, WORLD_ICON(icon_shop_sand_dollar_16), 255);   /* (the terrarium's: a desert rose) */
+    blit_icon(c, x, y - 1, world_view()->art.coin16, 255);   /* (the terrarium's: a desert rose) */
     char n[16]; snprintf(n, sizeof n, "%d", price);
     draw_text(c, x + 20, y, 2, rgb, n);
 }
@@ -2600,8 +2600,8 @@ static int  shp_item(const tank_t *t, int row) {                                
 }
 static void fry_hours(char *out, size_t n) {   /* "NEW FRY IN 14 H" / "IN 40 MIN" */
     float s = progression_fry_new_in_s();
-    if (s >= 3600) snprintf(out, n, WORLD_STR("NEW FRY IN %d H", "MORE IN %d H"), (int)((s + 1799) / 3600));
-    else snprintf(out, n, WORLD_STR("NEW FRY IN %d MIN", "MORE IN %d MIN"), (int)(s / 60) + 1);
+    if (s >= 3600) snprintf(out, n, world_view()->text.more_in_h_fmt, (int)((s + 1799) / 3600));
+    else snprintf(out, n, world_view()->text.more_in_min_fmt, (int)(s / 60) + 1);
 }
 static void fry_draw(uint16_t *fb, int stride, float x, float y, float size, const fry_offer_t *o, double clock) {
     fish_t f; memset(&f, 0, sizeof f);
@@ -2618,7 +2618,7 @@ static void shop_fry_row(ctx_t *c, const tank_t *t, uint16_t *fb, int stride, in
     int k = fry_first_left();
     bool room = progression_fry_room_to_buy(t), can = t->sd_balance >= SD_PRICE_FRY;
     if (k >= 0) { fry_offer_t o; progression_fry_offer(k, &o); fry_draw(fb, stride, 48, top + 16, 0.9f, &o, t->clock); }
-    draw_text(c, 76, top + 2, 2, 0xffffff, WORLD_STR("FRY", "HATCHLING"));
+    draw_text(c, 76, top + 2, 2, 0xffffff, world_view()->text.newborn);
     if (k < 0) { char l[24]; fry_hours(l, sizeof l); draw_text(c, 76, top + 20, 2, MSP_QUIET, l); }
     else price_tag(c, 76, top + 20, SD_PRICE_FRY, can && room ? MSP_TEAL : MSP_QUIET);
     const char *b = k < 0 ? "SOLD OUT" : !room ? "FULL" : "CHOOSE";
@@ -2630,7 +2630,7 @@ static void shop_fry_modal(ctx_t *c, const tank_t *t, uint16_t *fb, int stride) 
     const int X = SHP_MODAL_X, Y = SHP_MODAL_Y, W = SHP_MODAL_W, H = SHP_MODAL_H;
     rect_fill(c, X, Y, W, H, 0x04141a);
     rect_edge(c, X, Y, W, H, MSP_TEAL); rect_edge(c, X + 1, Y + 1, W - 2, H - 2, 0x1c2f36);
-    { const char *ti = WORLD_STR("FRY FOR SALE", "HATCHLINGS"); draw_text(c, X + (W - text_w(ti, 3)) / 2, Y + 14, 3, 0xffffff, ti); }
+    { const char *ti = world_view()->text.newborns_for_sale; draw_text(c, X + (W - text_w(ti, 3)) / 2, Y + 14, 3, 0xffffff, ti); }
     for (int k = 0; k < FRY_OFFER_N; k++) {
         fry_offer_t o; progression_fry_offer(k, &o);
         int bx = SHP_FRY_BOX_X(k), by = SHP_FRY_BOX_Y;
@@ -2651,8 +2651,8 @@ static void shop_fry_modal(ctx_t *c, const tank_t *t, uint16_t *fb, int stride) 
     bool go = room && can && !pk.sold && progression_fry_left() > 0;
     char line[32]; snprintf(line, sizeof line, "%d", SD_PRICE_FRY);
     price_tag(c, X + (W - 20 - text_w(line, 2)) / 2, Y + 138, SD_PRICE_FRY, go ? 0xffffff : MSP_QUIET);
-    if (!room) snprintf(line, sizeof line, "%s", progression_fish_held(t) >= progression_pop_cap(t) ? WORLD_STR("THE TANK IS FULL", "THE TERRARIUM IS FULL")
-                                                 : WORLD_STR("WELCOME THE NEW FRY", "WELCOME THE HATCHLING"));   /* (a place held for a gift or a fry next door: full) */
+    if (!room) snprintf(line, sizeof line, "%s", progression_fish_held(t) >= progression_pop_cap(t) ? world_view()->text.tank_full
+                                                 : world_view()->text.welcome_newborn);   /* (a place held for a gift or a fry next door: full) */
     else if (!can) snprintf(line, sizeof line, "YOU HAVE %d", (int)t->sd_balance);
     else line[0] = 0;
     if (line[0]) draw_text(c, X + (W - text_w(line, 2)) / 2, Y + 160, 2, MSP_QUIET, line);
@@ -2685,8 +2685,8 @@ void render_shop(const tank_t *t, uint16_t *fb, int stride) {
     if (world_view()->shelf_prepare) world_view()->shelf_prepare(t, fb, stride);   /* (the shelf's thumbs first: the frame is their scratch) */
     ctx_t c = ctx_page(fb, stride);
     rect_fill(&c, -PAGE_X, -PAGE_Y, TANK_W, TANK_H, MSP_INK);
-    blit_icon(&c, SHP_COIN_X, SHP_COIN_Y, WORLD_ICON(icon_shop_sand_dollar_64), 255);
-    draw_text(&c, SHP_HEAD_X, SHP_COIN_Y + 6, 2, MSP_TEAL, WORLD_STR("SAND DOLLARS", "DESERT ROSES"));
+    blit_icon(&c, SHP_COIN_X, SHP_COIN_Y, world_view()->art.coin64, 255);
+    draw_text(&c, SHP_HEAD_X, SHP_COIN_Y + 6, 2, MSP_TEAL, world_view()->text.coins);
     char bal[16]; snprintf(bal, sizeof bal, "%d", (int)t->sd_balance);
     draw_text(&c, SHP_HEAD_X, SHP_COIN_Y + 28, 4, 0xffffff, bal);
     for (int x = 24; x < PAGE_W - 24; x++) px_blend(&c, x, SHP_ROW_Y0 - 10, MSP_DIM, 200);
@@ -2703,11 +2703,11 @@ void render_shop(const tank_t *t, uint16_t *fb, int stride) {
         else if (owned) blit_icon(&c, 32, top, shop_icon(i), 255); else blit_icon_locked(&c, 32, top, shop_icon(i));   /* (the rows are where the bowl is wide: their own column) */
         draw_text(&c, 76, top + 2, 2, 0xffffff, it->name);
         if (shelved) draw_text(&c, 76, top + 20, 2, MSP_TEAL, "ON THE SHELF");
-        else if (owned) draw_text(&c, 76, top + 20, 2, MSP_TEAL, WORLD_STR("IN THE TANK", "IN THE TERRARIUM"));
+        else if (owned) draw_text(&c, 76, top + 20, 2, MSP_TEAL, world_view()->text.in_the_tank);
         else price_tag(&c, 76, top + 20, it->price, can ? MSP_TEAL : MSP_QUIET);
         if (shelved) { button(&c, SHP_BTN_X, top, SHP_BTN_W, SHP_BTN_H, MSP_TEAL, MSP_TEAL, "PUT BACK", 2);          /* live: one tap returns it */
                        draw_text(&c, SHP_BTN_X + (SHP_BTN_W - text_w("PUT BACK", 2)) / 2, top + (SHP_BTN_H - 14) / 2, 2, MSP_INK, "PUT BACK"); }
-        else if (owned) button(&c, SHP_BTN_X, top, SHP_BTN_W, SHP_BTN_H, MSP_INK, MSP_DIM, WORLD_STR("IN TANK", "OWNED"), 2);
+        else if (owned) button(&c, SHP_BTN_X, top, SHP_BTN_W, SHP_BTN_H, MSP_INK, MSP_DIM, world_view()->text.in_tank_short, 2);
         else if (can) { button(&c, SHP_BTN_X, top, SHP_BTN_W, SHP_BTN_H, MSP_TEAL, MSP_TEAL, "UNLOCK", 2);
                         draw_text(&c, SHP_BTN_X + (SHP_BTN_W - text_w("UNLOCK", 2)) / 2, top + (SHP_BTN_H - 14) / 2, 2, MSP_INK, "UNLOCK"); }
         else           button(&c, SHP_BTN_X, top, SHP_BTN_W, SHP_BTN_H, 0x1c2f36, MSP_DIM, "UNLOCK", 2);
@@ -2742,7 +2742,7 @@ void render_shop(const tank_t *t, uint16_t *fb, int stride) {
     if (owned && tank_decor_placeable(g_shp_modal)) {         /* a placeable piece (0.3.9): in the tank MOVE | SHELVE; on the shelf PLACE | SELL (twice) */
         bool shelved = (t->sd_shelved & it->bit) != 0; char sub[28];
         if (shelved) shelf_slot(&c, X + (W - 64) / 2, Y + 14, t, g_shp_modal, 2);   /* over the icon: the piece as it is on the shelf */
-        const char *state = shelved ? "ON THE SHELF" : WORLD_STR("IN THE TANK", "IN THE TERRARIUM");
+        const char *state = shelved ? "ON THE SHELF" : world_view()->text.in_the_tank;
         draw_text(&c, X + (W - text_w(state, 2)) / 2, Y + 164, 2, MSP_TEAL, state);
         if (shelf_line(t, g_shp_modal, sub, sizeof sub)) draw_text(&c, X + (W - text_w(sub, 2)) / 2, Y + 184, 2, MSP_QUIET, sub);
         button(&c, SHP_TWO_X0, by, MSP_HOW_W, MSP_HOW_H, 0x1c2f36, MSP_TEAL, shelved ? "PLACE" : "MOVE", 2);
@@ -2751,7 +2751,7 @@ void render_shop(const tank_t *t, uint16_t *fb, int stride) {
                                      button(&c, SHP_TWO_X1, by, MSP_HOW_W, MSP_HOW_H, MSP_TEAL, MSP_TEAL, sub, 2);
                                      draw_text(&c, SHP_TWO_X1 + (MSP_HOW_W - text_w(sub, 2)) / 2, by + (MSP_HOW_H - 14) / 2, 2, MSP_INK, sub); }
         else button(&c, SHP_TWO_X1, by, MSP_HOW_W, MSP_HOW_H, 0x1c2f36, MSP_DIM, "SELL", 2);
-    } else if (owned) { const char *in = WORLD_STR("IN THE TANK", "IN THE TERRARIUM"); draw_text(&c, X + (W - text_w(in, 2)) / 2, by + 8, 2, MSP_TEAL, in); }   /* the snail: a permanent resident */
+    } else if (owned) { const char *in = world_view()->text.in_the_tank; draw_text(&c, X + (W - text_w(in, 2)) / 2, by + 8, 2, MSP_TEAL, in); }   /* the snail: a permanent resident */
     else {
         char line[32]; snprintf(line, sizeof line, "%d", it->price);
         int pw = 20 + text_w(line, 2);
@@ -2843,7 +2843,7 @@ void render_sd_toast(const tank_t *t, uint16_t *fb, int stride) {
     for (int y = Y; y < Y + H; y++)
         for (int x = X; x < X + W; x++) px_blend(&c, x, y, 0x04141a, 215);
     rect_edge(&c, X, Y, W, H, MSP_TEAL);
-    blit_icon(&c, X + 5, Y + 3, WORLD_ICON(icon_shop_sand_dollar_16), 255);
+    blit_icon(&c, X + 5, Y + 3, world_view()->art.coin16, 255);
     draw_text(&c, X + 25, Y + 4, 2, 0xffffff, txt);
 }
 
@@ -3446,7 +3446,7 @@ void render_battery_warning(uint16_t *fb, int stride, int cell_mah, int charge_m
     }
     int y = SET_TITLE_Y + 42;
     text_centre(&c, y, 2, 0xffffff, "ONLY FOR A BIGGER BATTERY."); y += 30;
-    snprintf(txt, sizeof txt, WORLD_STR("THE TANK WILL CHARGE AT %d MA.", "IT WILL CHARGE AT %d MA."), charge_ma);
+    snprintf(txt, sizeof txt, world_view()->text.charge_fmt, charge_ma);
     text_centre(&c, y, 2, MSP_TEAL, txt); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "A SMALLER BATTERY CHARGED THIS"); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "FAST CAN GET HOT, SWELL UP"); y += 22;
@@ -3488,7 +3488,7 @@ void render_touch_intro(uint16_t *fb, int stride, bool own_in_use, const char *m
     rect_fill(&c, -PAGE_X, -PAGE_Y, TANK_W, TANK_H, MSP_INK);
     text_centre(&c, SET_TITLE_Y, 3, 0xffffff, "TOUCH");
     int y = SET_TITLE_Y + 46;
-    text_centre(&c, y, 2, MSP_TEAL, WORLD_STR("HOLD THE TANK THE WAY", "HOLD THE TERRARIUM THE WAY")); y += 22;
+    text_centre(&c, y, 2, MSP_TEAL, world_view()->text.hold_the_tank); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "YOU USUALLY DO."); y += 34;
     text_centre(&c, y, 2, MSP_TEAL, "NINE CROSSES COME UP."); y += 22;
     text_centre(&c, y, 2, MSP_TEAL, "TAP THE MIDDLE OF EACH ONE.");
@@ -3777,7 +3777,7 @@ static void sh_footer(ctx_t *c, const char *left, bool left_sd, int wallet, cons
     if (left_sd) {                                         /* the wallet: the coin and the count */
         char t[16]; snprintf(t, sizeof t, "%d", wallet);
         int w = 16 + 6 + text_w(t, 2), x = lx + (SH_BTN_W - w) / 2;
-        blit_icon(c, x, y + (MSP_CLOSE_H - 16) / 2, WORLD_ICON(icon_shop_sand_dollar_16), 255);
+        blit_icon(c, x, y + (MSP_CLOSE_H - 16) / 2, world_view()->art.coin16, 255);
         draw_text(c, x + 22, y + (MSP_CLOSE_H - 14) / 2, 2, 0xffffff, t);
     } else button(c, lx, y, SH_BTN_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, left, 2);
     (void)rx;
@@ -3829,7 +3829,7 @@ static void sh_lock_btn(ctx_t *c, int x, int y, bool locked) {
     sh_padlock(c, x + SH_LOCK_W / 2, y + MSP_CLOSE_H / 2 + 1, locked, locked ? MSP_INK : MSP_TEAL, locked ? MSP_TEAL : 0x1c2f36);
 }
 /* MY TANKS's title: the terrarium's is longer - in the round glass's narrow cap, beside the padlock, it is drawn a size down */
-#define SH_TITLE   WORLD_STR("MY TANKS", "MY TERRARIUMS")
+#define SH_TITLE   world_view()->text.my_tanks
 #define SH_TITLE_S (PAGE_BOWL ? world_view()->bowl_title_s : 3)
 #define SH_TITLE_DY (SH_TITLE_S == 2 ? 4 : 0)
 static void sh_lock_xy(int *x, int *y) {                   /* by the title: at the shelves' right edge, or beside the title on the round glass and the watch */
@@ -4116,7 +4116,7 @@ void render_shelf_rename(uint16_t *fb, int stride, const shelf_slot_t *s, const 
             for (int x = 0; x < TANK_W; x++) px565_blend(&c, x, y, 0, 244);   /* (near black: the shelves only a hint behind) */
     }
     if (!(part & 2)) return;
-    { const char *ti = WORLD_STR("RENAME THIS TANK", "RENAME THIS TERRARIUM"); draw_text(&c, (TANK_W - text_w(ti, 2)) / 2, NK_PLATE_Y - 26, 2, 0xffffff, ti); }
+    { const char *ti = world_view()->text.rename_tank; draw_text(&c, (TANK_W - text_w(ti, 2)) / 2, NK_PLATE_Y - 26, 2, 0xffffff, ti); }
     rect_fill(&c, NK_PX0, NK_PLATE_Y, NK_PW, NK_PH, SH_BRASS); rect_edge(&c, NK_PX0, NK_PLATE_Y, NK_PW, NK_PH, 0x7a6435);
     for (int k = 0; k < 2; k++) {
         int ty = NK_PLATE_Y + 9 + k * (NK_LH + 12), tx = NK_PX0 + 12;
@@ -4169,7 +4169,7 @@ void render_shelf_card(uint16_t *fb, int stride, const shelf_slot_t *s, const ch
     if (age_days >= 0) { snprintf(t, sizeof t, "%d DAYS OLD", age_days); draw_text(&c, tx, ty, 2, MSP_TEAL, t); }
     int y = my + 16 + top + 14;                            /* TIME: DORMANT | PAUSED */
     if (glass) {                                           /* (in its place: what the shelf does with it) */
-        const char *l1 = WORLD_STR("SWAP IN ANOTHER TANK", "SWAP IN ANOTHER TERRARIUM"), *l2 = "TO PUT THIS ONE AWAY";
+        const char *l1 = world_view()->text.swap_in, *l2 = "TO PUT THIS ONE AWAY";
         draw_text(&c, mx + (SHC_W - text_w(l1, 2)) / 2, y + 4, 2, MSP_QUIET, l1);
         draw_text(&c, mx + (SHC_W - text_w(l2, 2)) / 2, y + 24, 2, MSP_QUIET, l2);
         y += SHC_SEG_H + SHC_NOTE;
@@ -4237,12 +4237,12 @@ void render_shelf_remove(uint16_t *fb, int stride, const shelf_slot_t *s, int re
     draw_text(&c, tx, ty, 2, 0xffffff, nm); ty += 22;
     draw_text(&c, tx, ty, 2, MSP_TEAL, "FROM THE SHELF?");
     int y = my + 16 + top + 14;
-    const char *l1 = WORLD_STR("THIS TANK AND ITS FISH", "THIS TERRARIUM AND ITS"), *l2 = WORLD_STR("ARE GONE FOR GOOD.", "LIZARDS ARE GONE FOR GOOD.");
+    const char *l1 = world_view()->text.gone_l1, *l2 = world_view()->text.gone_l2;
     draw_text(&c, mx + (SHC_W - text_w(l1, 2)) / 2, y, 2, 0xffffff, l1); y += 20;
     draw_text(&c, mx + (SHC_W - text_w(l2, 2)) / 2, y, 2, 0xffffff, l2); y += 20;
     char t[32]; snprintf(t, sizeof t, "+%d FOR ITS PIECES", refund);
     int w = 16 + 6 + text_w(t, 2), x = mx + (SHC_W - w) / 2;
-    blit_icon(&c, x, y - 1, WORLD_ICON(icon_shop_sand_dollar_16), 255);
+    blit_icon(&c, x, y - 1, world_view()->art.coin16, 255);
     draw_text(&c, x + 22, y, 2, MSP_TEAL, t);
     int bmx, bmy, rx, rw; shm_btns(&bmx, &bmy, &y, &rx, &rw);
     const int bw = SHM_BW;
@@ -4286,7 +4286,7 @@ void render_loading(uint16_t *fb, int stride, const char *name, double clock, co
     }
     char nm[24]; snprintf(nm, sizeof nm, "%s", name ? name : ""); for (char *p = nm; *p; p++) if (*p == '\n') *p = ' ';
     draw_text(&c, (TANK_W - text_w(nm, 2)) / 2, cy + R + 26, 2, 0xffffff, nm);
-    if (!line) line = WORLD_STR("FILLING THE TANK", "SETTING UP THE TERRARIUM");
+    if (!line) line = world_view()->text.filling;
     draw_text(&c, (TANK_W - text_w(line, 2)) / 2, cy + R + 48, 2, MSP_TEAL, line);
 }
 
@@ -4348,7 +4348,7 @@ void render_library(uint16_t *fb, int stride, const library_row_t *row, int n, i
         if (r->experimental) { sh_flask(&c, tx, tagy - 1, MSP_QUIET); draw_text(&c, tx + 10, tagy, 1, MSP_QUIET, "EXPERIMENTAL"); }
         else if (r->installed) draw_text(&c, tx, tagy, 1, MSP_QUIET, "INSTALLED");
         int bx = x1 - bw, by = y + 10;
-        const char *act = r->installed ? WORLD_STR("NEW TANK", "NEW ONE") : "GET";
+        const char *act = r->installed ? world_view()->text.new_tank : "GET";
         if (r->price > wallet) {                           /* not enough yet: an outline with dim words (fill, not hue) */
             rect_edge(&c, bx, by, bw, MSP_CLOSE_H, MSP_DIM);
             draw_text(&c, bx + (bw - text_w(act, 2)) / 2, by + (MSP_CLOSE_H - 14) / 2, 2, MSP_DIM, act);
@@ -4356,7 +4356,7 @@ void render_library(uint16_t *fb, int stride, const library_row_t *row, int n, i
         if (r->price) {
             char t[16]; snprintf(t, sizeof t, "%d", r->price);
             int w = 16 + 5 + text_w(t, 2), px0 = bx + (bw - w) / 2;
-            blit_icon(&c, px0, by + MSP_CLOSE_H + 8, WORLD_ICON(icon_shop_sand_dollar_16), 255);
+            blit_icon(&c, px0, by + MSP_CLOSE_H + 8, world_view()->art.coin16, 255);
             draw_text(&c, px0 + 21, by + MSP_CLOSE_H + 9, 2, 0xffffff, t);
         } else draw_text(&c, bx + (bw - text_w("FREE", 2)) / 2, by + MSP_CLOSE_H + 9, 2, 0xffffff, "FREE");
         if (i + 1 < n) rect_fill(&c, x0, y + pitch - 11, x1 - x0, 1, MSP_DIM);
