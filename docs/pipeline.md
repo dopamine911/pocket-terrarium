@@ -126,6 +126,13 @@ memory bandwidth differs between an x86 core and the ESP32-S3), goal NLL and acc
 seeds pass every probe row, the worst scaled margin and the rows a seed fails. A smaller model
 passes only if every seed passes every row; the table is evidence, not a promotion rule.
 
+Measured on the pendant (1.75C, 2026-11-06): the 256x4 decision-only model (3.2M, 1.72 MB, seed 2 of
+`size-d256-n4-decision`), flashed as model partition + trailer only (`lz_d256n4`; the app and the
+save untouched), decides in about 1.18 s at 40.6-41.3 tok/s with 84 KB of internal heap free, against
+about 4 s at 11.9 tok/s for the 14M. The projection from the x86 runner (51.6 tok/s) was 25% high.
+Sim census A15 (crickets per lit lizard-hour, bar >= 4; one catch is about 0.44) over 30 terrariums:
+the 14M missed 0, 256x4 missed 5 (each at 3.6-4.0), 192x4 missed 2; the means match (about 5.6-5.8).
+
 ## Extra tools
 
 - `model/prompt_check.py` — 7-minute teacher/prompt sanity check. **Run this
