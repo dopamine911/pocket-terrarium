@@ -95,10 +95,12 @@ python3 harness.py selftest                            # planner, guard, margins
 - **Report**, in `out/harness/<run>/report.md`: jobs, every row × seed × panel with its limit,
   the seed-to-seed sd against the panel-to-panel spread, each seed's smallest margin, the
   selected seed, and the check against `[validate]` if the run has one. Margins are scaled by
-  the row's headroom (limit to best possible: 1 for a rate, 1/9 for the A11 slope, 0 for a
-  `<=` row), so a row pinned near its floor (A12, limit 0.05) can't decide every ranking.
+  the row's headroom (limit to best possible: 1 for a rate, 5/33 for the A11 slope - the least-squares slope of a 0/1 step over bold 0..9, its true
+  maximum - and 0 for a `<=` row), so a row pinned near its floor (A12, limit 0.05) can't decide every ranking.
   Selection takes the widest smallest scaled margin. Seeds within the binding rows' scaled panel
-  spread of it (at least `tie_floor`, 0.005) are tied and go to the lower goal NLL.
+  spread of it (at least `tie_floor`, 0.005) are tied and go to the lower goal NLL. This replaced the earlier ranking (raw margins, then
+  validation loss), so a seed selected from a report made before it may not be the one selected
+  now: compare old and new selections knowing the policy changed, not only the model.
 - **Teacher agreement**, `model/agree.py --ckpt A.pt B.pt ...`: a fixed, student-independent
   state set (seed 777, 300 states), K = 3 teacher answers each, cached in
   `out/agree_teacher_cache.jsonl` so further checkpoints cost no teacher calls. It reports greedy
