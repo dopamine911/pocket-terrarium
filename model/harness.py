@@ -779,14 +779,21 @@ def margin(value, threshold):
     return value - lim if m[1][0] == ">" else lim - value
 
 
+# the most the A11 sweep's least-squares slope over bold 0..9 can be for probabilities in [0, 1]: the step
+# [0,0,0,0,0,1,1,1,1,1] gives 12.5 / 82.5 = 5/33 (probe_l1.slope). Not 1/9, the slope of a line from 0 at bold 0 to 1
+# at bold 9, which a step beats
+A11_SLOPE_MAX = 5 / 33
+
+
 def headroom(name, threshold):
     """the room a row has between its limit and the best value it can take: a rate or a paired
-    difference tops out at 1, the A11 sweep's slope over bold 0..9 at 1/9, a <= row bottoms out at 0"""
+    difference tops out at 1, the A11 sweep's slope over bold 0..9 at A11_SLOPE_MAX (5/33), a <= row
+    bottoms out at 0"""
     m = LIMIT_RE.match(threshold or "")
     if not m:
         return None
     lim = float(m[2])
-    room = ((1 / 9 if "slope" in name else 1.0) - lim) if m[1][0] == ">" else lim
+    room = ((A11_SLOPE_MAX if "slope" in name else 1.0) - lim) if m[1][0] == ">" else lim
     return room if room > 0 else None
 
 
@@ -962,7 +969,7 @@ def write_report(cfg):
         L += ["", "sd seeds: the standard deviation of the per-seed means (training-seed variance); panel spread: the mean "
               "max - min across one seed's panels (probe sampling noise). A row whose sd seeds is near its min margin "
               "can flip on another seed. Scaled: the margin as a share of the row's headroom (limit to best possible: "
-              "1 for a rate or a paired difference, 1/9 for the A11 slope, 0 for a <= row); 1 is perfect, 0 the limit.", ""]
+              "1 for a rate or a paired difference, 5/33 for the A11 slope, 0 for a <= row); 1 is perfect, 0 the limit.", ""]
         ranked = sorted(seeds, key=lambda s: per_seed[s]["min_margin"] if per_seed[s]["min_margin"] is not None else -9, reverse=True)
         best = per_seed[ranked[0]]["min_margin"]
         L += ["## Selection", "", f"Rule: the widest smallest scaled margin over every limited row and panel. Seeds "
@@ -1096,7 +1103,8 @@ def selftest():
     # A12 near its floor no longer decides: raw, x (A12 +0.049) beats y (A12 +0.045); scaled, y's wider content wins
     _, xy = seed_stats({"x": [probe(0.95, 0.001, 0.39)], "y": [probe(0.95, 0.005, 0.35)]})
     assert xy["x"]["binding_row"] == "content" and select_seed(xy, {}) == "y", xy
-    assert abs(scaled_margin(0.065, "A11 slope of P(explore+investigate), bold 0..9", "> 0") - 0.585) < 1e-9
+    assert abs(scaled_margin(0.065, "A11 slope of P(explore+investigate), bold 0..9", "> 0") - 0.065 * 33 / 5) < 1e-9
+    assert abs(headroom("A11 slope of P(explore+investigate), bold 0..9", "> 0") - 5 / 33) < 1e-12   # the true maximum: a step at bold 4/5
     assert scaled_margin(0.3, "P(hunt | ...) (report)", "-") is None and headroom("x", "<= 0") is None
     assert select_seed(per, {}) == 2                                   # no band: the widest alone
     assert select_seed(per, {1337: 0.70, 1: 0.7506, 2: 0.7445}, band) == 2   # s1 tied (0.009 below), s1337 not (0.021)

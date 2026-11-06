@@ -16,7 +16,7 @@ log "folded: $(wc -l < out/l1_clean.jsonl) clean pairs; training"
 
 POCKET_SCHEMA=L1 .venv/bin/python train.py --data out/l1_clean.jsonl --device cpu --iters 5000 \
     --dim 384 --n-layers 8 --n-heads 8 --max-seq-len 64 --batch 64 --lr 6e-4 --out out/ckpt_l1.pt >> "$LOG" 2>&1
-log "trained: $(grep 'best val_loss' "$LOG" | tail -1)"
+log "trained: $(grep '^done: kept iter' "$LOG" | tail -1)"
 
 .venv/bin/python export_q4.py out/model_q4_l1.bin --checkpoint out/ckpt_l1.pt >> "$LOG" 2>&1
 .venv/bin/python llama2.c/export.py out/model_l1.bin --checkpoint out/ckpt_l1.pt >> "$LOG" 2>&1

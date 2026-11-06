@@ -147,8 +147,10 @@ def main():
     n_docs = len(train_docs) + len(val_docs)
     print(f"{n_docs} docs -> {len(train_s)} train / {len(val_s)} val tokens, device={device}, loss {args.loss}")
     val_dt = decision_tensors(val_docs, args.max_seq_len)
-    goal_ids = sorted({int(t) for t in val_dt[1][torch.arange(len(val_docs)), val_dt[2]]}
-                      | {int(d[d.index(tok.encode("->")[0]) + 1]) for d in train_docs})
+    goal_ids = sorted(tok.encode(g)[0] for g in tok.goal_words())   # the device's candidates, from the schema (a sparse dataset may not label them all)
+    seen = {int(t) for t in val_dt[1][torch.arange(len(val_docs)), val_dt[2]]} | {int(d[d.index(tok.encode("->")[0]) + 1]) for d in train_docs}
+    if not seen <= set(goal_ids):
+        sys.exit(f"the data labels goal tokens {sorted(seen - set(goal_ids))} that schema {tok.SCHEMA} does not list as goals")
     train_dt = decision_tensors(train_docs, args.max_seq_len) if args.loss == "decision" else None
 
     model_args = dict(

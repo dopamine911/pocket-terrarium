@@ -48,6 +48,8 @@ SCHEMA = parse_schema(os.environ.get("POCKET_SCHEMA", "2"))
 # The lizard line's 56 words (model/schema-lizard.md "Vocabulary", in its table's
 # order; with the three specials, 59 ids). No word plays two roles: the sighting
 # is `shelter` because `hide` is a goal, the phase `sleep` because `rest` is one.
+GOALS_L1 = ["hunt", "bask", "hide", "explore", "investigate", "dig", "rest"]
+GOALS_FISH = ["seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef"]
 LEXICON_L1 = (["zone", "hunger", "energy", "stress", "curiosity", "heat", "bold", "social", "stage", "trust",
                "bored", "shed", "prey", "other", "warm", "shelter", "wall", "last", "phase", "urgency"]
               + [str(i) for i in range(0, 13)]                 # drives 0-9, clock 1-12
@@ -55,7 +57,7 @@ LEXICON_L1 = (["zone", "hunger", "energy", "stress", "curiosity", "heat", "bold"
               + ["hatch", "juv", "adult", "elder"]
               + ["no", "soon", "yes"]
               + ["active", "settle", "sleep"]
-              + ["hunt", "bask", "hide", "explore", "investigate", "dig", "rest"]
+              + GOALS_L1
               + ["->"])
 
 
@@ -77,9 +79,7 @@ def lexicon_for(schema):
                "none", "near", "mid", "far", "clear",
                "last", "time", "day", "night"]
             + [str(i) for i in range(0, 13)]                 # drives 0-9, clock 1-12
-            + ["seek_food", "flee_shadow", "visit_bubbles", "follow_friend",
-               "explore", "rest", "dart_play", "inspect_reef",
-               "urgency", "->"])
+            + GOALS_FISH + ["urgency", "->"])
 
 
 def set_schema(schema):
@@ -93,6 +93,12 @@ def set_schema(schema):
 
 
 set_schema(SCHEMA)
+
+
+def goal_words():
+    """the goals the device scores for this schema - advisor_core_init wants a token for each, whether or not a dataset
+    labels it: the lizard line's seven, the fish lines' eight (v4 never labels `flee_shadow`, but its enum has it)"""
+    return list(GOALS_L1 if SCHEMA == "L1" else GOALS_FISH)
 
 
 def encode(text, bos=False):
