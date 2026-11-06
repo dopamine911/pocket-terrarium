@@ -62,6 +62,35 @@ bool manifest_commit(model_manifest_t *m, bool builtin, uint32_t crc, char *why,
     #undef REFUSE
 }
 
+#if PT_CARD   /* THE CARD LIBRARY's (docs/card-library.md): without it the pools stay as they were and none of this is compiled */
+bool manifest_room(void) { packs_init(); return s_n < MANIFEST_POOL; }
+
+/* what manifest_commit asks of a manifest that is not in the pool yet, for the dry check (packs_dry_check): its model's tag held by no
+   OTHER manifest (the same uid is the pack itself, an update's old version) and manifest_check. Nothing is taken */
+bool manifest_admit(const model_manifest_t *m, char *why, size_t n) {
+    #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
+    packs_init();
+    for (int i = 0; i < s_n; i++)
+        if (s_pool[i].uid != m->uid && strcmp(s_pool[i].tag, m->tag) == 0) REFUSE("the model %s has a manifest already (%s's)", m->tag, s_pool[i].name);
+    return manifest_check(m, why, n);
+    #undef REFUSE
+}
+
+/* a manifest that is not built in, out of the pool; the others close up (the card library's REMOVE, an UPDATE's old version) */
+bool manifest_remove(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) {
+        if (s_pool[i].uid != uid) continue;
+        if (s_pool[i].builtin) return false;
+        for (int k = i + 1; k < s_n; k++) { s_pool[k - 1] = s_pool[k]; s_crc[k - 1] = s_crc[k]; }
+        s_n--;
+        memset(&s_pool[s_n], 0, sizeof s_pool[s_n]); s_crc[s_n] = 0;
+        return true;
+    }
+    return false;
+}
+#endif
+
 pack_seen_t manifest_seen(uint32_t uid, uint32_t crc, const char **by) {
     packs_init();
     for (int i = 0; i < s_n; i++)

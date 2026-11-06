@@ -116,6 +116,13 @@ int coll_shot(const char *prefix);      /* selftest_coll.c: --coll-shot, the pag
 int selftest_packs(void);               /* selftest_packs.c (pocket-terrarium P2a): every species and habitat pack, and the pairs a tank can hold */
 int selftest_ptpk(void);                /* selftest_ptpk.c (issue #4 phase 1): the PTPK format and loader, a folder of packs, a tank whose pack is missing */
 int selftest_caps(void);                /* selftest_caps.c (issue #4 phase 2): capabilities, the pair check, the model manifests, a tank whose pair cannot run */
+#if PT_CARD   /* the card library (issue #4 phase 4): selftest_library.c, selftest_packs_page.c; the card is a folder (card_port_sim.c) */
+#include "packs/library.h"
+#include "packs_page.h"
+int selftest_library(void);             /* selftest_library.c: the card library - scan, check, install, the pack store across reboots and power cuts, update, remove, hostile cards */
+int selftest_packs_page(void);          /* selftest_packs_page.c: the PACKS page on this board - layout, taps, installs and removals through the page */
+int packs_page_shot(const char *prefix);   /* selftest_packs_page.c: --card-shot, the page's states as PPMs */
+#endif
 #if PT_TERRARIUM   /* terrarium only: these tests' definitions (selftest_packs.c, selftest_l1.c, selftest_walk.c) are compiled into that world's bin alone */
 int selftest_heat(void);                /* ... the heat field and the body's heat */
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
@@ -13488,10 +13495,17 @@ int main(int argc, char **argv) {
     progression_cap_hook = cap_breach;
     for (int a = 1; a < argc; a++) if (!strncmp(argv[a], "--selftest", 10) || !strcmp(argv[a], "--square-boot")) g_cap_fatal = true;
     if (g_cap_fatal) {                           /* a selftest never touches the sim's own tank, shelf or wifi: what it does not name is the run's (sim_tmp.h) */
-        static const char *const ENV[5][2] = { { "POCKET_TANK_SAVE", "tank.sav" }, { "POCKET_TANK_STORAGE", "storage.bin" }, { "POCKET_TANK_FRAME", "frame" }, { "POCKET_TANK_WIFI", "wifi.txt" },
-                                               { "POCKET_PACKS_DIR", "packs" } };   /* (a folder that is not there: a selftest sees the built-in packs and the ones it makes itself) */
-        for (int k = 0; k < 5; k++) if (!getenv(ENV[k][0])) setenv(ENV[k][0], sim_tmp(ENV[k][1]), 1);
+        static const char *const ENV[6][2] = { { "POCKET_TANK_SAVE", "tank.sav" }, { "POCKET_TANK_STORAGE", "storage.bin" }, { "POCKET_TANK_FRAME", "frame" }, { "POCKET_TANK_WIFI", "wifi.txt" },
+                                               { "POCKET_PACKS_DIR", "packs" },   /* (a folder that is not there: a selftest sees the built-in packs and the ones it makes itself) */
+                                               { "POCKET_TANK_PACKSTORE", "packstore.bin" } };   /* (the card library's store: a fresh one per run) */
+        for (int k = 0; k < 6; k++) if (!getenv(ENV[k][0])) setenv(ENV[k][0], sim_tmp(ENV[k][1]), 1);
+#if PT_CARD
+        unsetenv("POCKET_CARD_DIR");              /* ... and no card: a test that wants one makes its own folder and says so */
+#endif
     }
+#if PT_CARD
+    library_boot();                              /* the packs installed from the card, from the pack store, through the one loader after the built-ins - what the firmware's app_main does */
+#endif
     sim_packs_scan(sim_packs_dir(), true);       /* the packs found in the folder (docs/ptpk.md): habitats first; a corrupt one is refused, said once */
 #if PT_NET
     collection_set_more(calloc(1, collection_more_size()));   /* the visitor pages 2..10 (0.4): the boards' PSRAM block */
@@ -13515,6 +13529,11 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-packs") == 0) return selftest_packs();
         if (strcmp(argv[a], "--selftest-ptpk") == 0) return selftest_ptpk();
         if (strcmp(argv[a], "--selftest-caps") == 0) return selftest_caps();
+#if PT_CARD
+        if (strcmp(argv[a], "--selftest-library") == 0) return selftest_library();
+        if (strcmp(argv[a], "--selftest-packs-page") == 0) return selftest_packs_page();
+        if (strcmp(argv[a], "--card-shot") == 0 && a + 1 < argc) return packs_page_shot(argv[a + 1]);
+#endif
 #if PT_TERRARIUM   /* terrarium only: their definitions are compiled into that world's bin alone (selftest_packs.c, selftest_l1.c, selftest_walk.c) */
         if (strcmp(argv[a], "--selftest-heat") == 0) return selftest_heat();
         if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
@@ -13665,6 +13684,9 @@ int main(int argc, char **argv) {
 
     tank_entropy = sim_entropy;                       /* fish and tank IDs: the OS (the selftests keep the seeded mix) */
     tank_init(&tank, (uint32_t)SDL_GetTicks() + 7);
+#if PT_CARD
+    adv_bind_tank(&tank);                             /* the PACKS page may pause THIS tank when the pack it lives on is removed (common/advanced.h) */
+#endif
     battery_init(&sim_bat, NULL);
     bool fresh = false, forms = false, fullscreen = false;
     int zoom = 1;                                /* the window at N x the glass (whole pixels only; taps divide back) */
@@ -13837,6 +13859,9 @@ int main(int argc, char **argv) {
             else if (r == ADV_ACT_CELL) printf("advanced: battery %d mAh, charges at %d mA (end of charge %d mA)\n", adv_cell(), adv_charge_ma(adv_cell()), adv_trickle_ma(adv_cell()));
             else if (r == ADV_ACT_FIT) { const touch_fit_t *f = adv_touch_fit(); printf("advanced: touch map %s (x %.3f %+.1f, y %.3f %+.1f)\n", touch_fit_is_none(f) ? "back to the board's own" : "saved", f->ax, f->bx, f->ay, f->by); }
             else if (r == ADV_ACT_TICK) snd(SND_WHEEL_TICK, AUDIO_PITCH_ONE);
+#if PT_CARD
+            else if (r == ADV_ACT_PACKS) { printf("packs: %s\n", pp_message()); snd(SND_CONFIRM, AUDIO_PITCH_ONE); }   /* the pack set changed: installed, updated or removed */
+#endif
         } else if (settings_view && !confirm_view) {             /* the settings page: segments, LIGHTS OUT's arrows, CLOSE */
             int v = 0, r = render_settings_touch(&tank, (float)mx, (float)my, mpress, &v);
             if (r == SET_TAP_CLOSE) { settings_view = false; milestones_view = true; ms_back = true; }   /* back to the milestones page */

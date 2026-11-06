@@ -3,7 +3,7 @@
 A **pack** is one species, one habitat or one model manifest as a file. The engine, the model and the renderer never name a
 species or a habitat; they read the pack (`docs/species-pack.md`, `docs/habitat-pack.md`). Since issue #4 phase 1 a pack is
 a PTPK file: the built-in packs are encoded from their C structs at boot and go through the same loader a pack from a
-folder (the simulator, now) or from the microSD card (phase 4) goes through. One loader, one set of refusals. Phase 2 adds
+folder (the simulator) or from the microSD card (phase 4: `docs/card-library.md`) goes through. One loader, one set of refusals. Phase 2 adds
 capability matching: what a species needs, what a habitat, the firmware and the model provide ("Capabilities" below), and
 the **model manifest** (`kind` 3), the model's own pack, which says which goal words it provides.
 
@@ -13,7 +13,7 @@ This page is the byte-exact contract. `common/packs/ptpk_write.c` writes it (fro
 
 Phase 1 was "format and loader, built-in packs only"; phase 2 is "capability matching". `fmt` stays 1: phase 2 retires the
 records it replaces (0x0003, a pack's world; 0x0105, the walk; their ids stay unused) and adds records, nothing is kept for
-compatibility. Out of scope here and reserved below: the module split (phase 3), the card library (4), switching models (5),
+compatibility. Out of scope here and reserved below: the module split (phase 3), the card library (phase 4, `docs/card-library.md`), switching models (5),
 turtles.
 
 ## The file
@@ -317,9 +317,9 @@ bytes are free to go as soon as the pack is loaded.
 
 - **The pool.** The registry holds loaded packs in a fixed array - no malloc on the device path: this build's built-in
   packs (counted from the table in `common/packs/builtin.h`) plus spare slots for packs found at run time (none in the firmware
-  until the card library of phase 4 needs them - each costs a `species_t` of 576 B and a `habitat_t` of 400 B of `.bss`, and the 1.75C's
-  aquarium runs on a few KB of internal heap; twelve in the simulator). `species_commit` / `habitat_commit` / the manifest registry refuse a
-  pack when it is full.
+  unless it carries the card library, `PT_CARD`: then 2 species, 2 habitats and 1 manifest, 2160 B of `.bss` - each spare costs a
+  `species_t` of 576 B, a `habitat_t` of 404 B or a manifest of 180 B, plus 4 B of CRC, and the 1.75C's aquarium runs on a few KB of
+  internal heap; twelve in the simulator). `species_commit` / `habitat_commit` / the manifest registry refuse a pack when it is full.
 - **Built-in packs.** `common/packs/builtin.c` lists them (manifests and habitats first; a species lists its habitats by uid and names the goals of the manifests). The
   firmware ships no `.ptpk` bytes: only the structs and the encoder. `packs_init()` (idempotent; the firmware calls it
   at boot, the simulator and the tests get it on first use) encodes each entry of this build's table into a buffer on
@@ -340,8 +340,15 @@ bytes are free to go as soon as the pack is loaded.
   spare slot; its tag must be new (the same tag under another uid is refused).
 - **One entry point.** `packs_add(blob, n, origin, ...)` takes the bytes of one file of any kind (species, habitat, model
   manifest): the built-in packs (origin `PACKS_BUILTIN`), the simulator's folder (`POCKET_PACKS_DIR`, default `../packs`,
-  `sim/packs_dir.c`) and the card (phase 4) all call it. It returns `PACKS_ADDED`, `PACKS_SAME` (the identical pack was
-  already there) or `PACKS_REFUSED` with the reason.
+  `sim/packs_dir.c`) and the card library (phase 4: the store's packs at every boot, `common/packs/library.c`) all call it. It returns
+  `PACKS_ADDED`, `PACKS_SAME` (the identical pack was already there) or `PACKS_REFUSED` with the reason.
+- **The dry check.** `packs_dry_check(blob, n, scratch, probe, why, n)` (`common/packs/ptpk.h`) answers what `packs_add` WOULD do with a
+  file and commits nothing: `PACKS_DRY_NEW` (a good pack and a free slot), `PACKS_DRY_SAME` (that very file is loaded), `PACKS_DRY_OTHER` (a
+  good pack, another file holds its uid: an update when the holder came from the card), `PACKS_DRY_BAD` (refused; the probe says whether it
+  is a movement module this firmware lacks, a habitat that is not loaded, or no room). It runs the header, the dedupe, every record and
+  the rules on a species / habitat / manifest in the *caller's* memory - the commits run the same `species_admit` / `manifest_admit` - so a
+  card's files can be listed with a verdict each, a pool slot taken by none (`docs/card-library.md`). A bad pack is said to be bad before
+  the pool is said to be full, the one order that differs from `packs_add`'s.
 - **The pair.** `packs_compatible` / `packs_check` / `packs_check_with` / `packs_offered` ("Capabilities") are the questions
   asked of loaded packs; `tank_set_packs` returns false and a reason. The `s_one_world` filter of phase 1 is gone.
 - **The simulator's folder.** Every `*.ptpk` in the folder is offered, manifests and habitats before species; a file with a
@@ -507,3 +514,9 @@ manifest is refused naming it; an unknown REQUIRED capability bit is refused and
 fuzz (bit flips, truncations) is refused; an unmet need behaves like a missing pack (the tank pauses, keeps its uids and
 resumes) with a folder pack. `make check` also builds and runs `tools/ptpk_emit.c` (`make -C sim packs`), so `packs/*.ptpk`
 cannot be stale against the structs.
+
+`./fishsim --selftest-library` (`sim/selftest_library.c`, in the shared list of a build with the card library) holds the card library
+to this page's loader: a card of every kind of file gets a verdict each from the dry check, a pack installed is loaded through
+`packs_add` and again at every boot from the store, and power cut at every write of an install, an update and a remove never leaves
+anything but the state before or the state after. `./fishsim --selftest-packs-page` is the PACKS page's. `docs/card-library.md` has
+the lists.

@@ -1128,6 +1128,27 @@ static bool packs_resume(tank_t *t) {
     mark_dirty();
     return true;
 }
+#if PT_CARD
+/* THE CARD LIBRARY's two calls (progression.h; issue #4 phase 4): the pair the tank lives on is about to lose a pack - it waits for
+   it exactly as a tank loaded from a save that names a pack that is not here does (load_save above): the defaults stand in to be
+   drawn, s_want keeps the pair as it is now - its uids, the built-in packs' one-byte ids, its names - for every save, the tick looks
+   for it once a second (packs_resume). Read from the registry BEFORE the pack goes. The animals are not touched: a paused tank
+   changes nothing, and packs_resume makes the heat and the hides their own again when the pair is back */
+bool progression_pack_leaving(tank_t *t, uint32_t uid) {
+    if (!uid || t->packs_missing) return false;
+    const species_t *sp = tank_species(t); const habitat_t *hb = tank_habitat(t);
+    if (sp->uid != uid && hb->uid != uid) return false;
+    memset(&s_want, 0, sizeof s_want);
+    s_want.species_uid = sp->uid; s_want.habitat_uid = hb->uid;
+    s_want.pack_id = sp->builtin ? sp->id : 0; s_want.habitat_id = hb->builtin ? hb->id : 0;
+    want_name(s_want.species_name, sp->name); want_name(s_want.habitat_name, hb->name);
+    s_resume_in = PACKS_RESUME_S;
+    t->pack_id = SPECIES_DEFAULT; t->habitat_id = HABITAT_DEFAULT; t->packs_missing = true;
+    mark_dirty();
+    return true;
+}
+void progression_pack_arrived(tank_t *t) { if (t->packs_missing) packs_resume(t); }
+#endif
 /* saves: coalesced event saves + heartbeat */
 static void save_window(tank_t *t, float dt) {
     s_since_save += dt; if (s_dirty) s_dirty_since += dt;

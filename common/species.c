@@ -68,6 +68,20 @@ static bool lacks_module(const species_t *p, char *why, size_t n) {
     return true;
 }
 
+/* the rules a pack passes to be loaded once it has its id, apart from the pool: this firmware's movement modules (said first,
+   whichever habitats are loaded), the habitats it lives in (`habitats` derived into THIS copy), species_check. Run on the pool's
+   own slot by species_commit and on a copy in the caller's memory by the dry check (packs_dry_check: the card library lists a file's
+   verdict before it takes a slot) - one set of refusals */
+bool species_admit(species_t *p, bool builtin, char *why, size_t n) {
+    #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
+    p->builtin = builtin;
+    if (lacks_module(p, why, n)) return false;             /* what this firmware can NEVER meet is said first, whichever habitats are loaded */
+    relink(p);
+    if (!p->habitats) REFUSE("it lists %d habitat(s) and none is loaded", p->n_habitat_uids);
+    return species_check(p, why, n);
+    #undef REFUSE
+}
+
 bool species_commit(species_t *p, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
     if (p != &s_pool[s_n] || s_n >= SPECIES_POOL) REFUSE("not the slot the registry gave out");
@@ -83,15 +97,30 @@ bool species_commit(species_t *p, bool builtin, uint8_t legacy_id, uint32_t crc,
         if (id > 249) REFUSE("no free id");
         p->id = (uint8_t)id;
     }
-    p->builtin = builtin;
-    if (lacks_module(p, why, n)) return false;             /* what this firmware can NEVER meet is said first, whichever habitats are loaded */
-    relink(p);
-    if (!p->habitats) REFUSE("it lists %d habitat(s) and none is loaded", p->n_habitat_uids);
-    if (!species_check(p, why, n)) return false;
+    if (!species_admit(p, builtin, why, n)) return false;
     s_crc[s_n] = crc; s_n++;
     return true;
     #undef REFUSE
 }
+
+#if PT_CARD   /* THE CARD LIBRARY's (docs/card-library.md): without it the pools stay as they were and none of this is compiled */
+bool species_room(void) { packs_init(); return s_n < SPECIES_POOL; }
+
+/* a pack that is not built in, out of the pool: the packs after it close up, so a pointer to one of them goes stale - the ids do
+   not: each pack carries its own, so a tank's handle on a pack that stays is still good */
+bool species_remove(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) {
+        if (s_pool[i].uid != uid) continue;
+        if (s_pool[i].builtin) return false;
+        for (int k = i + 1; k < s_n; k++) { s_pool[k - 1] = s_pool[k]; s_crc[k - 1] = s_crc[k]; }
+        s_n--;
+        memset(&s_pool[s_n], 0, sizeof s_pool[s_n]); s_crc[s_n] = 0;
+        return true;
+    }
+    return false;
+}
+#endif
 
 pack_seen_t species_seen(uint32_t uid, uint32_t crc, const char **by) {
     packs_init();

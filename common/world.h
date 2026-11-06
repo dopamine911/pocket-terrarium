@@ -59,6 +59,15 @@ const world_t *world_cur(void);
 #ifndef PT_ALL_PACKS
 #define PT_ALL_PACKS 0
 #endif
+/* THE CARD LIBRARY (issue #4 phase 4, docs/card-library.md): 1 = the build carries the microSD card library - the card port
+ * (common/card.h), the pack store in flash (packs/pstore.h), the library (packs/library.h), the PACKS page under ADVANCED
+ * (packs_page.h) and the pool's spare slots they need (packs/ptpk.h PACKS_SPARE). 0 = none of it is compiled, the pools keep
+ * their size and no page is drawn: a board that cannot use a card has no dead UI. The simulator builds it by default (its
+ * card is a folder: POCKET_CARD_DIR; `make CARD=0` builds without) and the firmware from the Kconfig option
+ * CONFIG_POCKET_TANK_CARD (default n; compile-only, UNVERIFIED on a 1.8 until someone tries it - docs/card-library.md). */
+#ifndef PT_CARD
+#define PT_CARD 0
+#endif
 
 /* ---- THE BRAIN, per world: the model and its tokenizer. Paths are from the repo's root: the sim opens "../" + them
  * (it runs in sim/); the firmware embeds PT_FW_TOKENIZER_<WORLD> (from firmware/, a copy kept in the repo) -

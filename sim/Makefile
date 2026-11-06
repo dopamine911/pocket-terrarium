@@ -64,8 +64,23 @@ else
 $(error NET is 0 or 1, not "$(NET)")
 endif
 
+# THE CARD LIBRARY (issue #4 phase 4, common/world.h PT_CARD; docs/card-library.md): built by default - the simulator's card is a
+# folder (POCKET_CARD_DIR; card_port_sim.c), its pack store a file (POCKET_TANK_PACKSTORE), its PACKS page under ADVANCED. `make CARD=0`
+# builds without it, as ./fishsim*-nocard in build*-nocard/: the configuration of a firmware that leaves CONFIG_POCKET_TANK_CARD off
+# (no PACKS page, no library, its pack pools' size unchanged) - `make CARD=0 check` holds that configuration to every test it still has.
+CARD    ?= 1
+ifeq ($(CARD),1)
+CARDF   := -DPT_CARD=1
+else ifeq ($(CARD),0)
+CARDF   := -DPT_CARD=0
+BUILD   := $(BUILD)-nocard
+OUT     := $(OUT)-nocard
+else
+$(error CARD is 0 or 1, not "$(CARD)")
+endif
+
 # PT_ALL_PACKS is the simulator's cross-world validation inventory (world.h); release firmware links only its world's packs.
-CFLAGS  := $(ROUNDF) $(WORLDF) $(NETF) $(EXTRA_CFLAGS) -DPT_ALL_PACKS=1 -O2 -std=c11 $(ARCH) -I. -I../common -I../common/llm -DLV_CONF_INCLUDE_SIMPLE -DSOUNDS_BIN='"../assets/sounds/sounds.bin"' -DPT_VERSION='"$(shell git describe --always --dirty --exclude='*' 2>/dev/null || echo sim)"' $(SDL_CFLAGS) \
+CFLAGS  := $(ROUNDF) $(WORLDF) $(NETF) $(CARDF) $(EXTRA_CFLAGS) -DPT_ALL_PACKS=1 -O2 -std=c11 $(ARCH) -I. -I../common -I../common/llm -DLV_CONF_INCLUDE_SIMPLE -DSOUNDS_BIN='"../assets/sounds/sounds.bin"' -DPT_VERSION='"$(shell git describe --always --dirty --exclude='*' 2>/dev/null || echo sim)"' $(SDL_CFLAGS) \
            -Wall -Wextra -Wno-unused-parameter -MMD -MP
 LDFLAGS := $(ARCH) $(SDL_LIBS) -lm
 
@@ -81,6 +96,10 @@ APP_SRCS  += ../common/species/gecko.c ../common/species/fish.c ../common/habita
 APP_SRCS  += ../common/terrain.c   # a habitat's ground laid out on a glass: the walk, the heat, the scene, the rules (P2c)
 APP_SRCS  += selftest_packs.c selftest_ptpk.c selftest_caps.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the PTPK format, loader and a tank without its packs (issue #4 phase 1); the capabilities, the model manifests and a pair that cannot run (phase 2); the L1 encoder against the Python fixture (R4)
 APP_SRCS  += selftest_walk.c  # the terrarium's walk, its goals and a free-running census (P2b)
+ifeq ($(CARD),1)   # THE CARD LIBRARY (issue #4 phase 4): the card port, the pack store, the library, the PACKS page; the simulator's card is a folder, its store a file; the tests' fixtures
+APP_SRCS  += ../common/card.c ../common/packs/pstore.c ../common/packs/library.c ../common/packs_page.c card_port_sim.c
+APP_SRCS  += packs_fixture.c selftest_library.c selftest_packs_page.c
+endif
 ifeq ($(WORLD),terrarium)
 APP_SRCS  += sheet_lizard.c   # --lizard-sheet (P3a; the lizard and desert art are the modules' below)
 APP_SRCS  += shot_terrarium.c   # the terrarium as render_tank draws it: --terr-shot, --terr-bench (P3b)
@@ -128,6 +147,10 @@ SELFTESTS_SHARED += --selftest-double-tap   # a double tap never buys: the shop,
 SELFTESTS_SHARED += --selftest-packs        # every pack of both worlds against its rules; this world's pairs held, the other's refused (P2a, P2b)
 SELFTESTS_SHARED += --selftest-ptpk         # the pack file format and its loader: every built-in pack encoded from its const struct, read back equal, the file in packs/ the same; hostile files refused, a folder, a tank without its pack (issue #4 phase 1)
 SELFTESTS_SHARED += --selftest-caps         # capabilities (issue #4 phase 2): what a species needs, a habitat, the firmware and the model provide; the pair check and its reasons, the model manifests, a tank whose pair cannot run
+ifeq ($(CARD),1)
+SELFTESTS_SHARED += --selftest-library     # the card library (issue #4 phase 4): scan, check, install, the pack store across reboots and power cuts, update, remove, a hostile card, a tank on an installed pack
+SELFTESTS_SHARED += --selftest-packs-page  # the PACKS page under ADVANCED on this board: layout inside the glass, taps, installs and removals through the page, paging, the confirm
+endif
 SELFTESTS_AQUARIUM := --selftest --selftest-hunger --selftest-pop --selftest-fry --selftest-sleep --selftest-tend --selftest-llm \
              --selftest-breather --selftest-hold --selftest-depth --selftest-depth-pop --selftest-hold-emerge --selftest-fish-pair --selftest-critter-nav
 SELFTESTS_AQUARIUM += --selftest-shop   # the meals the fish eat at the surface, the pieces
@@ -239,7 +262,7 @@ $(BUILD)/%.o: %.c
 clean:
 	rm -rf build build-round build-watch build-square fishsim fishsim-round fishsim-watch fishsim-square
 	rm -rf build-aquarium build-round-aquarium build-watch-aquarium build-square-aquarium fishsim-aquarium fishsim-round-aquarium fishsim-watch-aquarium fishsim-square-aquarium
-	rm -rf build*-net fishsim*-net build-release
+	rm -rf build*-net fishsim*-net build*-nocard fishsim*-nocard build-release
 
 -include $(OBJS:.o=.d) $(EMIT_OBJS:.o=.d)
 

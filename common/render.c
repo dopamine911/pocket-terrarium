@@ -5,6 +5,7 @@
 #include "render.h"
 #include "pt_util.h"
 #include "advanced.h"
+#include "card.h"
 #include "icons.h"
 #include "progression.h"
 #include "collection.h"
@@ -3429,11 +3430,17 @@ void render_advanced(uint16_t *fb, int stride, int pick_mah, int pick_ma, int se
         snprintf(txt, sizeof txt, "NOW %d MAH", set_mah);
         draw_text(&c, SET_LABEL_X, ADV_SET_Y + (ADV_SET_H - 14) / 2, 2, MSP_QUIET, txt);
     } else draw_text(&c, SET_LABEL_X, y + SET_SEG_H + 32, 2, MSP_QUIET, "MATCH THE SIZE ON YOUR BATTERY");
+#if PT_CARD
+    if (card_slot()) button(&c, SET_UPD_X, SET_FOOT_Y, SET_UPD_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, "PACKS", 2);   /* only a board with a card slot (card.h) */
+#endif
     button(&c, SET_CLOSE_X, SET_FOOT_Y, MSP_CLOSE_W, MSP_CLOSE_H, 0x1c2f36, MSP_TEAL, "BACK", 2);
 }
 int render_advanced_tap(float x, float y) {
     x -= PAGE_X; y -= PAGE_Y;
     if (x >= SET_CLOSE_X - 8 && y >= SET_FOOT_Y - 4) return ADV_HIT_BACK;
+#if PT_CARD
+    if (card_slot() && x >= SET_UPD_X - 8 && x < SET_UPD_X + SET_UPD_W + 8 && y >= SET_FOOT_Y - 4) return ADV_HIT_PACKS;   /* the foot's left slot: the card library (packs_page.h) */
+#endif
     if (x < SET_SEG_X - 10) return ADV_HIT_NONE;
     if (y >= SET_SEG_Y(SET_ROW1_Y) - 12 && y < SET_SEG_Y(SET_ROW1_Y) + SET_SEG_H + 12) return ADV_HIT_CALIBRATE;
     if (y >= SET_SEG_Y(ADV_BAT_ROW) - 12 && y < SET_SEG_Y(ADV_BAT_ROW) + SET_SEG_H + 12)

@@ -46,6 +46,13 @@ model_manifest_t *manifest_slot(void);
 bool manifest_commit(model_manifest_t *slot, bool builtin, uint32_t crc, char *why, size_t n);
 pack_seen_t manifest_seen(uint32_t uid, uint32_t crc, const char **by);
 void manifest_drop_loaded(void);
+/* THE CARD LIBRARY's, as species.h's: manifest_room; manifest_admit - the rules manifest_commit runs after the uid test (its tag held by no
+   other manifest, manifest_check) on a manifest in the caller's memory; manifest_remove */
+#if PT_CARD
+bool manifest_room(void);
+bool manifest_admit(const model_manifest_t *m, char *why, size_t n);
+bool manifest_remove(uint32_t uid);
+#endif
 /* a manifest's own rules: a name, a tag of 1..15 characters of [A-Za-z0-9._-], 1..8 goal words, each of [a-z][a-z0-9_]* (1..15
    characters), none twice (ptpk_write.h ptpk_tag_ok, ptpk_goal_ok). false with the first broken rule in why */
 bool manifest_check(const model_manifest_t *m, char *why, size_t n);

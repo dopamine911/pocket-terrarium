@@ -176,6 +176,18 @@ const char *progression_packs_missing_name(const tank_t *t);
  * CLIMB", "ANOTHER HABITAT") - the card then says PACK NEEDS <it> instead of PACK MISSING. "" when a pack is not here, or the
  * tank is not waiting. The tank resumes the moment the need is met */
 const char *progression_packs_need(const tank_t *t);
+#if PT_CARD
+/* THE CARD LIBRARY's two calls on the tank (issue #4 phase 4, packs/library.h): the PACKS page is about to take a pack out of
+ * the registry (REMOVE, or the old version of an UPDATE). If the tank lives on it - its species or its habitat - the tank is
+ * made to wait for it exactly as a save that names a pack that is not here does: paused (PACK MISSING), the defaults drawn
+ * in its place, its pair's uids and names kept for every save until the pack is there again; returns true when it did. A
+ * tank that is already waiting, or does not live on that pack, is left alone (false). Call it BEFORE the registry changes -
+ * the pair is read from the registry as it stands */
+bool progression_pack_leaving(tank_t *t, uint32_t uid);
+/* ... and packs were put in the registry (INSTALL, UPDATE): a tank that waits for a pack looks for it now rather than at the
+ * next second's look (progression_tick's). It resumes at once when the pair can run */
+void progression_pack_arrived(tank_t *t);
+#endif
 bool progression_arrival_pending(void);
 float progression_age_s(const tank_t *t, int idx);        /* grown seconds */
 /* director/debug: put a fish's tended clock at `seconds` and apply the stage

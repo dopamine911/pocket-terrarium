@@ -560,7 +560,7 @@ void render_settings(const tank_t *t, uint16_t *fb, int stride, int bright_pct, 
  * n, its centre in FRAME px - as the panel reports), and the check that
  * keeps the new map: one more cross before secs_left runs out. */
 enum { ADV_HIT_NONE = 0, ADV_HIT_BACK, ADV_HIT_CALIBRATE, ADV_HIT_PREV, ADV_HIT_NEXT, ADV_HIT_SET,
-       ADV_HIT_BOX, ADV_HIT_CANCEL, ADV_HIT_CONTINUE, ADV_HIT_START, ADV_HIT_RESET };
+       ADV_HIT_BOX, ADV_HIT_CANCEL, ADV_HIT_CONTINUE, ADV_HIT_START, ADV_HIT_RESET, ADV_HIT_PACKS };
 void render_advanced(uint16_t *fb, int stride, int pick_mah, int pick_ma, int set_mah, bool stock, bool fast);
 int  render_advanced_tap(float x, float y);
 void render_battery_warning(uint16_t *fb, int stride, int cell_mah, int charge_ma, bool checked);

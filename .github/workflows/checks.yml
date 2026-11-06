@@ -42,6 +42,29 @@ jobs:
           [ -f model/out/model_q4.bin ] || { echo "no model in this checkout: the LLM selftest is skipped"; flags="$flags NOMODEL=1"; }
           make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} $flags check check-net
 
+  # The shipped configuration: every image leaves the card library off (CONFIG_POCKET_TANK_CARD, docs/card-library.md), so its pack pools,
+  # its ADVANCED page and its tests are what they were before the library. The legs above build with the library on (sim/Makefile CARD=1).
+  sim-nocard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        world: [terrarium, aquarium]
+    name: sim ${{ matrix.world }} no card library
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install simulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+          git clone --depth 1 --branch v9.2.2 https://github.com/lvgl/lvgl.git sim/lvgl
+      - name: Build and test the simulator without the card library
+        run: |
+          flags=
+          [ -f model/out/model_q4.bin ] || { echo "no model in this checkout: the LLM selftest is skipped"; flags="NOMODEL=1"; }
+          make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} CARD=0 $flags check
+
   # what a release image carries (sim/release_check.c: one world's packs, its own capabilities): the common sources only
   release-packs:
     runs-on: ubuntu-latest

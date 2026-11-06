@@ -63,4 +63,85 @@ menu "pocket-tank"
         default n
         help
             Enable for a QEMU build if the emulator lacks ESP32-S3 PIE support.
+    config POCKET_TANK_CARD
+        bool "microSD card library for the 1.8 (compile-only, UNVERIFIED on hardware)"
+        default n
+        depends on POCKET_TANK_DISPLAY_SH8601 && !POCKET_TANK_ROUND && !POCKET_TANK_WATCH && !POCKET_TANK_SQUARE
+        help
+            The card library (issue #4, phase 4): the 1.8's microSD slot as a
+            library of packs. The PACKS page under ADVANCED lists the PTPK
+            files in /packs on the card, checks them before use, installs
+            them into the board's own flash (the `storage` partition, 0x6000
+            to 0x10000) so a tank never depends on the card being in its
+            slot, and removes them. The card is only ever read: never
+            written, never formatted. On = PT_CARD 1 (common/world.h): the
+            card port (main/card_port_sh8601.c), the pack store, the library
+            and the PACKS page are compiled in, with the spare pack slots
+            they need.
+
+            NO SHIPPED IMAGE ENABLES THIS. It has never run on a board: the
+            port is written from the vendor's schematic and BSP and
+            compiled, nothing more. docs/card-library.md says what is
+            sourced and what is not; docs/board-amoled-1.8-card.md is the
+            bench test that would settle it. The 1.8 only: its slot is on
+            GPIO 1, 2 and 3 and the expander's EXIO7, pins the other boards
+            use for something else, so the option is not offered for them
+            and the port refuses to start unless the 1.8 answered on I2C.
+
+            It needs FAT long file names (sdkconfig.defaults sets
+            CONFIG_FATFS_LFN_HEAP: a .ptpk name has a four-letter
+            extension) and a FAT12/16/32 card - an exFAT card, the usual
+            factory format from 64 GB, is not readable: format it FAT32.
+    config POCKET_TANK_CARD_SPI
+        bool "Card library: reach the card in SPI mode (sdspi on SPI3_HOST) instead of SDMMC 1-bit"
+        default n
+        depends on POCKET_TANK_CARD
+        help
+            An ALTERNATIVE to try if the card does not mount the vendor's
+            way (SDMMC, 1 bit: the default). The card is reached over SPI
+            on SPI3_HOST (the display has SPI2) and its chip select, the
+            expander's EXIO7, is held LOW for the whole visit
+            (board_sd_select(true); the sdspi driver is given no
+            chip-select pin). Equally UNVERIFIED on hardware.
+
+            A card that has seen EXIO7 low at CMD0 stays in SPI mode until
+            its power is cycled and will not answer SDMMC after: once this
+            has been tried, take the card out and put it back before going
+            back to SDMMC.
+    config POCKET_TANK_CARD_PIN_CLK
+        int "Card CLK (SCK in SPI mode) GPIO"
+        default 2
+        range 0 48
+        depends on POCKET_TANK_CARD
+        help
+            The slot's clock: net SCK in the SD-CARD block of the vendor's
+            schematic (ESP32-S3-Touch-AMOLED-1.8.pdf) and BSP_SD_CLK
+            (GPIO_NUM_2) in the vendor's BSP (bsp/esp32_s3_touch_amoled_1_8).
+            UNVERIFIED on this repo's hardware. Not a pin the board uses:
+            0 (BOOT), 4-9, 11, 12, 14-16, 21, 45, 46 are the display, I2C,
+            touch, audio and the amp's (main/board_pins.h; the build
+            refuses the display, I2C and touch ones).
+    config POCKET_TANK_CARD_PIN_CMD
+        int "Card CMD (MOSI in SPI mode) GPIO"
+        default 1
+        range 0 48
+        depends on POCKET_TANK_CARD
+        help
+            The slot's command line: net MOSI (= the card's CMD) in the
+            SD-CARD block of the vendor's schematic and BSP_SD_CMD
+            (GPIO_NUM_1) in the vendor's BSP. UNVERIFIED on this repo's
+            hardware. Not a pin the board uses (see the CLK pin's help).
+    config POCKET_TANK_CARD_PIN_D0
+        int "Card D0 (MISO in SPI mode) GPIO"
+        default 3
+        range 0 48
+        depends on POCKET_TANK_CARD
+        help
+            The slot's data line 0: net MISO (= the card's D0) in the
+            SD-CARD block of the vendor's schematic and BSP_SD_D0
+            (GPIO_NUM_3) in the vendor's BSP. UNVERIFIED on this repo's
+            hardware. Not a pin the board uses (see the CLK pin's help).
+            The card's chip select (SDCS = CD/DAT3) is not a GPIO: it is
+            bit 7 of the TCA9554 expander's output register at I2C 0x20
+            (EXIO7, main/board_pins.h) - fixed, not configurable here.
 endmenu

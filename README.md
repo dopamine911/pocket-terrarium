@@ -11,6 +11,12 @@ Differences from upstream:
 - **Its own storage identity**: NVS namespace `terr`, its own shelf and board
   markers, sim state in `~/.cache/pocket-terrarium`. It never reads a
   pocket-tank's save, and a pocket-tank never takes its images.
+- **Packs from a microSD card** (issue #4 phase 4, [docs/card-library.md](docs/card-library.md)): ADVANCED > PACKS lists the `.ptpk`
+  files in `/packs/` on the card, checks each against the loader's own rules, installs the good ones into flash (so the card can come
+  out) and removes them again. Proven in the simulator, where the card is a folder (`POCKET_CARD_DIR=<root>`, packs in
+  `<root>/packs/`; `make CARD=0` builds without it). The 1.8's driver is **compile-only and unverified** - behind the Kconfig option
+  `CONFIG_POCKET_TANK_CARD`, off in every image that ships; [docs/board-amoled-1.8-card.md](docs/board-amoled-1.8-card.md) says what is
+  sourced, what is not, and how to try it on a 1.8.
 - Builds on ESP-IDF 5.5 as well as 5.4.
 
 pocket-tank is licensed under the PolyForm Noncommercial License 1.0.0
