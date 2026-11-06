@@ -25,14 +25,35 @@
 #if PT_WORLD != PT_WORLD_AQUARIUM && PT_WORLD != PT_WORLD_TERRARIUM
 #error "PT_WORLD is PT_WORLD_AQUARIUM (1) or PT_WORLD_TERRARIUM (2)"
 #endif
-#define PT_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)   /* 1 in the terrarium's bin, 0 in the aquarium's; use #if for world-owned code */
-#define PT_WORLD_NAME (PT_TERRARIUM ? "terrarium" : "aquarium")
+/* THE ONE PLACE the build's world is picked (issue #4 phase 3): everything below that is a constant before the C compiler runs
+ * - the model's and the tokenizer's file names, its identity in version.h - is the world's own PT_<THING>_<KEY> constant,
+ * chosen with PT_WORLD_KEY through PT_PICK(). The step that builds both worlds into one image turns this block into the
+ * default world's pick and nothing around it changes: the engine's per-world decisions run through world_cur() (below). */
+#if PT_WORLD == PT_WORLD_AQUARIUM
+#define PT_WORLD_KEY  AQUARIUM
+#define PT_WORLD_NAME "aquarium"
+#else
+#define PT_WORLD_KEY  TERRARIUM
+#define PT_WORLD_NAME "terrarium"
+#endif
+#define PT_CAT_(a, b)   a##b
+#define PT_CAT(a, b)    PT_CAT_(a, b)
+#define PT_PICK(prefix) PT_CAT(prefix, PT_WORLD_KEY)   /* PT_PICK(PT_MODEL_TAG_): this world's constant */
+#define PT_TERRARIUM (PT_WORLD == PT_WORLD_TERRARIUM)   /* 1 in the terrarium's bin, 0 in the aquarium's (still read by the slices not yet through world_cur()) */
 /* the words a keeper reads, per world (P5): WORLD_STR("TWO FRY", "TWO HATCHLINGS") is the aquarium's in its bin and the
  * terrarium's in its own - a constant choice, folded away like icons.h WORLD_ICON, so the aquarium's text is pocket-tank's.
  * Whole phrases, never spliced words: each world's line is written (and fitted to its box) on its own. The terrarium says
  * LIZARD for fish, HATCHLING for fry, TERRARIUM for tank, SMUDGES for algae, PLANTS for grass, CRICKETS for pellets and
  * DESERT ROSES for sand dollars. */
 #define WORLD_STR(aquarium, terrarium) (PT_TERRARIUM ? (terrarium) : (aquarium))
+
+/* THE WORLD MODULE (issue #4 phase 3, world_ops.h): the engine's per-world decisions - the shop's effects, the fry's gates,
+ * the badges, the first-run pages, the words - are one descriptor per world, defined in common/worlds/<world>/world.c.
+ * world_cur() is the descriptor of the world the tank in hand lives in; engine files ask it and never ask which world it is.
+ * (A bin builds one world today, so it is that world's. The macros in this header stay only for what must be a constant
+ * before the C compiler runs: the model's and the tokenizer's file names, the packs a bin links, the firmware shell.) */
+typedef struct world_s world_t;
+const world_t *world_cur(void);
 /* Test/tool builds may carry both worlds' const packs to validate the boundary. Release bins leave this 0 and link
  * only their own pack sources (firmware/components/tankcore/CMakeLists.txt). */
 #ifndef PT_ALL_PACKS
@@ -52,12 +73,7 @@
 #define PT_MODEL_FILE_TERRARIUM     "model/out/model_q4_lizard.bin"
 #define PT_TOKENIZER_FILE_TERRARIUM "model/out/tokenizer_lizard.bin"
 #define PT_FW_TOKENIZER_TERRARIUM   "main/tokenizer_lizard.bin"
-#if PT_TERRARIUM
-#define PT_MODEL_FILE     PT_MODEL_FILE_TERRARIUM
-#define PT_TOKENIZER_FILE PT_TOKENIZER_FILE_TERRARIUM
-#else
-#define PT_MODEL_FILE     PT_MODEL_FILE_AQUARIUM
-#define PT_TOKENIZER_FILE PT_TOKENIZER_FILE_AQUARIUM
-#endif
+#define PT_MODEL_FILE     PT_PICK(PT_MODEL_FILE_)
+#define PT_TOKENIZER_FILE PT_PICK(PT_TOKENIZER_FILE_)
 
 #endif
