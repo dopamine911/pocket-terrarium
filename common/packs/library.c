@@ -72,8 +72,8 @@ const lib_inst_t *library_installed_at(int i) {
     s_inst[i].loaded = in_registry(s_inst[i].kind, s_inst[i].uid);      /* (live: a test's packs_drop_loaded, or a pack loaded since the boot) */
     return &s_inst[i];
 }
-const lib_inst_t *library_installed_uid(uint32_t uid) {
-    for (int i = 0; uid && i < s_n_inst; i++) if (s_inst[i].uid == uid) return library_installed_at(i);
+const lib_inst_t *library_installed_uid(int kind, uint32_t uid) {
+    for (int i = 0; uid && i < s_n_inst; i++) if (s_inst[i].uid == uid && s_inst[i].kind == kind) return library_installed_at(i);
     return NULL;
 }
 int library_free(void) { return pstore_free(); }
@@ -124,7 +124,7 @@ bool library_installed_why(lib_work_t *w, const lib_inst_t *p, char *why, size_t
     pstore_rec_t r;
     char text[LIB_WHY_MAX];
     packs_probe_t pr;
-    if (!pstore_find(p->uid, &r)) { say(why, n, "NOT IN THE STORE"); return true; }
+    if (!pstore_find(p->kind, p->uid, &r)) { say(why, n, "NOT IN THE STORE"); return true; }
     const int len = pstore_read(&r, w->file, sizeof w->file);
     if (len < 0) { say(why, n, "ITS SECTOR DOES NOT READ TRUE"); return true; }
     text[0] = 0;
@@ -153,13 +153,13 @@ static void row_verdict(lib_row_t *row, packs_dry_t r, const packs_probe_t *pr, 
         return;
     case PACKS_DRY_SAME:
         if (pr->held_builtin) { row->status = LIB_BUILTIN; say(row->why, sizeof row->why, "THE FIRMWARE HAS THIS PACK"); }
-        else if (pstore_find(pr->uid, NULL)) row->status = LIB_INSTALLED;
+        else if (pstore_find(pr->kind, pr->uid, NULL)) row->status = LIB_INSTALLED;
         else row->status = pstore_free() > 0 ? LIB_INSTALLABLE : LIB_REFUSED;     /* loaded from elsewhere (the simulator's folder): installing makes it permanent */
         if (row->status == LIB_REFUSED) say(row->why, sizeof row->why, "THE STORE IS FULL: REMOVE A PACK FIRST");
         return;
     case PACKS_DRY_OTHER:
         if (pr->held_builtin) { row->status = LIB_REFUSED; say(row->why, sizeof row->why, "A BUILT-IN PACK HAS THIS UID: ANOTHER FILE CANNOT TAKE IT"); }
-        else if (pstore_find(pr->uid, NULL)) { row->status = pstore_free() > 0 ? LIB_UPDATE : LIB_REFUSED; if (row->status == LIB_REFUSED) say(row->why, sizeof row->why, "THE STORE IS FULL: REMOVE A PACK FIRST"); }
+        else if (pstore_find(pr->kind, pr->uid, NULL)) { row->status = pstore_free() > 0 ? LIB_UPDATE : LIB_REFUSED; if (row->status == LIB_REFUSED) say(row->why, sizeof row->why, "THE STORE IS FULL: REMOVE A PACK FIRST"); }
         else { row->status = LIB_REFUSED; say(row->why, sizeof row->why, "ANOTHER PACK ALREADY LOADED HAS THIS UID"); }
         return;
     case PACKS_DRY_NEW:
@@ -217,11 +217,11 @@ lib_result_t library_add(lib_work_t *w, const uint8_t *file, size_t n, char *msg
         return LIB_FAILED; }
     case PACKS_DRY_SAME:
         if (pr.held_builtin) { say(msg, msg_n, "THE FIRMWARE HAS THIS PACK"); return LIB_FAILED; }
-        if (pstore_find(pr.uid, NULL)) { say(msg, msg_n, "%s IS INSTALLED ALREADY", pr.name); return LIB_DONE_SAME; }
+        if (pstore_find(pr.kind, pr.uid, NULL)) { say(msg, msg_n, "%s IS INSTALLED ALREADY", pr.name); return LIB_DONE_SAME; }
         break;                                                 /* loaded from elsewhere: kept in the store below, the registry already has it */
     case PACKS_DRY_OTHER:
         if (pr.held_builtin) { say(msg, msg_n, "A BUILT-IN PACK HAS THIS UID"); return LIB_FAILED; }
-        if (!pstore_find(pr.uid, NULL)) { say(msg, msg_n, "ANOTHER PACK ALREADY LOADED HAS THIS UID"); return LIB_FAILED; }
+        if (!pstore_find(pr.kind, pr.uid, NULL)) { say(msg, msg_n, "ANOTHER PACK ALREADY LOADED HAS THIS UID"); return LIB_FAILED; }
         update = true;
         break;
     case PACKS_DRY_NEW:
@@ -234,7 +234,7 @@ lib_result_t library_add(lib_work_t *w, const uint8_t *file, size_t n, char *msg
        between the two loses only RAM: the store still holds what it held. A file the registry has already (PACKS_DRY_SAME: loaded from
        elsewhere, the simulator's folder) goes into the store alone. w->file is free for the restore: a failing add is done with `file` */
     pstore_rec_t old_rec;
-    const bool had_old = update && pstore_find(pr.uid, &old_rec);
+    const bool had_old = update && pstore_find(pr.kind, pr.uid, &old_rec);
     char why2[LIB_WHY_MAX]; why2[0] = 0;
     if (update) registry_remove(pr.kind, pr.uid);
     if (r != PACKS_DRY_SAME && packs_add(file, n, PACKS_FILE, NULL, why, sizeof why) == PACKS_REFUSED) {
@@ -276,7 +276,7 @@ lib_result_t library_install(lib_work_t *w, int i, char *msg, size_t msg_n) {
 static const char *dependent_of(int kind, uint32_t uid, bool *by_goal) {
     for (int i = 0; i < species_count(); i++) {
         const species_t *s = species_at(i);
-        if (s->builtin || !pstore_find(s->uid, NULL)) continue;
+        if (s->builtin || !pstore_find(PTPK_KIND_SPECIES, s->uid, NULL)) continue;
         if (kind == PTPK_KIND_HABITAT) {
             bool lists = false; int others = 0;
             for (int k = 0; k < s->n_habitat_uids && k < SPECIES_HABITATS_MAX; k++) {
@@ -296,20 +296,20 @@ static const char *dependent_of(int kind, uint32_t uid, bool *by_goal) {
     }
     return NULL;
 }
-bool library_removable(uint32_t uid, char *why, size_t why_n) {
+bool library_removable(int kind, uint32_t uid, char *why, size_t why_n) {
     pstore_rec_t r;
-    if (!pstore_find(uid, &r)) { say(why, why_n, "NOT INSTALLED FROM THE CARD"); return false; }
+    if (!pstore_find(kind, uid, &r)) { say(why, why_n, "NOT INSTALLED FROM THE CARD"); return false; }
     bool goal = false;
     const char *dep = dependent_of(r.kind, uid, &goal);
     if (dep) { say(why, why_n, goal ? "%s NEEDS ITS GOAL WORDS: REMOVE IT FIRST" : "%s LIVES IN IT: REMOVE IT FIRST", dep); return false; }
     return true;
 }
-bool library_remove(uint32_t uid, char *why, size_t why_n) {
-    if (!library_removable(uid, why, why_n)) return false;
+bool library_remove(int kind, uint32_t uid, char *why, size_t why_n) {
+    if (!library_removable(kind, uid, why, why_n)) return false;
     pstore_rec_t r;
-    pstore_find(uid, &r);
+    pstore_find(kind, uid, &r);
     char name[PACK_NAME_MAX]; peek_name(&r, name);
-    if (!pstore_remove(uid)) { say(why, why_n, "THE FLASH REFUSED IT"); return false; }     /* (nothing else has changed: the pack is still loaded and listed) */
+    if (!pstore_remove(kind, uid)) { say(why, why_n, "THE FLASH REFUSED IT"); return false; }     /* (nothing else has changed: the pack is still loaded and listed) */
     registry_remove(r.kind, uid);
     rebuild();
     printf("library: %s %s (uid %08x) removed\n", kind_word(r.kind), name, (unsigned)uid);

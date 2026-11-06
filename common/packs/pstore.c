@@ -51,9 +51,9 @@ int pstore_boot(void) {
         printf("pstore: sector %d does not read true (a torn or damaged write): dropped\n", k);
         pstore_port_erase(k);                              /* gone for good: never loaded, and the sector is free again */
     }
-    for (int i = 0; i < PSTORE_SECTORS; i++)               /* an update cut between its two steps: one uid in two sectors - the newer stays */
+    for (int i = 0; i < PSTORE_SECTORS; i++)               /* an update cut between its two steps: one (kind, uid) in two sectors - the newer stays */
         for (int j = i + 1; j < PSTORE_SECTORS && s_slot[i].valid; j++) {
-            if (!s_slot[j].valid || s_slot[j].uid != s_slot[i].uid) continue;
+            if (!s_slot[j].valid || s_slot[j].uid != s_slot[i].uid || s_slot[j].kind != s_slot[i].kind) continue;
             const int old = s_slot[i].seq < s_slot[j].seq ? i : j;
             printf("pstore: uid %08x is in sectors %d and %d (an update was cut short): the older one dropped\n", (unsigned)s_slot[i].uid, i, j);
             pstore_port_erase(old);
@@ -69,8 +69,8 @@ bool pstore_at(int i, pstore_rec_t *out) {
     for (int k = 0; k < PSTORE_SECTORS; k++) if (s_slot[k].valid && i-- == 0) { rec_of(k, out); return true; }
     return false;
 }
-bool pstore_find(uint32_t uid, pstore_rec_t *out) {
-    for (int k = 0; uid && k < PSTORE_SECTORS; k++) if (s_slot[k].valid && s_slot[k].uid == uid) { if (out) rec_of(k, out); return true; }
+bool pstore_find(int kind, uint32_t uid, pstore_rec_t *out) {
+    for (int k = 0; uid && k < PSTORE_SECTORS; k++) if (s_slot[k].valid && s_slot[k].uid == uid && s_slot[k].kind == kind) { if (out) rec_of(k, out); return true; }
     return false;
 }
 
@@ -78,7 +78,7 @@ int pstore_read(const pstore_rec_t *r, uint8_t *buf, size_t cap) {
     if (!r || r->sector < 0 || r->sector >= PSTORE_SECTORS) return -1;
     uint8_t h[PSTORE_HEADER];
     slot_t s;
-    if (!pstore_port_read(sector_off(r->sector), h, sizeof h) || !header_ok(h, &s) || s.uid != r->uid || s.seq != r->seq) return -1;   /* (the sector has changed since the record was made) */
+    if (!pstore_port_read(sector_off(r->sector), h, sizeof h) || !header_ok(h, &s) || s.uid != r->uid || s.kind != r->kind || s.seq != r->seq) return -1;   /* (the sector has changed since the record was made) */
     return read_file(r->sector, &s, buf, cap) ? (int)s.len : -1;
 }
 
@@ -90,7 +90,7 @@ bool pstore_put(uint32_t uid, int kind, const uint8_t *file, size_t n, char *why
     if (!ptpk_open(file, n, &ph, NULL, 0) || ph.uid != uid || ph.kind != kind) return fail(why, why_n, "NOT THAT PACK'S FILE");
     int old = -1, fresh = -1;
     for (int k = 0; k < PSTORE_SECTORS; k++) {
-        if (s_slot[k].valid && s_slot[k].uid == uid) old = k;
+        if (s_slot[k].valid && s_slot[k].uid == uid && s_slot[k].kind == kind) old = k;
         else if (!s_slot[k].valid && fresh < 0) fresh = k;
     }
     if (fresh < 0) return fail(why, why_n, "THE STORE IS FULL: REMOVE A PACK FIRST");
@@ -111,9 +111,9 @@ bool pstore_put(uint32_t uid, int kind, const uint8_t *file, size_t n, char *why
     return true;
 }
 
-bool pstore_remove(uint32_t uid) {
+bool pstore_remove(int kind, uint32_t uid) {
     for (int k = 0; uid && k < PSTORE_SECTORS; k++) {
-        if (!s_slot[k].valid || s_slot[k].uid != uid) continue;
+        if (!s_slot[k].valid || s_slot[k].uid != uid || s_slot[k].kind != kind) continue;
         if (!pstore_port_erase(k)) return false;
         s_slot[k].valid = 0;
         return true;

@@ -16,7 +16,7 @@
  * A write is: erase a free sector, program the file at 32, program the header at 0 LAST. Before the header is whole the sector
  * is blank or torn and reads as nothing; a sector whose header fails its CRC, or whose file does not pass ptpk_open, is erased at
  * the next boot, never loaded. An UPDATE writes the new version into a second sector (a higher seq) and only then erases the
- * first: a cut between leaves two sectors of one uid, and the boot keeps the higher seq and erases the other. A REMOVE is an erase.
+ * first: a cut between leaves two sectors of one (kind, uid), and the boot keeps the higher seq and erases the other. A REMOVE is an erase.
  *
  * The flash is the platform's (the ports below: persist_port_esp.c over the partition, persist_port_sim.c over a file
  * POCKET_TANK_PACKSTORE, which the simulator's selftests may cut the power of, shelf_port_sim_cut). Built only when PT_CARD. */
@@ -41,13 +41,15 @@ bool pstore_port_erase(int sector);                                /* one 4 KB s
 
 typedef struct { int sector; uint32_t uid, seq; uint8_t kind; uint16_t len; } pstore_rec_t;
 
-/* the boot's look at the flash: every sector read, the valid ones listed (a uid in two sectors: the higher seq stays, the
+/* the boot's look at the flash: every sector read, the valid ones listed (a (kind, uid) in two sectors: the higher seq stays, the
  * other is erased), every other sector that is not blank erased (a torn write, a flipped bit - dropped, never loaded).
  * Returns how many records. Idempotent: it may be run again (a test's reboot) */
 int  pstore_boot(void);
 int  pstore_count(void);                             /* the records, as the last boot / write left them */
 bool pstore_at(int i, pstore_rec_t *out);            /* record i in order of sector */
-bool pstore_find(uint32_t uid, pstore_rec_t *out);   /* the record of this uid, if there is one */
+/* A pack's identity is (kind, uid): docs/ptpk.md - a uid identifies a pack among the packs of its kind, and a species and a habitat may
+ * share one. Every lookup, update and removal below is by both */
+bool pstore_find(int kind, uint32_t uid, pstore_rec_t *out);   /* the record of this pack, if there is one */
 int  pstore_free(void);                              /* sectors a new pack could go into */
 /* record r's file into buf (cap bytes): its length, or -1 when the sector no longer reads true (its CRC is checked again) */
 int  pstore_read(const pstore_rec_t *r, uint8_t *buf, size_t cap);
@@ -55,6 +57,6 @@ int  pstore_read(const pstore_rec_t *r, uint8_t *buf, size_t cap);
  * already here in a second one and the first erased. false with why ("THE STORE IS FULL", "THE FLASH REFUSED IT") leaves what was
  * here as it was - a power cut anywhere in it too */
 bool pstore_put(uint32_t uid, int kind, const uint8_t *file, size_t n, char *why, size_t why_n);
-bool pstore_remove(uint32_t uid);                    /* the pack's sector erased; true when it is gone (or never was here) */
+bool pstore_remove(int kind, uint32_t uid);          /* the pack's sector erased; true when it is gone (or never was here) */
 #endif
 #endif

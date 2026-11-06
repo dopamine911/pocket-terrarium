@@ -39,6 +39,7 @@ bool pf_rec_find(const pf_blob_t *k, unsigned id, size_t *at, size_t *vlen) {
     }
     return false;
 }
+int pf_kind(const pf_blob_t *k) { return k->b[5]; }
 uint32_t pf_uid(const pf_blob_t *k) { return pf_rd32(k->b + 8); }
 void pf_fix(pf_blob_t *k) {
     size_t at, l;

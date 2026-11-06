@@ -90,7 +90,7 @@ typedef enum {
 int  library_boot(void);
 int  library_installed_count(void);
 const lib_inst_t *library_installed_at(int i);         /* in order of sector; NULL past the end */
-const lib_inst_t *library_installed_uid(uint32_t uid);
+const lib_inst_t *library_installed_uid(int kind, uint32_t uid);   /* a pack's identity is (kind, uid): a species and a habitat may share a uid */
 bool library_installed_why(lib_work_t *w, const lib_inst_t *p, char *why, size_t n);   /* why one that is NOT LOADED is not (the loader's words, from its file again, in w's buffers); false: it is loaded */
 int  library_free(void);                               /* packs that can still be installed: the store's free sectors */
 
@@ -103,7 +103,7 @@ lib_result_t library_install(lib_work_t *w, int i, char *msg, size_t msg_n);
 lib_result_t library_add(lib_work_t *w, const uint8_t *file, size_t n, char *msg, size_t msg_n);   /* w: its scratch is the check's */
 /* REMOVE: the pack's sector erased and the pack out of the registry. false with why when it cannot be: not installed, built in,
  * another installed pack depends on it ("LEOPARD GECKO LIVES IN IT: REMOVE IT FIRST"), the flash refused */
-bool library_remove(uint32_t uid, char *why, size_t why_n);
-bool library_removable(uint32_t uid, char *why, size_t why_n);   /* the same refusals, nothing done: the page asks before it confirms */
+bool library_remove(int kind, uint32_t uid, char *why, size_t why_n);
+bool library_removable(int kind, uint32_t uid, char *why, size_t why_n);   /* the same refusals, nothing done: the page asks before it confirms */
 #endif
 #endif

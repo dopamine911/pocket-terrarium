@@ -183,7 +183,7 @@ const char *progression_packs_need(const tank_t *t);
  * in its place, its pair's uids and names kept for every save until the pack is there again; returns true when it did. A
  * tank that is already waiting, or does not live on that pack, is left alone (false). Call it BEFORE the registry changes -
  * the pair is read from the registry as it stands */
-bool progression_pack_leaving(tank_t *t, uint32_t uid);
+bool progression_pack_leaving(tank_t *t, int kind, uint32_t uid);   /* kind: PTPK_KIND_SPECIES / _HABITAT - a species and a habitat may share a uid */
 /* ... and packs were put in the registry (INSTALL, UPDATE): a tank that waits for a pack looks for it now rather than at the
  * next second's look (progression_tick's). It resumes at once when the pair can run */
 void progression_pack_arrived(tank_t *t);

@@ -330,7 +330,7 @@ static int t_update_remove(void) {
     if (install_file("v2.ptpk") != LIB_DONE_UPDATED || !has(s_msg, "UPDATED")) PF("the update failed: %s", s_msg);
     if (species_count() != ns || strcmp(species_by_uid(pf_uid(&s1))->name, n1) == 0) PF("the registry holds %d species (was %d), the species is still \"%s\"", species_count(), ns, species_by_uid(pf_uid(&s1))->name);
     if (library_installed_count() != 1 || pstore_count() != 1) PF("the store holds %d packs after an update, want 1", pstore_count());
-    pstore_rec_t r; pstore_find(pf_uid(&s1), &r);
+    pstore_rec_t r; pstore_find(pf_kind(&s1), pf_uid(&s1), &r);
     uint8_t buf[PTPK_FILE_MAX];
     if (pstore_read(&r, buf, sizeof buf) != (int)s1b.n || memcmp(buf, s1b.b, s1b.n)) PF("the store does not hold the new version's bytes");
     if (!scan()) PF("rescan: %s", s_why);
@@ -339,22 +339,22 @@ static int t_update_remove(void) {
     if (strcmp(species_by_uid(pf_uid(&s1))->name, n1) == 0) PF("a reboot brought the old version back");
     /* remove */
     char why[200];
-    if (!library_remove(pf_uid(&s1), why, sizeof why)) PF("the species did not remove: %s", why);
+    if (!library_remove(pf_kind(&s1), pf_uid(&s1), why, sizeof why)) PF("the species did not remove: %s", why);
     if (species_by_uid(pf_uid(&s1)) || library_installed_count() != 0 || pstore_count() != 0) PF("a removed pack is still loaded or stored");
     reboot();
     if (species_by_uid(pf_uid(&s1))) PF("a removed pack came back at the reboot");
-    if (library_remove(pf_uid(&s1), why, sizeof why)) PF("a pack that is not installed was 'removed'");
+    if (library_remove(pf_kind(&s1), pf_uid(&s1), why, sizeof why)) PF("a pack that is not installed was 'removed'");
     const species_t *def = species_get(SPECIES_DEFAULT);
-    if (library_remove(def->uid, why, sizeof why) || !species_by_uid(def->uid)) PF("a built-in pack was removed (%s)", why);
-    if (library_remove(0, why, sizeof why) || library_remove(0xdeadbeefu, why, sizeof why)) PF("an unknown uid was 'removed'");
+    if (library_remove(PTPK_KIND_SPECIES, def->uid, why, sizeof why) || !species_by_uid(def->uid)) PF("a built-in pack was removed (%s)", why);
+    if (library_remove(PTPK_KIND_SPECIES, 0, why, sizeof why) || library_remove(PTPK_KIND_SPECIES, 0xdeadbeefu, why, sizeof why)) PF("an unknown uid was 'removed'");
     /* dependents: a habitat an installed species lives in, a manifest whose goal word it needs */
     fresh();
     mk_habitat(&h1, "h1"); mk_species(&s2, "s2"); { uint32_t u = pf_uid(&h1); pf_set_habitats(&s2, &u, 1); }
     card_put("h1.ptpk", &h1); card_put("s2.ptpk", &s2);
     if (!scan() || install_file("h1.ptpk") != LIB_DONE_INSTALLED || !scan() || install_file("s2.ptpk") != LIB_DONE_INSTALLED) PF("the habitat and its species did not install: %s", s_msg);
-    if (library_removable(pf_uid(&h1), why, sizeof why) || !has(why, "LIVES IN IT") || !has(why, species_by_uid(pf_uid(&s2))->name)) PF("the habitat was removable with its species on it (%s)", why);
-    if (library_remove(pf_uid(&h1), why, sizeof why) || !habitat_by_uid(pf_uid(&h1)) || pstore_count() != 2) PF("the habitat was removed from under its species");
-    if (!library_remove(pf_uid(&s2), why, sizeof why) || !library_remove(pf_uid(&h1), why, sizeof why)) PF("the species, then its habitat, did not remove: %s", why);
+    if (library_removable(pf_kind(&h1), pf_uid(&h1), why, sizeof why) || !has(why, "LIVES IN IT") || !has(why, species_by_uid(pf_uid(&s2))->name)) PF("the habitat was removable with its species on it (%s)", why);
+    if (library_remove(pf_kind(&h1), pf_uid(&h1), why, sizeof why) || !habitat_by_uid(pf_uid(&h1)) || pstore_count() != 2) PF("the habitat was removed from under its species");
+    if (!library_remove(pf_kind(&s2), pf_uid(&s2), why, sizeof why) || !library_remove(pf_kind(&h1), pf_uid(&h1), why, sizeof why)) PF("the species, then its habitat, did not remove: %s", why);
     if (habitat_by_uid(pf_uid(&h1)) || species_by_uid(pf_uid(&s2)) || pstore_count() != 0) PF("a removed habitat or species is still there");
     fresh();
     mk_manifest_goal(&m2, "q2", "climb"); mk_species_goal(&sg, "sc", "climb");
@@ -367,8 +367,8 @@ static int t_update_remove(void) {
     if (!scan()) PF("rescan: %s", s_why);
     EXPECT("sg.ptpk", LIB_INSTALLABLE);
     if (install_file("sg.ptpk") != LIB_DONE_INSTALLED) PF("the species of the manifest's word did not install: %s", s_msg);
-    if (library_remove(pf_uid(&m2), why, sizeof why) || !has(why, "GOAL") || !manifest_by_uid(pf_uid(&m2))) PF("the manifest was removed with a species on its words (%s)", why);
-    if (!library_remove(pf_uid(&sg), why, sizeof why) || !library_remove(pf_uid(&m2), why, sizeof why)) PF("the species, then its manifest, did not remove: %s", why);
+    if (library_remove(pf_kind(&m2), pf_uid(&m2), why, sizeof why) || !has(why, "GOAL") || !manifest_by_uid(pf_uid(&m2))) PF("the manifest was removed with a species on its words (%s)", why);
+    if (!library_remove(pf_kind(&sg), pf_uid(&sg), why, sizeof why) || !library_remove(pf_kind(&m2), pf_uid(&m2), why, sizeof why)) PF("the species, then its manifest, did not remove: %s", why);
     if (manifests_know_goal("climb")) PF("a removed manifest's word is still known");
     printf("selftest-library: update and remove: the same uid in another file replaced the pack in the registry and the store (one record, the new bytes, kept at a reboot); a pack removed leaves the registry, the store and the next boot; a pack that is not installed, a built-in "
            "and an unknown uid are refused; a habitat an installed species lives in (\"%s\") and a manifest whose goal word it needs are refused until the species is removed\n", "LIVES IN IT: REMOVE IT FIRST");
@@ -399,7 +399,7 @@ static int t_full(void) {
       if (library_add(W, first2.b, first2.n, s_msg, sizeof s_msg) != LIB_FAILED || !has(s_msg, "FULL")) PF("an update was written with no sector to put it beside (%s)", s_msg); }
     char why[100];
     pf_blob_t victim; mk_species(&victim, "a3");
-    if (!library_remove(pf_uid(&victim), why, sizeof why)) PF("remove from a full store: %s", why);
+    if (!library_remove(pf_kind(&victim), pf_uid(&victim), why, sizeof why)) PF("remove from a full store: %s", why);
     if (library_add(W, b.b, b.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED) PF("an install after a remove failed: %s", s_msg);
     if (!scan() || row_of("z.ptpk")->status != LIB_INSTALLED) PF("the card's z.ptpk is not INSTALLED after it was");
     printf("selftest-library: full: %d packs fill the store's %d sectors; the next is refused (\"%s\"), the registry unchanged, the card's row says STORE IS FULL, an update with no sector beside the old is refused too; one remove makes room for one install\n",
@@ -457,9 +457,9 @@ static int t_no_module(void) {
 /* ================================================================ 8: power cuts */
 typedef struct { int before, after, torn_dropped; } tally_t;
 /* what the store and the registry say about uid after a reboot: 0 not installed, else the file's crc (and the registry and the store agree) */
-static int state_after_boot(uint32_t uid, uint32_t *crc, const char *what) {
+static int state_after_boot(uint32_t uid, uint32_t *crc, const char *what) {   /* (species packs: the registry check below is the species') */
     pstore_rec_t r; uint8_t buf[PTPK_FILE_MAX];
-    const bool stored = pstore_find(uid, &r);
+    const bool stored = pstore_find(PTPK_KIND_SPECIES, uid, &r);
     const bool loaded = species_by_uid(uid) != NULL;
     if (stored != loaded) { printf("FAIL: %s: %s: the store %s the pack and the registry %s it\n", s_name, what, stored ? "holds" : "lacks", loaded ? "holds" : "lacks"); return -1; }
     if (!stored) { *crc = 0; return 0; }
@@ -479,7 +479,7 @@ static int cut_sweep(int op, int tear, tally_t *t) {         /* op 0 install, 1 
         bool ok = false; char why[100];
         if (op == 0) ok = library_add(W, v1.b, v1.n, s_msg, sizeof s_msg) == LIB_DONE_INSTALLED;
         else if (op == 1) ok = library_add(W, v2.b, v2.n, s_msg, sizeof s_msg) == LIB_DONE_UPDATED;
-        else ok = library_remove(pf_uid(&v1), why, sizeof why);
+        else ok = library_remove(pf_kind(&v1), pf_uid(&v1), why, sizeof why);
         const bool unharmed = cut > 5;
         if (unharmed && !ok) PF("%s: an operation with no cut in its way failed (%s)", what, s_msg);
         reboot();
@@ -497,7 +497,7 @@ static int cut_sweep(int op, int tear, tally_t *t) {         /* op 0 install, 1 
         /* the store works again: a pack in, a pack out, whatever the cut left (a torn sector erased by the boot) */
         pf_blob_t x; mk_species(&x, "x1");
         if (library_add(W, x.b, x.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED) PF("%s: the store would not take a pack after the boot: %s", what, s_msg);
-        if (!library_remove(pf_uid(&x), why, sizeof why)) PF("%s: the pack put in after the boot would not come out: %s", what, why);
+        if (!library_remove(pf_kind(&x), pf_uid(&x), why, sizeof why)) PF("%s: the pack put in after the boot would not come out: %s", what, why);
         if (unharmed) break;
     }
     return 0;
@@ -534,7 +534,7 @@ static int t_hostile_store(void) {
     for (int bit = 0; bit < 8 * (PSTORE_HEADER + (int)b.n); bit += bit < 8 * PSTORE_HEADER ? 3 : 41) {          /* the header's bits close together, the file's far apart */
         fresh();
         library_add(W, a.b, a.n, s_msg, sizeof s_msg); library_add(W, b.b, b.n, s_msg, sizeof s_msg); library_add(W, c.b, c.n, s_msg, sizeof s_msg);
-        pstore_find(pf_uid(&b), &rb);
+        pstore_find(pf_kind(&b), pf_uid(&b), &rb);
         if (!flip_store(rb.sector, bit / 8, (uint8_t)(1u << (bit % 8)))) PF("could not flip bit %d", bit);
         reboot();
         if (!species_by_uid(pf_uid(&a)) || !species_by_uid(pf_uid(&c))) PF("a flipped bit in another pack's sector (bit %d) took a good pack with it", bit);
@@ -542,16 +542,16 @@ static int t_hostile_store(void) {
         pstore_rec_t q;
         if (kept) {                                      /* a flip that left the pack whole (the seq's bits are CRC'd, so this is a bit in the zero padding or past the file's end) cannot be a changed pack */
             uint8_t buf[PTPK_FILE_MAX];
-            if (!pstore_find(pf_uid(&b), &q) || pstore_read(&q, buf, sizeof buf) != (int)b.n || memcmp(buf, b.b, b.n)) PF("bit %d of sector %d: the pack loaded as something else", bit, rb.sector);
+            if (!pstore_find(pf_kind(&b), pf_uid(&b), &q) || pstore_read(&q, buf, sizeof buf) != (int)b.n || memcmp(buf, b.b, b.n)) PF("bit %d of sector %d: the pack loaded as something else", bit, rb.sector);
         } else hits++;
-        if (pstore_find(pf_uid(&b), &q) != kept) PF("bit %d: the store and the registry disagree about the pack", bit);
+        if (pstore_find(pf_kind(&b), pf_uid(&b), &q) != kept) PF("bit %d: the store and the registry disagree about the pack", bit);
         if (library_installed_count() != (kept ? 3 : 2)) PF("bit %d: %d installed", bit, library_installed_count());
     }
     if (hits < 10) PF("only %d flips dropped the pack: the test is not reaching the header and the file", hits);
     /* a header that says more than there is, a file of another uid, a kind that is not the file's: dropped */
     fresh();
     library_add(W, a.b, a.n, s_msg, sizeof s_msg);
-    pstore_find(pf_uid(&a), &ra);
+    pstore_find(pf_kind(&a), pf_uid(&a), &ra);
     {   uint8_t sec[PSTORE_SECTOR_BYTES];
         pstore_port_read((uint32_t)ra.sector * PSTORE_SECTOR_BYTES, sec, sizeof sec);
         static const struct { const char *what; int off; uint32_t v; } MUT[] = { { "len 0xffff", 6, 0xffff }, { "len 0", 6, 0 }, { "len 21", 6, 21 }, { "seq 0", 8, 0 }, { "seq all ones", 8, 0xffffffffu },
@@ -582,13 +582,13 @@ static int t_hostile_store(void) {
         reboot();
         if (pstore_count() != 0 || library_installed_count() != 0) PF("garbage in the store (round %d) left %d packs", round, pstore_count());
         pf_blob_t x; mk_species(&x, "x1");
-        if (library_add(W, x.b, x.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED || !library_remove(pf_uid(&x), s_why, sizeof s_why)) PF("the store would not work after garbage (round %d)", round);
+        if (library_add(W, x.b, x.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED || !library_remove(pf_kind(&x), pf_uid(&x), s_why, sizeof s_why)) PF("the store would not work after garbage (round %d)", round);
     }
     /* the same uid in two sectors (an update cut short): the newer stays - made by hand: the second copy written beside the first */
     fresh();
     library_add(W, a.b, a.n, s_msg, sizeof s_msg);
     pf_blob_t a2; pf_variant(&a2, &a, "", "N2");
-    pstore_find(pf_uid(&a), &ra);
+    pstore_find(pf_kind(&a), pf_uid(&a), &ra);
     {   const int fresh_sec = ra.sector == 0 ? 1 : 0;
         uint8_t h[PSTORE_HEADER]; memset(h, 0, sizeof h);
         memcpy(h, "PTPS", 4); h[4] = 1; h[6] = (uint8_t)a2.n; h[7] = (uint8_t)(a2.n >> 8);
@@ -604,7 +604,7 @@ static int t_hostile_store(void) {
     fresh();
     pf_blob_t h1, s2; mk_habitat(&h1, "h1"); mk_species(&s2, "s2"); { uint32_t u = pf_uid(&h1); pf_set_habitats(&s2, &u, 1); }
     if (library_add(W, h1.b, h1.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED || library_add(W, s2.b, s2.n, s_msg, sizeof s_msg) != LIB_DONE_INSTALLED) PF("the habitat and its species did not install: %s", s_msg);
-    pstore_remove(pf_uid(&h1));                                                   /* (the habitat's sector erased behind the library's back) */
+    pstore_remove(pf_kind(&h1), pf_uid(&h1));                                                   /* (the habitat's sector erased behind the library's back) */
     reboot();
     if (species_by_uid(pf_uid(&s2)) || library_installed_count() != 1) PF("the species without its habitat was loaded or dropped (%d installed)", library_installed_count());
     const lib_inst_t *ip = library_installed_at(0);
@@ -641,9 +641,9 @@ static int t_fuzz(void) {
         const lib_result_t lr = library_add(W, m.b, m.n, s_msg, sizeof s_msg);
         if (lr != LIB_FAILED) {                                   /* a mutant that is a good pack: in the store AND the registry, and out again */
             took++;
-            const uint32_t uid = pf_rd32(m.b + 8);
-            if (!pstore_find(uid, NULL) || !(species_by_uid(uid) || habitat_by_uid(uid) || manifest_by_uid(uid))) PF("an install that said done (iteration %d) left the pack out of the store or the registry", i);
-            char w2[100]; if (!library_remove(uid, w2, sizeof w2)) PF("an installed fuzz pack would not remove (iteration %d): %s", i, w2);
+            const uint32_t uid = pf_rd32(m.b + 8); const int mk = m.b[5];
+            if (!pstore_find(mk, uid, NULL) || !(species_by_uid(uid) || habitat_by_uid(uid) || manifest_by_uid(uid))) PF("an install that said done (iteration %d) left the pack out of the store or the registry", i);
+            char w2[100]; if (!library_remove(mk, uid, w2, sizeof w2)) PF("an installed fuzz pack would not remove (iteration %d): %s", i, w2);
         }
         if (pstore_count() != 0 || species_count() != ns || habitat_count() != nh || manifest_count() != nm) PF("iteration %d left %d packs in the store and %d/%d/%d in the registry", i, pstore_count(), species_count(), habitat_count(), manifest_count());
     }
@@ -695,10 +695,10 @@ static int t_tank(void) {
     if (file_read(a, sizeof a) != SAVE_BYTES) PF("the save is %ld bytes", file_read(a, sizeof a));
     if (pf_rd32(a + 2104) != suid || pf_rd32(a + 2108) != huid || a[1957] != 0 || a[1958] != 0) PF("the save does not name the installed pair by uid (species %08x habitat %08x one-byte ids %d %d)", (unsigned)pf_rd32(a + 2104), (unsigned)pf_rd32(a + 2108), a[1957], a[1958]);
     /* the PACKS page's REMOVE: the tank is told first (the pair is read from the registry as it stands), then the pack goes */
-    if (progression_pack_leaving(&s_t, 0x12345678u)) PF("a pack the tank does not live on paused it");
-    if (!progression_pack_leaving(&s_t, suid)) PF("the tank did not wait when the pack it lives on was about to go");
-    if (progression_pack_leaving(&s_t, suid)) PF("a tank already waiting was told again");
-    if (!library_remove(suid, why, sizeof why)) PF("the species did not remove: %s", why);
+    if (progression_pack_leaving(&s_t, PTPK_KIND_SPECIES, 0x12345678u)) PF("a pack the tank does not live on paused it");
+    if (!progression_pack_leaving(&s_t, PTPK_KIND_SPECIES, suid)) PF("the tank did not wait when the pack it lives on was about to go");
+    if (progression_pack_leaving(&s_t, PTPK_KIND_SPECIES, suid)) PF("a tank already waiting was told again");
+    if (!library_remove(PTPK_KIND_SPECIES, suid, why, sizeof why)) PF("the species did not remove: %s", why);
     if (!s_t.packs_missing || s_t.pack_id != SPECIES_DEFAULT || s_t.habitat_id != HABITAT_DEFAULT) PF("the tank is not waiting on the defaults");
     const double clock0 = s_t.clock;
     for (int k = 0; k < 600; k++) { tank_tick(&s_t, 1.0f / 30, NULL); progression_tick(&s_t, 1.0f / 30); }
@@ -729,7 +729,7 @@ static int t_tank(void) {
     card_put("s4b.ptpk", &s4b);
     if (!scan()) PF("scan: %s", s_why);
     EXPECT("s4b.ptpk", LIB_UPDATE);
-    if (!progression_pack_leaving(&s_t, suid)) PF("the tank did not wait for its pack's update");
+    if (!progression_pack_leaving(&s_t, PTPK_KIND_SPECIES, suid)) PF("the tank did not wait for its pack's update");
     if (install_file("s4b.ptpk") != LIB_DONE_UPDATED) PF("the update failed: %s", s_msg);
     progression_pack_arrived(&s_t);
     if (s_t.packs_missing || !strstr(tank_species(&s_t)->name, "U2")) PF("the tank did not come back on the updated pack (\"%s\")", tank_species(&s_t)->name);
@@ -745,6 +745,49 @@ static int t_tank(void) {
     return 0;
 }
 
+
+/* ================================================================ 12: one uid, two kinds
+ * docs/ptpk.md: a uid identifies a pack AMONG THE PACKS OF ITS KIND - a species and a habitat may share one. The store and the
+ * library must hold that too: both packs install, both survive a reboot, and removing one leaves the other. */
+static int t_kinds(void) {
+    fresh();
+    pf_blob_t s, h;
+    mk_species(&s, "k1"); mk_habitat(&h, "k1");
+    size_t at, l; uint8_t ns[64];
+    if (!pf_rec_find(&s, 2, &at, &l) || l > sizeof ns) PF("no UID_NS in the species file");
+    memcpy(ns, s.b + at + 4, l);
+    pf_rec_set(&h, 2, ns, l); pf_fix(&h);                        /* the habitat takes the species' UID_NS: the same uid, another kind */
+    const uint32_t uid = pf_uid(&s);
+    if (pf_uid(&h) != uid) PF("the fixture's two packs do not share a uid");
+    card_put("kind-s.ptpk", &s); card_put("kind-h.ptpk", &h);
+    if (!scan()) PF("scan: %s", s_why);
+    EXPECT("kind-s.ptpk", LIB_INSTALLABLE); EXPECT("kind-h.ptpk", LIB_INSTALLABLE);
+    if (install_file("kind-s.ptpk") != LIB_DONE_INSTALLED) PF("the species did not install: %s", s_msg);
+    if (!scan()) PF("scan: %s", s_why);
+    EXPECT("kind-h.ptpk", LIB_INSTALLABLE);                      /* the species' uid is not the habitat's */
+    if (install_file("kind-h.ptpk") != LIB_DONE_INSTALLED) PF("the habitat, sharing the species' uid, did not install as a pack of its own: %s", s_msg);
+    if (pstore_count() != 2 || library_installed_count() != 2) PF("%d records, %d installed: wanted the species and the habitat", pstore_count(), library_installed_count());
+    if (!species_by_uid(uid) || !habitat_by_uid(uid)) PF("the registry lost one of the two packs");
+    {   /* a tank on the species: the habitat that shares its uid going does not touch it, the species going does */
+        char tw[200];
+        tank_init(&s_t, 41); progression_wake(&s_t, 0);
+        if (!tank_set_packs(&s_t, HABITAT_DEFAULT, species_by_uid(uid)->id, tw, sizeof tw)) PF("a tank refused the installed species: %s", tw);
+        if (progression_pack_leaving(&s_t, PTPK_KIND_HABITAT, uid) || s_t.packs_missing) PF("the removal of a habitat paused a tank that lives on a species with the same uid");
+        if (!progression_pack_leaving(&s_t, PTPK_KIND_SPECIES, uid)) PF("the tank did not wait when its own species was about to go");
+        tank_init(&s_t, 42); progression_wake(&s_t, 0);
+    }
+    reboot();
+    if (pstore_count() != 2 || !species_by_uid(uid) || !habitat_by_uid(uid)) PF("after a reboot: %d records, species %d habitat %d", pstore_count(), species_by_uid(uid) != NULL, habitat_by_uid(uid) != NULL);
+    char why[200];
+    if (!library_remove(PTPK_KIND_HABITAT, uid, why, sizeof why)) PF("the habitat did not remove: %s", why);
+    if (pstore_count() != 1 || !species_by_uid(uid) || habitat_by_uid(uid)) PF("removing the habitat took the species too (or left the habitat): %d records", pstore_count());
+    reboot();
+    if (pstore_count() != 1 || !species_by_uid(uid) || habitat_by_uid(uid)) PF("after a reboot the species is gone or the habitat is back");
+    if (!library_remove(PTPK_KIND_SPECIES, uid, why, sizeof why) || pstore_count() != 0 || species_by_uid(uid)) PF("the species did not remove: %s", why);
+    printf("selftest-library: one uid, two kinds: a species and a habitat with the same uid both install, both survive a reboot, and removing one leaves the other\n");
+    return 0;
+}
+
 /* ================================================================ */
 int selftest_library(void) {
     snprintf(s_card, sizeof s_card, "%s", sim_tmp("lib-card"));
@@ -755,7 +798,7 @@ int selftest_library(void) {
     if (!pf_builtin(PTPK_KIND_SPECIES, &S0) || !pf_builtin(PTPK_KIND_HABITAT, &H0) || !pf_builtin(PTPK_KIND_MODEL, &M0)) PF("this world's built-in species, habitat or manifest file is not there");
     W = card_mem_alloc(sizeof *W);
     if (!W) PF("no working block");
-    const int r = t_names() || t_scan() || t_install() || t_update_remove() || t_full() || t_no_module() || t_cuts() || t_hostile_store() || t_fuzz() || t_tank();
+    const int r = t_names() || t_scan() || t_install() || t_update_remove() || t_full() || t_no_module() || t_cuts() || t_hostile_store() || t_fuzz() || t_tank() || t_kinds();
     firmware_caps_override(false, 0); shelf_port_sim_cut(-1); g_sim_pstore_tear = 0;
     unsetenv("POCKET_CARD_DIR");
     packs_drop_loaded();

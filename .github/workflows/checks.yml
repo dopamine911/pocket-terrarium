@@ -38,8 +38,8 @@ jobs:
           case "${{ matrix.board }}" in
             rect) flags= ;; round) flags=ROUND=1 ;; watch) flags=WATCH=1 ;; square) flags=SQUARE=1 ;;
           esac
-          # the dev repo does not track model/out; the public one does (the LLM selftest needs it)
-          [ -f model/out/model_q4.bin ] || { echo "no model in this checkout: the LLM selftest is skipped"; flags="$flags NOMODEL=1"; }
+          # model/out's two models are tracked: the inference selftests must run, so a missing one fails the job rather than skipping them
+          for m in model_q4.bin model_q4_lizard.bin; do [ -f "model/out/$m" ] || { echo "::error::model/out/$m is missing: the inference selftests would be skipped"; exit 1; }; done
           make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} $flags check check-net
 
   # The shipped configuration: every image leaves the card library off (CONFIG_POCKET_TANK_CARD, docs/card-library.md), so its pack pools,
@@ -61,9 +61,8 @@ jobs:
           git clone --depth 1 --branch v9.2.2 https://github.com/lvgl/lvgl.git sim/lvgl
       - name: Build and test the simulator without the card library
         run: |
-          flags=
-          [ -f model/out/model_q4.bin ] || { echo "no model in this checkout: the LLM selftest is skipped"; flags="NOMODEL=1"; }
-          make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} CARD=0 $flags check
+          for m in model_q4.bin model_q4_lizard.bin; do [ -f "model/out/$m" ] || { echo "::error::model/out/$m is missing: the inference selftests would be skipped"; exit 1; }; done
+          make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} CARD=0 check
 
   # what a release image carries (sim/release_check.c: one world's packs, its own capabilities): the common sources only
   release-packs:
