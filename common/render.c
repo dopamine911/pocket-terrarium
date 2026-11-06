@@ -24,140 +24,33 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define TAU 6.2831853f
+#include "render_core.h"
 
-/* a draw target: fb + stride + night dim, plus the window it covers in tank
- * coordinates (ox,oy,w,h) - the frame is (0,0,TANK_W,TANK_H); the stats card
- * cache is a small sprite that still gets drawn in tank coordinates */
-typedef struct { uint16_t *fb; int stride; float dim; int ox, oy, w, h; } ctx_t;
-/* every draw target made outside the keeper page counts: the page keeps a framebuffer only while nothing else drew
-   (THE PAGE KEPT, render_milestones) */
-static unsigned g_ctx_other; static bool g_ms_in;
-#define CTX_MADE() do { if (!g_ms_in) g_ctx_other++; } while (0)
-static ctx_t ctx_full(uint16_t *fb, int stride, float dim) {
-    CTX_MADE();
-    ctx_t c = { fb, stride, dim, 0, 0, TANK_W, TANK_H }; return c;
-}
-/* PAGE space (render.h): the full-screen pages, the prompts and the exported
- * drawing helpers put their 448 x 368 layout in the middle of the frame - a
- * ctx whose origin is the page's corner. In the rectangle that IS the frame. */
-static bool g_dirty_hold;                          /* below, with the dirty mask */
-static ctx_t ctx_page(uint16_t *fb, int stride) {
-    CTX_MADE();
-    ctx_t c = { fb, stride, 1.0f, -PAGE_X, -PAGE_Y, TANK_W, TANK_H };
-    g_dirty_hold = true;                           /* a page's coordinates must never reach the mask */
-    return c;
-}
-#define CTX_IN(c, x, y) ((unsigned)((x) - (c)->ox) < (unsigned)(c)->w && (unsigned)((y) - (c)->oy) < (unsigned)(c)->h)
-#define CTX_PX(c, x, y) ((c)->fb[((y) - (c)->oy) * (c)->stride + ((x) - (c)->ox)])
+/* THE SHARED PIXEL LAYER's state (render_core.h): every file of the renderer draws through it */
+unsigned g_ctx_other; bool g_ms_in;
+bool g_dirty_hold;
+uint32_t *g_dirty = NULL;
+bool g_bb_on; int g_bb_x0, g_bb_y0, g_bb_x1, g_bb_y1;
+uint32_t *g_keep_rec, *g_keep_rec2;
+uint32_t *g_fbg_clr1, *g_fbg_clr2;
+uint32_t *g_keep_clr_m;
+bool g_keep_clr;
+uint32_t *g_touched;
+const uint32_t *g_under;
+int g_under_y0;
+uint16_t *g_scene = NULL;
+float     g_scene_dim = -1;
+unsigned  g_scene_epoch = 0;
+const uint16_t *g_primed_fb = NULL;
+unsigned  g_primed_epoch = 0;
+uint8_t  *g_vig = NULL;
+bool      g_vig_filled = false;
 
-/* Dirty mask (2026-09-01): one bit per pixel, set by everything drawn over
- * the baked scene (px, span, blends), cleared every frame. The porthole
- * vignette re-apply walks the mask instead of comparing each pixel with the
- * scene cache (32 pixels per word, no scene reads), and a pixel that already
- * had its vignette applied inline (frond spans, span_final) is simply not
- * marked, so no later rect darkens it twice. (A first version tagged the
- * green LSB instead and cleared it across the scene - that halved the color
- * steps of the dark vignette falloff into visible contour rings. Colors are
- * untouched now.) */
-#define DIRTY_WORDS_PER_ROW ((TANK_W + 31) / 32)   /* 14 (15 on the 466 px bowl) */
-static uint32_t *g_dirty = NULL;
+
+
 void render_set_dirty_mask(uint32_t *buf) { g_dirty = buf; }
-/* A PAGE draws in its own coordinates (ctx_page: on the bowl its origin is
- * not the frame's, and its y runs negative above the page) - marked as they
- * are, those wrote in front of the mask (2026-10-01: the settings page's
- * fill took the round board down). Nothing reads the mask after render_tank's
- * sweep, so from the first page ctx of a frame until the next render_tank
- * nothing is marked. */
-static bool g_dirty_hold;
-static inline void dirty_px(int x, int y) {
-    if (g_dirty && !g_dirty_hold) g_dirty[y * DIRTY_WORDS_PER_ROW + (x >> 5)] |= 1u << (x & 31);
-}
-static inline void dirty_span(int x0, int x1, int y) {
-    if (!g_dirty || g_dirty_hold) return;
-    uint32_t *row = g_dirty + y * DIRTY_WORDS_PER_ROW;
-    int w0 = x0 >> 5, w1 = x1 >> 5;
-    if (w0 == w1) { row[w0] |= (0xFFFFFFFFu >> (31 - (x1 & 31))) & (0xFFFFFFFFu << (x0 & 31)); return; }
-    row[w0] |= 0xFFFFFFFFu << (x0 & 31);
-    for (int w = w0 + 1; w < w1; w++) row[w] = 0xFFFFFFFFu;
-    row[w1] |= 0xFFFFFFFFu >> (31 - (x1 & 31));
-}
 
-static inline void dirty_clear_span(int x0, int x1, int y) {   /* the span's marks off, a word at a time */
-    if (!g_dirty || g_dirty_hold) return;
-    uint32_t *row = g_dirty + y * DIRTY_WORDS_PER_ROW;
-    int w0 = x0 >> 5, w1 = x1 >> 5;
-    if (w0 == w1) { row[w0] &= ~((0xFFFFFFFFu >> (31 - (x1 & 31))) & (0xFFFFFFFFu << (x0 & 31))); return; }
-    row[w0] &= ~(0xFFFFFFFFu << (x0 & 31));
-    for (int w = w0 + 1; w < w1; w++) row[w] = 0;
-    row[w1] &= ~(0xFFFFFFFFu >> (31 - (x1 & 31)));
-}
-
-/* bounding box of everything drawn while g_bb_on (render_tank wraps each
- * fish in it, so its vignette rect is exactly the pixels it touched instead
- * of a fixed 88 px box - fewer PSRAM reads in the re-apply sweep) */
-static bool g_bb_on; static int g_bb_x0, g_bb_y0, g_bb_x1, g_bb_y1;
-static uint32_t *g_keep_rec, *g_keep_rec2;       /* SWIM DEPTH phase 2: while set, the fish being drawn marks its every span here (g_keep; and
-                                                     g_fbg_front / _thru against a bed IN FRONT) */
-static uint32_t *g_fbg_clr1, *g_fbg_clr2;         /* (the bed's marks, for the front slot's clearing too) */
-static uint32_t *g_keep_clr_m;                   /* (g_keep, for the clearing) */
-static bool g_keep_clr;                           /* ... while set (a critter of the front slot or the top lane drawn after the pieces), its spans
-                                                     clear the marks: what it paints over a fish is the critter's, shaded and covered as the critter */
-static inline void bb_add(int x0, int x1, int y) {
-    if (!g_bb_on) return;
-    if ((g_keep_rec || g_keep_rec2 || g_keep_clr) && (unsigned)y < (unsigned)TANK_H) {
-        int a = x0 < 0 ? 0 : x0, b = x1 > TANK_W - 1 ? TANK_W - 1 : x1;
-        const int wpr = (TANK_W + 31) / 32;
-        uint32_t *row = g_keep_rec ? g_keep_rec + y * wpr : NULL, *row2 = g_keep_rec2 ? g_keep_rec2 + y * wpr : NULL;
-        uint32_t *c0 = g_keep_clr && g_keep_clr_m ? g_keep_clr_m + y * wpr : NULL, *c1 = g_keep_clr && g_fbg_clr1 ? g_fbg_clr1 + y * wpr : NULL,
-                 *c2 = g_keep_clr && g_fbg_clr2 ? g_fbg_clr2 + y * wpr : NULL;
-        for (int w = a >> 5; a <= b && w <= b >> 5; w++) {
-            uint32_t m = 0xFFFFFFFFu;
-            if (w == a >> 5) m &= 0xFFFFFFFFu << (a & 31);
-            if (w == b >> 5) m &= 0xFFFFFFFFu >> (31 - (b & 31));
-            if (c0) c0[w] &= ~m;                     /* (the clearing first: an animal of the front slot marking its own pixels keeps them) */
-            if (c1) c1[w] &= ~m;
-            if (c2) c2[w] &= ~m;
-            if (row) row[w] |= m;
-            if (row2) row2[w] |= m;
-        }
-    }
-    if (x0 < g_bb_x0) g_bb_x0 = x0;
-    if (x1 > g_bb_x1) g_bb_x1 = x1;
-    if (y < g_bb_y0) g_bb_y0 = y;
-    if (y > g_bb_y1) g_bb_y1 = y;
-}
-/* The TOUCHED mask (2026-10-23, the frame rate on every board): one bit per
- * pixel the frame WROTE over the baked scene - every writer marks it, in the
- * FRAME's coordinates (a page's ctx has its own origin), never held, final
- * stores included. It is what puts the scene back under the frame once it
- * has left the wire (render_restore_touched: the touched words copied from
- * the scene), in place of the whole-frame prefetch that moved 920 KB over
- * the PSRAM bus every frame on the square - the bus, not the CPU, is the
- * wall on these boards. The firmware keeps one per framebuffer and hands
- * the frame's over before render_tank (render_set_touched_mask); a frame
- * that is a whole page says so (render_touch_all). The sim's
- * --selftest-restore draws through this path against a whole re-prime and
- * fails on any ghost. */
-static uint32_t *g_touched;
 void render_set_touched_mask(uint32_t *buf) { g_touched = buf; }
-static inline void touch_span_f(int x0, int x1, int y) {          /* frame coordinates */
-    if (!g_touched || (unsigned)y >= (unsigned)TANK_H) return;
-    if (x0 < 0) x0 = 0;
-    if (x1 > TANK_W - 1) x1 = TANK_W - 1;
-    if (x0 > x1) return;
-    uint32_t *row = g_touched + y * DIRTY_WORDS_PER_ROW;
-    int w0 = x0 >> 5, w1 = x1 >> 5;
-    if (w0 == w1) { row[w0] |= (0xFFFFFFFFu >> (31 - (x1 & 31))) & (0xFFFFFFFFu << (x0 & 31)); return; }
-    row[w0] |= 0xFFFFFFFFu << (x0 & 31);
-    for (int w = w0 + 1; w < w1; w++) row[w] = 0xFFFFFFFFu;
-    row[w1] |= 0xFFFFFFFFu >> (31 - (x1 & 31));
-}
-static inline void touch_px_f(int x, int y) {
-    if (g_touched && (unsigned)x < (unsigned)TANK_W && (unsigned)y < (unsigned)TANK_H) g_touched[y * DIRTY_WORDS_PER_ROW + (x >> 5)] |= 1u << (x & 31);
-}
-#define TOUCH_SPAN(c, x0, x1, y) touch_span_f((x0) - (c)->ox, (x1) - (c)->ox, (y) - (c)->oy)
-#define TOUCH_PX(c, x, y)        touch_px_f((x) - (c)->ox, (y) - (c)->oy)
 void render_touch_all(void) { if (g_touched) memset(g_touched, 0xff, (size_t)RENDER_DIRTY_WORDS * 4); }
 /* THE GRASS CACHE (2026-10-24, Strato: "keep the back grass in a cached scene
  * that updates a few times a second"). The grass was a third of a full frame
@@ -180,7 +73,6 @@ static bool      g_sg_ok;
 static unsigned  g_sg_scene_ep, g_sg_ep = 1;
 static double    g_sg_clock;
 static int       g_sg_top = 0;                 /* the highest row the cached grass touched */
-static const uint32_t *g_under;                /* while the overlays behind are drawn: pixels to leave alone */
 static bool      g_bg_rec;                     /* while the cache's grass is painted: record into g_bgmask */
 static int64_t   g_sg_us; static int g_sg_n;   /* the refreshes' cost (the director's line) */
 void render_set_grass_cache(uint16_t *buf, uint32_t *mask) { g_sceneg = buf; g_bgmask = mask; g_sg_ok = false; }
@@ -188,10 +80,6 @@ void render_set_grass_cache_on(bool on, int period_ms) { bool was = g_sg_on; g_s
 bool render_grass_cache_on(void) { return g_sg_on; }
 int  render_grass_cache_ms(void) { return (int)(g_sg_period * 1000 + 0.5f); }
 void render_grass_cache_prof(int64_t *us, int *n) { *us = g_sg_us; *n = g_sg_n; g_sg_us = 0; g_sg_n = 0; }
-static int g_under_y0;                         /* the first row g_under holds (the grass loop's masks are bands) */
-static inline bool under_bg(int x, int y) {
-    return g_under && (unsigned)x < (unsigned)TANK_W && y >= g_under_y0 && y < TANK_H && ((g_under[y * DIRTY_WORDS_PER_ROW + (x >> 5)] >> (x & 31)) & 1);
-}
 /* THE SWAY REPEATS (0.3.9.3, the grass loop below): every motion of a frond is a whole number of turns in
  * VEG_PERIOD seconds - the sway at the grass's old 0.9 rad/s, and the bend that runs up a frond (0.6 rad/s
  * until now, which with the 0.9 repeated only every 21 s) and the sword plant's lazier 0.6 at that speed
@@ -419,71 +307,19 @@ static inline void bg_mark(int x0, int x1, int y) {
     if (g_om && g_veg_odd) mark_run(g_om + y * DIRTY_WORDS_PER_ROW, x0, x1);
     if (y < g_sg_top) g_sg_top = y;
 }
-static void px(ctx_t *c, int x, int y, uint16_t col) {
-    if (CTX_IN(c, x, y)) {
-        CTX_PX(c, x, y) = FB_SWAP16(col);
-        bb_add(x, x, y);
-        dirty_px(x, y); TOUCH_PX(c, x, y);
-    }
-}
 
-/* A source color dimmed ONCE per shape (night palette), never per pixel:
- * the float multiply + conversions were the bulk of every blended pixel's
- * cost (vegetation, algae film, light shafts, the stats card backdrop). */
-typedef struct { int r, g, b; uint16_t v; } src_t;
-static inline src_t src_color(uint32_t rgb, float dim) {
-    src_t s;
-    s.r = (int)(((rgb >> 16) & 255) * dim);
-    s.g = (int)(((rgb >> 8) & 255) * dim);
-    s.b = (int)((rgb & 255) * dim);
-    s.v = (uint16_t)(((s.r >> 3) << 11) | ((s.g >> 2) << 5) | (s.b >> 3));
-    return s;
-}
-/* alpha 0..255 blend of a pre-dimmed source onto one framebuffer pixel */
-static inline void blend565(uint16_t *p, const src_t *s, int a) {
-    uint16_t cur = FB_SWAP16(*p);
-    int dr = (cur >> 11) << 3, dg = ((cur >> 5) & 63) << 2, db = (cur & 31) << 3;
-    int r = dr + ((s->r - dr) * a >> 8), g = dg + ((s->g - dg) * a >> 8), b = db + ((s->b - db) * a >> 8);
-    *p = FB_SWAP16((uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)));
-}
-static inline void px_blend_s(ctx_t *c, int x, int y, const src_t *s, int a) {
-    if (CTX_IN(c, x, y) && !under_bg(x, y)) { blend565(&CTX_PX(c, x, y), s, a); bb_add(x, x, y); dirty_px(x, y); TOUCH_PX(c, x, y); }   /* (bb_add: the fish's box and SWIM DEPTH's marks see blends too) */
-}
-/* alpha 0..255 blend onto existing pixel (one-off pixels; shapes hoist) */
-static void px_blend(ctx_t *c, int x, int y, uint32_t rgb, int a) {
-    src_t s = src_color(rgb, c->dim);
-    px_blend_s(c, x, y, &s, a);
-}
-/* horizontal span [x0,x1] on row y, clipped to the frame, pre-dimmed source */
-static inline void span(ctx_t *c, int x0, int x1, int y, const src_t *s, int alpha) {
-    if ((unsigned)(y - c->oy) >= (unsigned)c->h) return;
-    if (x0 < c->ox) x0 = c->ox;
-    if (x1 > c->ox + c->w - 1) x1 = c->ox + c->w - 1;
-    if (x0 > x1) return;
-    if (g_under) {                                   /* under the cached grass: pixel by pixel, only what shows (marking the rest would vignette the grass twice) */
-        uint16_t *q = &CTX_PX(c, x0, y); uint16_t sv = FB_SWAP16(s->v);
-        for (int x = x0; x <= x1; x++, q++) { if (under_bg(x, y)) continue; if (alpha >= 255) *q = sv; else blend565(q, s, alpha); dirty_px(x, y); TOUCH_PX(c, x, y); }
-        bb_add(x0, x1, y);
-        return;
-    }
-    bb_add(x0, x1, y);
-    dirty_span(x0, x1, y); TOUCH_SPAN(c, x0, x1, y);
-    uint16_t *p = &CTX_PX(c, x0, y);
-    if (alpha >= 255) { uint16_t sv = FB_SWAP16(s->v); for (int x = x0; x <= x1; x++) *p++ = sv; }
-    else              for (int x = x0; x <= x1; x++) blend565(p++, s, alpha);
-}
 
 /* row half-width of a unit circle at |t| = k/64: sqrt(1 - t^2), tabled -
  * the ESP32-S3 computes sqrtf in software and a fouled glass alone asks for
  * ~7000 of them per frame (algae blobs); the quantisation is sub-pixel */
-static float ell_half(float t) {
+float ell_half(float t) {
     static float lut[66]; static bool filled;
     if (!filled) { for (int k = 0; k <= 65; k++) { float u = k / 64.0f; lut[k] = u < 1 ? sqrtf(1 - u * u) : 0; } filled = true; }
     if (t < 0) t = -t;
     return t >= 1 ? 0 : lut[(int)(t * 64 + 0.5f)];
 }
-static void fill_ellipse(ctx_t *c, float cx, float cy, float rx, float ry,
-                         uint32_t rgb, int alpha) {
+void fill_ellipse(ctx_t *c, float cx, float cy, float rx, float ry,
+                  uint32_t rgb, int alpha) {
     src_t s = src_color(rgb, c->dim);
     int y0 = (int)(cy - ry), y1 = (int)(cy + ry);
     for (int y = y0; y <= y1; y++) {
@@ -497,14 +333,14 @@ static void fill_ellipse(ctx_t *c, float cx, float cy, float rx, float ry,
 /* sine from a 256-entry table: the frond sway only has to look continuous,
  * and the ESP32-S3 computes sinf in software (~1000 per frame at full
  * canopy). Phases here are non-negative; & 255 keeps any sign honest. */
-static float fast_sin(float x) {
+float fast_sin(float x) {
     static float lut[256]; static bool filled;
     if (!filled) { for (int i = 0; i < 256; i++) lut[i] = sinf(i * (TAU / 256)); filled = true; }
     return lut[(int)(x * (256.0f / TAU)) & 255];
 }
 
 /* filled convex polygon, points in world space */
-static void fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb, int alpha) {
+void fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb, int alpha) {
     float miny = 1e9f, maxy = -1e9f;
     for (int i = 0; i < n; i++) { if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i]; }
     src_t s = src_color(rgb, c->dim);
@@ -522,7 +358,7 @@ static void fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint3
         span(c, (int)x0, (int)x1, y, &s, alpha);
     }
 }
-static void fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb) { fill_poly_a(c, xs, ys, n, rgb, 255); }
+void fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb) { fill_poly_a(c, xs, ys, n, rgb, 255); }
 
 /* the turn (2026-09-29, was a roll that flattened the fish to a line): the
  * fish's yaw (tank.c) FORESHORTENS it along its length - side-on at +-1,
@@ -954,17 +790,8 @@ static void draw_snail(ctx_t *c, const tank_t *t, bool upright_pass);
 float render_fish_beat(const tank_t *t, int i) { return t->fish[i].beat + t->fish[i].wander; }   /* (draw_fish_core's) */
 int64_t (*render_clock_us)(void) = NULL;
 int64_t render_prof_us[14];
-#define PROF_MARK() (render_clock_us ? render_clock_us() : 0)
-#define PROF_ADD(i, t0) do { if (render_clock_us) { int64_t _n = render_clock_us(); render_prof_us[i] += _n - (t0); (t0) = _n; } } while (0)
 
 /* ---- static scene: gradient, pebbles, backdrop decor (cacheable) ---- */
-static uint16_t *g_scene = NULL;
-static float     g_scene_dim = -1;
-static unsigned  g_scene_epoch = 0;
-static const uint16_t *g_primed_fb = NULL;
-static unsigned  g_primed_epoch = 0;
-static uint8_t  *g_vig = NULL;                  /* per-pixel vignette alpha (static) */
-static bool      g_vig_filled = false;
 #if PT_TERRARIUM
 static void ts_reset(uint16_t *scene);            /* THE TERRARIUM (below): its two scenes start again */
 #else
@@ -1004,23 +831,7 @@ unsigned render_restore_touched(uint16_t *fb, const uint32_t *touched) {
 }
 unsigned render_scene_epoch(void) { return g_scene_epoch; }
 
-/* vignette alpha at (x,y); matches the classic per-pixel loop */
-static inline int vig_alpha(int x, int y) {
-    float dx = (x - TANK_W * 0.5f) * (2.0f / TANK_W);   /* (multiplies: a frond span calls this - 2026-10-23) */
-    float dy = (y - TANK_H * 0.5f) * (2.0f / TANK_H);
-    float d2 = dx * dx + dy * dy;
-    if (d2 <= 0.72f) return 0;
-    int a = (int)((d2 - 0.72f) * 220);
-    return a > 255 ? 255 : a;
-}
 
-/* pure darkening (blend toward black), independent of ctx dim */
-static inline void px_darken(uint16_t *p, int a) {
-    int inv = 256 - a; uint16_t cur = FB_SWAP16(*p);
-    *p = FB_SWAP16((uint16_t)(((((cur >> 11) * inv) >> 8) << 11) |
-                              (((((cur >> 5) & 63) * inv) >> 8) << 5) |
-                              (((cur & 31) * inv) >> 8)));
-}
 
 /* ---- the pumpkin lantern's night light (0.3.6; Strato 2026-10-17: "its
  * glow should gently illuminate the other decorations and critters in the
