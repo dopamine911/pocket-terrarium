@@ -12,3 +12,62 @@ max_seq_len = 64
 # measured 2026-11-05 (batch 64): torch peak 1432 MiB on an R9700, 1577 on the 8060S; the
 # cards' sysfs counters rose 2049 / 2058 MiB (the runtime's own share on top)
 mem_mib = 2560
+
+# The size sweep (docs/pipeline.md, "Size sweep"): width and depth around the 14M. Heads keep
+# head_dim 32 (bold: 384/8 = 48 stays as the baseline); dim and the 32-multiple hidden width are
+# multiples of the q4 group size (64), so the exported model's rows never straddle a group.
+# mem_mib is the 14M's measured figure as an upper bound: smaller models were not measured.
+
+["l1-d384-n4"]
+schema = "L1"
+dim = 384
+n_layers = 4
+n_heads = 8
+max_seq_len = 64
+# 7.10M parameters
+mem_mib = 2560
+
+["l1-d256-n8"]
+schema = "L1"
+dim = 256
+n_layers = 8
+n_heads = 8
+max_seq_len = 64
+# 6.44M parameters
+mem_mib = 2560
+
+["l1-d256-n6"]
+schema = "L1"
+dim = 256
+n_layers = 6
+n_heads = 8
+max_seq_len = 64
+# 4.84M parameters
+mem_mib = 2560
+
+["l1-d256-n4"]
+schema = "L1"
+dim = 256
+n_layers = 4
+n_heads = 8
+max_seq_len = 64
+# 3.23M parameters
+mem_mib = 2560
+
+["l1-d192-n6"]
+schema = "L1"
+dim = 192
+n_layers = 6
+n_heads = 6
+max_seq_len = 64
+# 2.67M parameters
+mem_mib = 2560
+
+["l1-d192-n4"]
+schema = "L1"
+dim = 192
+n_layers = 4
+n_heads = 6
+max_seq_len = 64
+# 1.78M parameters
+mem_mib = 2560

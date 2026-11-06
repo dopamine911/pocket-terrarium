@@ -105,6 +105,26 @@ python3 harness.py selftest                            # planner, guard, margins
   agreement (A1 without its noise), expected agreement under the device's sampling, the
   teacher's own self-agreement, their ratio, and NLL, each with a 95% bootstrap CI.
   `--api rules` runs it offline; `--selftest` checks the arithmetic.
+- **Curiosity panel**, `model/curiosity.py student --ckpt ... --out FILE`: matched states in which
+  only `curiosity` varies (0/3/6/9; nine cases: calm, hungry, hot, cold, stressed, exhausted,
+  sleep, shed, a solitary lizard with another near), the checkpoints' goal probabilities on them,
+  and the paired 9-0 change per case. `teacher` mode asks the teacher for the same states
+  (capped, cached, resumable) and writes focused `{state, goal}` labels. No thresholds: it
+  describes. Measured on the l1-focus2 checkpoints, see issue #7.
+
+## Size sweep
+
+`model/run_size_sweep.sh` trains six sizes around the 14M (`harness/models.toml`: 384x4, 256x8,
+256x6, 256x4, 192x6, 192x4; dim and the FFN width are multiples of the q4 group size 64), each
+with the loss on every token and on the decision tokens only, three seeds per run, on the same
+data, iterations and probes as `l1-focus2` (`harness/runs/size-*.toml`). Training mode is the
+default; `SWEEP_MODE=opportunistic` shares the cards with the served models. It needs no teacher.
+The result is `out/harness/size-report.md` (`model/size_report.py`): per run the parameters,
+q4 size, the q4 runner's speed on this machine (`out/runq4`, `gcc -O3 -o out/runq4 runq4.c -lm`),
+a pendant speed projected from the pendant's measured 11.9 tok/s at 14M (a projection:
+memory bandwidth differs between an x86 core and the ESP32-S3), goal NLL and accuracy, how many
+seeds pass every probe row, the worst scaled margin and the rows a seed fails. A smaller model
+passes only if every seed passes every row; the table is evidence, not a promotion rule.
 
 ## Extra tools
 
