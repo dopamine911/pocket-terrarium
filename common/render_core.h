@@ -262,6 +262,7 @@ void blit_icon(ctx_t *c, int x, int y, const icon_t *ic, int alpha);
 void blit_icon_scaled(ctx_t *c, int x, int y, const icon_t *ic, int s, bool lit);   /* the same art at an integer scale, lit or as the silhouette */
 void shade_box(ctx_t *c, int x, int y, int w, int h);          /* the toolbox's backdrop: an eighth of the water through, the rest the card's dark */
 void button(ctx_t *c, int x, int y, int W, int H, uint32_t fill, uint32_t edge, const char *label, int scale);
+void crit_nav_box(ctx_t *c, int bx, int by, int dir, uint32_t rgb);   /* an arrow box in the NEXT FISH arrow's dress: dir -1 points left, +1 right */
 
 /* the pages' four colours */
 #define MSP_INK       0x031015

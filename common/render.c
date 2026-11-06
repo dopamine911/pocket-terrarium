@@ -744,6 +744,16 @@ static void tools_draw(ctx_t *c, const tank_t *t) {
     const icon_t *lk = t->tools_locked ? &icon_tool_lock_closed : &icon_tool_lock_open;
     blit_icon(c, LX + (LW - lk->w) / 2, LY + (LH - lk->h) / 2, lk, 255);
 }
+/* an arrow box in the NEXT FISH arrow's dress (the critter cards', the visitor collection's pages': dir -1 points left, +1 right) */
+void crit_nav_box(ctx_t *c, int bx, int by, int dir, uint32_t rgb) {
+    shade_box(c, bx, by, RENDER_CRIT_NAV_W, RENDER_CRIT_NAV_W);
+    rect_edge(c, bx, by, RENDER_CRIT_NAV_W, RENDER_CRIT_NAV_W, rgb); rect_edge(c, bx + 1, by + 1, RENDER_CRIT_NAV_W - 2, RENDER_CRIT_NAV_W - 2, 0x1c2f36);
+    int cx = bx + RENDER_CRIT_NAV_W / 2, cy = by + RENDER_CRIT_NAV_W / 2;
+    for (int i = 0; i < 9; i++) {                            /* a solid triangle, 9 wide, 17 tall, pointing its way */
+        int hh = 8 - i;
+        rect_fill(c, dir > 0 ? cx - 4 + i : cx + 4 - i, cy - hh, 1, 2 * hh + 1, rgb);
+    }
+}
 /* the NEXT FISH arrow (0.3.9) beside the card's top right: drawn every
    frame like the lock (outside the card's cache) */
 static void next_draw(ctx_t *c, const tank_t *t) {

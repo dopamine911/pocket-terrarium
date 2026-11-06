@@ -6231,15 +6231,6 @@ int aquarium_critter_nav_hit(int card, float x, float y) {
     if (x >= X + W - RENDER_CRIT_NAV_IN - RENDER_CRIT_NAV_W - 12 && x < X + W + 12) return 1;
     return 0;
 }
-static void crit_nav_box(ctx_t *c, int bx, int by, int dir, uint32_t rgb) {
-    shade_box(c, bx, by, RENDER_CRIT_NAV_W, RENDER_CRIT_NAV_W);
-    rect_edge(c, bx, by, RENDER_CRIT_NAV_W, RENDER_CRIT_NAV_W, rgb); rect_edge(c, bx + 1, by + 1, RENDER_CRIT_NAV_W - 2, RENDER_CRIT_NAV_W - 2, 0x1c2f36);
-    int cx = bx + RENDER_CRIT_NAV_W / 2, cy = by + RENDER_CRIT_NAV_W / 2;
-    for (int i = 0; i < 9; i++) {                            /* a solid triangle, 9 wide, 17 tall, pointing its way */
-        int hh = 8 - i;
-        rect_fill(c, dir > 0 ? cx - 4 + i : cx + 4 - i, cy - hh, 1, 2 * hh + 1, rgb);
-    }
-}
 static void crit_nav_draw(ctx_t *c, const tank_t *t, int card) {
     int X, Y, W;
     if (!crit_card_rect(card, &X, &Y, &W)) return;
