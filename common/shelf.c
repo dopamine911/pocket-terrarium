@@ -6,9 +6,13 @@
 #include "passport.h"
 #include "pt_util.h"
 #include "version.h"   /* PT_NET */
+#include "world_ops.h"   /* a tank's default names are its world's */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+const char *shelf_name_first(void) { return world_cur()->words.shelf_first; }
+const char *shelf_name_nth(void) { return world_cur()->words.shelf_nth; }
 
 #define SHELF_MAGIC  0x31535254u                  /* "TRS1" (pocket-terrarium; pocket-tank's are "PTS1": never read as ours) */
 #define SHELF_LAYOUT 1
@@ -452,7 +456,7 @@ float shelf_lived_h(void) { return s_lived_h; }
 #if PT_NET   /* (the name on its fish's passports: the networked bin's, version.h PT_NET) */
 void shelf_keeper_name(char *out) {
     unsigned n; char more;
-    if (!s_now.name[0] || !strcmp(s_now.name, SHELF_NAME_FIRST) || sscanf(s_now.name, WORLD_STR("TANK %u%c", "DESERT %u%c"), &n, &more) == 1) { out[0] = 0; return; }
+    if (!s_now.name[0] || !strcmp(s_now.name, SHELF_NAME_FIRST) || sscanf(s_now.name, world_cur()->words.shelf_nth_scan, &n, &more) == 1) { out[0] = 0; return; }
     passport_clean_tank_name(out, s_now.name);
 }
 #endif

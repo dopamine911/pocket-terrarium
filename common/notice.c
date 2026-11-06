@@ -1,6 +1,7 @@
 /* notice.c - the announcement queue. See notice.h. */
 #include "notice.h"
 #include "sounds.h"
+#include "world_ops.h"
 #include <string.h>
 
 static uint32_t s_ms[N_FISH_MAX], s_tms;
@@ -17,12 +18,10 @@ static bool     s_model_told;                /* NOTICE_MODEL_DAMAGED: once per s
 static bool     s_pm;                        /* the tank's packs_missing, last frame */
 static float    s_pm_wait;                   /* ... seconds to the card's next reminder */
 
-/* never announced: they belong to the birth of a tank or a fish - and in the terrarium the fish's follow and seagrass,
-   which are no badge there (pocket-terrarium P5, tank.h: FOLLOW still reveals the card's slider) */
-#define MS_SILENT   (MS_ARRIVED | MS_INSPECTED | MS_RETIRED_6 | MS_RETIRED_7 | MS_CROSSBRED | (PT_TERRARIUM ? MS_FIRST_FOLLOW | MS_FIRST_GRASS : 0))   /* (MS_INSPECTED: no badge since 0.3.0) */
-/* ... and the terrarium's tank bits that are no badge on its row (P5): the first feeding (the first meal from you says it),
-   the trimming, the fish's bought creatures, a mutation (the birth page names a new morph) */
-#define TMS_SILENT  (TMS_PAIR | (PT_TERRARIUM ? TMS_FIRST_FEEDING | TMS_FIRST_TRIM | TMS_FIRST_MUTATION | TMS_FULL_SCHOOL | TMS_FIRST_REEF | TMS_SEAHORSE_FED | TMS_CRAB_FIND : 0))
+/* never announced: they belong to the birth of a tank or a fish - and, per world, the bits that are no badge there (world_ops.h
+   ms_silent / tms_silent: the terrarium's follow and seagrass, its first feeding, trimming, bought creatures and mutation) */
+#define MS_SILENT   (world_cur()->ms_silent)
+#define TMS_SILENT  (world_cur()->tms_silent)
 #define MS_STAGES   (MS_REACHED_JUV | MS_REACHED_ADULT | MS_REACHED_ELDER)
 
 static void push(int kind, int fish, uint32_t bit) {
