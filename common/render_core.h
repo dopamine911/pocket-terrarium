@@ -244,4 +244,5 @@ void  fill_ellipse(ctx_t *c, float cx, float cy, float rx, float ry, uint32_t rg
 float fast_sin(float x);                                      /* sine from a 256-entry table (phases non-negative) */
 void  fill_poly_a(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb, int alpha);   /* filled convex polygon, points in world space */
 void  fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb);
+void  draw_algae(ctx_t *c, const tank_t *t);                  /* the film on the glass (both worlds' sponge wipes it) */
 #endif
