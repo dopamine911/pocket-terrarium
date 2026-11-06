@@ -802,6 +802,7 @@ PLACE_DY, PLACE_MARGIN, HIDE_R = 24.0, 30.0, 28.0
 # heat's effects (tank.h): under HEAT_SLOW it is slower (x HEAT_SLOW_MIN at heat 0); from
 # HEAT_HOT on, stress is pulled toward 4 + 2 x (heat - 8) at HEAT_HOT_PULL a second
 HEAT_SLOW, HEAT_SLOW_MIN, HEAT_HOT, HEAT_HOT_PULL = 3.0, 0.5, 8.0, 0.15
+LZ_CURIOSITY_SPEND_X = 10.0     # exploring or investigating spends the pack's curiosity rise this many times over (tank.h LZ_CURIOSITY_SPEND_X)
 L1_LEISURE = ("bask", "explore", "investigate", "dig")   # + rest and hide in the active phase
 # keepers: feed every s, crickets per lizard per feed, mist rate /s (a drying hide, by day),
 # soak rate /s (a stuck shed)
@@ -989,7 +990,7 @@ class Lizard:
                 self.energy += p.energy_rest_per_s * dt * min(1.0, max(0.3, heat / 5))   # cold slows recovery
             else:
                 self.energy -= p.energy_per_s * dt * (1.6 if self.goal in ("dig", "hunt") else 1.0)
-            self.curiosity += dt * (-0.012 if self.goal in ("explore", "investigate") else p.curiosity_per_s)
+            self.curiosity += dt * (-p.curiosity_per_s * LZ_CURIOSITY_SPEND_X if self.goal in ("explore", "investigate") else p.curiosity_per_s)   # tank.c update_lizard
             self.stress -= dt * (0.01 + 0.002 * self.trust + (0.03 if self.hide else 0.0))   # calms; faster when hidden
             to = 4 + 2 * (heat - HEAT_HOT)                                # overheating pulls stress up (tank.c)
             if heat >= HEAT_HOT and self.stress < to:
