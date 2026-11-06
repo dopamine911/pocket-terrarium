@@ -123,13 +123,13 @@ packs: $(EMIT)
 # loop and cache, the pieces' and critters' stack, the castle, the cave and the roost, the boot show - are the
 # aquarium's; the terrarium's own is --selftest-terr-render (its two scenes, the switch, the moisture, the hides' fronts).
 SELFTESTS_SHARED := --selftest-battery --selftest-card --selftest-keeper \
-             --selftest-saves --selftest-update --selftest-genes --selftest-advanced --selftest-model --selftest-restore --selftest-shelf --selftest-shelf-safe --selftest-shelf-away --selftest-temper --selftest-board --selftest-critter-nav --selftest-touch-lock --selftest-shelf-rename --selftest-bake-order --selftest-order-squares --selftest-clock --selftest-under-card
+             --selftest-saves --selftest-update --selftest-genes --selftest-advanced --selftest-model --selftest-restore --selftest-shelf --selftest-shelf-safe --selftest-shelf-away --selftest-temper --selftest-board --selftest-touch-lock --selftest-shelf-rename --selftest-bake-order --selftest-order-squares --selftest-clock --selftest-under-card
 SELFTESTS_SHARED += --selftest-double-tap   # a double tap never buys: the shop, MY TANKS, a card's SELL (0.4 rc)
 SELFTESTS_SHARED += --selftest-packs        # every pack of both worlds against its rules; this world's pairs held, the other's refused (P2a, P2b)
 SELFTESTS_SHARED += --selftest-ptpk         # the pack file format and its loader: every built-in pack encoded from its const struct, read back equal, the file in packs/ the same; hostile files refused, a folder, a tank without its pack (issue #4 phase 1)
 SELFTESTS_SHARED += --selftest-caps         # capabilities (issue #4 phase 2): what a species needs, a habitat, the firmware and the model provide; the pair check and its reasons, the model manifests, a tank whose pair cannot run
 SELFTESTS_AQUARIUM := --selftest --selftest-hunger --selftest-pop --selftest-fry --selftest-sleep --selftest-tend --selftest-llm \
-             --selftest-breather --selftest-hold --selftest-depth --selftest-depth-pop --selftest-hold-emerge --selftest-fish-pair
+             --selftest-breather --selftest-hold --selftest-depth --selftest-depth-pop --selftest-hold-emerge --selftest-fish-pair --selftest-critter-nav
 SELFTESTS_AQUARIUM += --selftest-shop   # the meals the fish eat at the surface, the pieces
 SELFTESTS_AQUARIUM += --selftest-grasscache --selftest-floor --selftest-stack --selftest-pumpkin-light --selftest-grassloop --selftest-grasspatch \
              --selftest-footprint --selftest-place --square-boot --selftest-cave --selftest-roost --selftest-boot-show --selftest-front-keep \
