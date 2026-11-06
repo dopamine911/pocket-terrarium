@@ -99,6 +99,8 @@
 #include "gift.h"
 #include "touch_gate.h"
 #include "sim_tmp.h"   /* the run's scratch directory: every save, shelf and frame of a selftest is in it (P2c) */
+#include "packs_dir.h" /* the simulator's folder of packs: POCKET_PACKS_DIR (issue #4 phase 1, docs/ptpk.md) */
+#include "packs/compat.h"   /* packs_compatible: a saved pair is held when its species' needs are met (issue #4 phase 2) */
 #if PT_NET   /* the networked bin's (version.h PT_NET; sim/Makefile NET=1): selftest_link.c, selftest_coll.c, net_port_sim.c */
 int selftest_link(void);   /* selftest_link.c: the tank link engine under a hostile radio */
 int selftest_doors(void);  /* selftest_link.c: two real tanks, fish through the doors */
@@ -112,6 +114,9 @@ int selftest_coll_pages(void);          /* selftest_coll.c: the visitor collecti
 int coll_shot(const char *prefix);      /* selftest_coll.c: --coll-shot, the paged look */
 #endif
 int selftest_packs(void);               /* selftest_packs.c (pocket-terrarium P2a): every species and habitat pack, and the pairs a tank can hold */
+int selftest_ptpk(void);                /* selftest_ptpk.c (issue #4 phase 1): the PTPK format and loader, a folder of packs, a tank whose pack is missing */
+int selftest_caps(void);                /* selftest_caps.c (issue #4 phase 2): capabilities, the pair check, the model manifests, a tank whose pair cannot run */
+#if PT_TERRARIUM   /* terrarium only: these tests' definitions (selftest_packs.c, selftest_l1.c, selftest_walk.c) are compiled into that world's bin alone */
 int selftest_heat(void);                /* ... the heat field and the body's heat */
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
 int selftest_mister(void);              /* ... the third tool */
@@ -132,6 +137,7 @@ int selftest_terrarium(void);          /* ... a free-running terrarium on the ru
                                            share above the floor and the zone rows */
 int census_llm(const char *model_path, const char *tok_path, int pack, int habitat);   /* --census-llm <model.bin> <tok.bin>
                                           [pack [habitat]]: the same terrarium, the trained model thinking at the device's pace: A13-A15 (250 31: A16) */
+#endif   /* PT_TERRARIUM */
 #if PT_NET
 void net_sim_advance(float dt);    /* net_port_sim.c: the pretend radio's clock */
 bool net_sim_radio_on(void);
@@ -188,12 +194,14 @@ static void print_roster(const tank_t *t) {
 #define MS_OFF_Y       (MS_ROW(N_FISH_MAX - 1) + MSP_ROW_H - 12)
 #define MS_HOW_X       (MSP_MODAL_X + (MSP_MODAL_W - MSP_HOW_W) / 2)
 #define MS_HOW_Y       (MSP_FRY_MODAL_Y + MSP_MODAL_H + 20 + 24 + MSP_HOW_H + 14 - 10 - MSP_HOW_H)
+#if !PT_TERRARIUM   /* aquarium only: --selftest-shop's helper (the reef badge's test) */
 /* every fish wants the reef (the reef badge's test) */
 static goal_t advisor_inspect(const tank_t *t, int fish_idx, bool request) {
     (void)t; (void)fish_idx; (void)request;
     goal_t g = { 0 }; g.id = GOAL_INSPECT_REEF; g.urgency = 3; g.confidence = 1; g.runner_up = GOAL_COUNT;
     return g;
 }
+#endif
 static int ms_tap(float px, float py) { return render_milestones_tap(&tank, PG_X(px), PG_Y(py)); }
 /* the shop: row r's band, the modal's one button (UNLOCK) or two (MOVE, SELL), the header's arrows */
 #define SHOP_ROW_X     100                                         /* on a row's name (the band runs the page's width) */
@@ -226,11 +234,13 @@ static float veg_cap_floor(float x) {
     float room = (VEG_FLOOR_Y - tank_glass_top(x) - VEG_GLASS_GAP) / (VEG_SEGS_FULL * VEG_SEG_PX);
     return room < VEG_CAP_LO ? room : VEG_CAP_LO;
 }
+#if !PT_TERRARIUM   /* aquarium only: --selftest-shop's helpers (the castle's window leg, a fish parked out of the way) */
 /* a fish put out of the way for a render or a leg: open water up in the left
  * shoulder (60, 60), brought inside the glass where the glass is not the frame */
 /* the castle's far-right tower window (render.c castle_open W[3]: 7 wide at lx 71, rows FY - 44 .. FY - 30 with a half-disc vault) - the layers leg leaves it out */
 static bool castle_window_at(int lx, int dy) { return lx >= 67 && lx <= 75 && dy >= -45 && dy <= -29; }
 static void park_fish(fish_t *f) { f->x = 60; f->y = 60; tank_glass_clamp(&f->x, &f->y, 40); }
+#endif
 /* film on just over `share` of this board's glass, grown the tank's own way -
  * so only on cells the glass has (the bowl's circle, the watch's corners) */
 static void film_just_over(tank_t *t, float share) {
@@ -903,6 +913,7 @@ static int selftest_pop(void) {
 /* sleep metabolism + ravenous begging, headless (the device drowse path):
  * a long dark gap starves everyone -> they beg at the surface, the trickle
  * holds off, and the keeper's first pellets end the wait. */
+#if !PT_TERRARIUM   /* aquarium only: the snail's and the urchin's night shift (tank_snail_place, tank_urchin_place: its critters), --selftest-sleep's last step */
 /* the night shift (2026-10-02, Strato: the snail and the urchin "shouldn't
  * remove all the maintenance duties, but it should be perceptible that having
  * them in the tank helps keep both the algae and grass at bay even when the
@@ -955,6 +966,7 @@ static int night_shift_check(void) {
     if (fabsf(tank_algae_cover(&naps) - tank_algae_cover(&both)) > 0.03f || fabsf(ns_grass(&naps) - ns_grass(&both)) > 0.01f) { printf("FAIL: naps and one span disagree\n"); return 1; }
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --selftest-shelf-away (the tank switcher, docs/tank-switcher.md step 3):
  * a mature tank shelved DORMANT for a day, a week, three months and a year,
@@ -2128,7 +2140,11 @@ static int selftest_sleep(void) {
            dash_speed, fed_at / 60.0f);
     if (dash_speed < 80) { printf("FAIL: no feeding-frenzy dash (%.0f px/s)\n", dash_speed); return 1; }
     remove(cmd);
+#if !PT_TERRARIUM   /* aquarium only: the night shift above */
     return night_shift_check();
+#else
+    return 0;
+#endif
 }
 
 /* --selftest-genes (0.4): heredity. 20000 fry of one pair (each added, read,
@@ -2275,8 +2291,8 @@ static int selftest_genes(void) {
 #ifndef _MSC_VER
 #include <dirent.h>
 static const size_t SAVE_CUTS[] = { 448, 1112, 1304, 1408, 1432, 1440, 1456, 1480, 1608, 1616, 1624, 1640, 1656, 1664, 1672, 1680, 1688, 1760, 1840, 1864, 1880, 1896, 1904, 1912, 1920, 1928, 1936, 1944, 1952, 1960, 2096, 2104 };
-#define SAVE_NOW 2104                    /* today's sizeof(save_t): the terrarium's decorations' spots, pocket-terrarium P5b (2099..2102; 2103 padding); the terrarium's progress, P5 (2097..2098: the clean run, the farm's dish); the mealworm dish, P2c (2096); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
-#define SAVE_FIELDS 2103                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail) */
+#define SAVE_NOW 2160                    /* today's sizeof(save_t): the packs by uid, issue #4 phase 1 (2104..2159: the species' and the habitat's uid, and their names for the PACK MISSING card); the terrarium's decorations' spots, pocket-terrarium P5b (2099..2102; 2103 padding); the terrarium's progress, P5 (2097..2098: the clean run, the farm's dish); the mealworm dish, P2c (2096); the packs, P2a (1956..2095: the species and the habitat, each lizard's heat and shed, the hides' moisture, the tail's own prints); the seahorse's whole seconds, 0.4 (1952..1955); the world it was laid out in, 0.3.9.3 (1940..1951; the crab's saved wait at 1936, the crab at 1924, the LOCK at 1920, the volcano's tail at 1912, the shelf at 1908) */
+#define SAVE_FIELDS 2160                 /* where today's fields end and a newer build's tail begins (save_t.newer_tail): no padding past the names */
 #define SAVE_032 1688                    /* 0.3.2's save: an older build's head */
 static uint32_t sv_u32(const uint8_t *e, size_t off) { uint32_t v; memcpy(&v, e + off, 4); return v; }
 static float    sv_f32(const uint8_t *e, size_t off) { float v; memcpy(&v, e + off, 4); return v; }
@@ -2351,6 +2367,7 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
     if (sv_u32(e, 1632) && tank.coral_rgb != (sv_u32(e, 1632) & 0xffffff)) SV_FAIL("coral color %06x", tank.coral_rgb);
     if (tank.coral_growth != fmaxf(sv_f32(e, 1636), 0) || tank.cluster_growth != fmaxf(sv_f32(e, 1648), 0)) SV_FAIL("coral / cluster growth %.2f / %.2f", tank.coral_growth, tank.cluster_growth);
     if (tank.cluster_scheme != (e[1645] < CLUSTER_SCHEME_N ? e[1645] : CLUSTER_SCHEME_N - 1)) SV_FAIL("cluster look %d", tank.cluster_scheme);
+#if !PT_TERRARIUM   /* aquarium only: the school, the urchin, the seahorse and the crab are put back from a save by the aquarium's restore hook (worlds/aquarium/restore.c) - a terrarium keeps tank_init's */
     if (tank.sd_unlocks & SD_ITEM_SHRIMP) {             /* the shrimp tail (09-29): the school, its count, its cooldown */
         float cool = sv_f32(e, 1656);
         if (tank.shrimp_n != (e[1652] >= SHRIMP_START ? e[1652] : SHRIMP_START) || tank.shrimp_food != (e[1653] <= SHRIMP_PER_JOIN ? e[1653] : SHRIMP_PER_JOIN)
@@ -2361,6 +2378,7 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
         if ((sv_f32(e, 1676) > 0 && tank.urchin_x != sv_f32(e, 1676)) || tank.urchin_x < 0
             || tank.urchin_grazed_px != fmaxf(sv_f32(e, 1680), 0)) SV_FAIL("urchin at %.0f, %.0f px grazed", tank.urchin_x, tank.urchin_grazed_px);
     } else if (tank.urchin_x >= 0 || tank.urchin_grazed_px) SV_FAIL("an urchin without the unlock (%.0f)", tank.urchin_x);
+#endif
     if (memcmp(tank.decor_rank, e + 1900, 5)) SV_FAIL("the pieces' order %d %d %d %d %d", tank.decor_rank[0], tank.decor_rank[1], tank.decor_rank[2], tank.decor_rank[3], tank.decor_rank[4]);
     {                                                   /* the volcano's tail (0.3.9, 1912): x, depth + 1, its rank - zeros from an older save: the default spot, BEHIND, no rank */
         float vx = sv_f32(e, 1912);
@@ -2375,6 +2393,7 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
         if (fabsf(tank_decor_x(&tank, 8) - want_x) > (px > 0 ? 200.0f : 0.01f)   /* (a saved x is clamped to the glass) */
             || tank_decor_z(&tank, 8) != (pz == DECOR_Z_FRONT + 1 ? DECOR_Z_FRONT : DECOR_Z_BACK)) SV_FAIL("pumpkin at %.0f depth %d", tank_decor_x(&tank, 8), tank_decor_z(&tank, 8));
     }
+#if !PT_TERRARIUM   /* aquarium only: the seahorse's and the crab's tails (see the school and the urchin above) */
     if (tank.sd_unlocks & SD_ITEM_SEAHORSE) {           /* the seahorse tail (0.3.6, at 1864 past main's reserved 0.4 bytes): its tally */
         if (tank.sh_x < 0 || tank.sh_s != fmaxf(sv_f32(e, 1864), 0) || tank.sh_hitches != (int32_t)sv_u32(e, 1868)
             || tank.sh_trust_passed != fmaxf(sv_f32(e, 1872), 0)) SV_FAIL("seahorse %.0f s, %d hitches, +%.2f trust", tank.sh_s, (int)tank.sh_hitches, tank.sh_trust_passed);
@@ -2388,29 +2407,36 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
         if (w ? fabsf(tank.cr_find_cool - (float)(w - 1)) > 1 : (tank.cr_find_cool < CR_FIND_FIRST_LO_S || tank.cr_find_cool > CR_FIND_FIRST_HI_S))
             SV_FAIL("the crab's next find in %.0f s (the file's %u)", tank.cr_find_cool, (unsigned)w);
     }
-    {   /* the packs (pocket-terrarium P2a, 1956): pack_v 0 (every fixture: an older save) = the default species in the default habitat,
-           each lizard comfortable with a fresh shed clock for its stage, the humid hides at the habitat's start; 1 = as written (by slot:
-           our own saves keep their prints in order) - a pair that does not fit, or is another world's (P2b: another bin's save), loads
-           as the defaults, and then the tail's heat, sheds and moisture (that pack's) are not taken: fresh, as an older save's */
+#endif
+    {   /* the packs (pocket-terrarium P2a, 1956; by uid since issue #4 phase 1, 2104): pack_v 0 (every fixture: an older save) = the default
+           species in the default habitat, each lizard comfortable with a fresh shed clock for its stage, the humid hides at the habitat's
+           start; 1 = as written (by slot: our own saves keep their prints in order), the pair found by uid (2104, 2108) first and by the
+           one-byte ids (1957, 1958) when the save has no uid. A pair this build cannot hold - a pack it lacks, a pair that does not fit,
+           another world's (P2b: another bin's save) - is not swapped for the defaults: the tank is paused (packs_missing), the defaults
+           only drawn for it, and the tail's heat, sheds and moisture are exactly as saved */
         const bool pv = e[1956] != 0;
-        uint8_t pid = pv ? e[1957] : SPECIES_DEFAULT, hid = pv ? e[1958] : HABITAT_DEFAULT;
-        const bool held = pv && habitat_fits(habitat_get(hid), species_get(pid)) && species_get(pid)->world == PT_WORLD_ID;
-        if (!held) { pid = SPECIES_DEFAULT; hid = HABITAT_DEFAULT; }
+        const uint32_t su = sv_u32(e, 2104), hu = sv_u32(e, 2108);
+        const species_t *ps = pv ? (su ? species_by_uid(su) : species_get(e[1957])) : NULL;
+        const habitat_t *ph = pv ? (hu ? habitat_by_uid(hu) : habitat_get(e[1958])) : NULL;
+        const bool held = ps && ph && packs_compatible(ps, ph, NULL, 0), missing = pv && !held, tail = held || missing;
+        if (tank.packs_missing != missing) SV_FAIL("packs_missing %d, want %d", tank.packs_missing, missing);
+        const uint8_t pid = held ? ps->id : SPECIES_DEFAULT, hid = held ? ph->id : HABITAT_DEFAULT;
         if (tank.pack_id != pid || tank.habitat_id != hid) SV_FAIL("species %d in habitat %d, want %d in %d", tank.pack_id, tank.habitat_id, pid, hid);
         const species_t *sp = tank_species(&tank); const habitat_t *hb = tank_habitat(&tank);
         for (int i = 0; i < n; i++) {
             const fish_t *f = &tank.fish[i];
-            uint8_t st = held ? e[1960 + i] : SHED_NORMAL; bool gr = held && e[1966 + i];
-            uint16_t cl = held ? (uint16_t)(e[1972 + 2 * i] | e[1973 + 2 * i] << 8) : 0;
-            float bc = held ? sv_f32(e, 1984 + 4 * i) : (sp->t_lo + sp->t_hi) * 0.5f, ss = held ? sv_f32(e, 2008 + 4 * i) : sp->shed_every_s[f->stage & 3];
-            float sd = held ? sv_f32(e, 2032 + 4 * i) : 0;
+            uint8_t st = tail ? e[1960 + i] : SHED_NORMAL; bool gr = tail && e[1966 + i];
+            uint16_t cl = tail ? (uint16_t)(e[1972 + 2 * i] | e[1973 + 2 * i] << 8) : 0;
+            float bc = tail ? sv_f32(e, 1984 + 4 * i) : (sp->t_lo + sp->t_hi) * 0.5f, ss = tail ? sv_f32(e, 2008 + 4 * i) : sp->shed_every_s[f->stage & 3];
+            float sd = tail ? sv_f32(e, 2032 + 4 * i) : 0;
             if (f->shed != st || f->shed_growth != gr || f->shed_clean != cl || f->body_c != bc || f->shed_s != ss || f->shed_damp != sd || f->heat != species_heat_of(sp, bc))
                 SV_FAIL("fish %d: shed %d growth %d clean %d, %.2f C (heat %.2f), %.1f s / %.1f damp - want %d %d %d, %.2f C, %.1f / %.1f", i, f->shed, f->shed_growth, f->shed_clean,
                         f->body_c, f->heat, f->shed_s, f->shed_damp, st, gr, cl, bc, ss, sd);
         }
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
             bool humid = k < hb->n_hides && hb->hides[k].kind == HIDE_HUMID;
-            float want = !humid ? 0 : held ? sv_f32(e, 2056 + 4 * k) : hb->moist_start;
+            const float m = sv_f32(e, 2056 + 4 * k);
+            float want = missing ? (m >= 0 && m <= 1 ? m : 0) : !humid ? 0 : held ? m : hb->moist_start;
             if (tank.moist[k] != want) SV_FAIL("hide %d's moisture %.3f, want %.3f", k, tank.moist[k], want);
         }
     }
@@ -2603,18 +2629,19 @@ static int selftest_saves(void) {
     }
 #endif
     /* the packs tail (pocket-terrarium P2a): the pair, each animal's heat and shed and the hides' moisture come back as saved -
-       by print, like the genes (a fish sold under an older build moved the rest down: theirs follow them); a pair that does not
-       fit, or an id this build lacks, loads as the default pair - and so does another world's (P2b: a terrarium's save in the
-       aquarium's bin, or the other way), its animals fresh: the tail's heat and sheds are that pack's. The round trip is on this
-       world's own pair: the terrarium's test pack in the desert (not the default pair: its coming back is the tail's doing), the
-       aquarium's fish in freshwater (its one pair: the animals' tail proves it was taken; no hide to keep damp) */
+       by print, like the genes (a fish sold under an older build moved the rest down: theirs follow them); a pair this bin cannot
+       hold - a pair that does not fit, an id this build lacks, another world's (P2b: a terrarium's save in the aquarium's bin, or
+       the other way) - is no longer swapped for the defaults with fresh animals (issue #4 phase 1): the tank is PAUSED for its pack
+       and keeps it. The round trip is on this world's own pair: the terrarium's test pack in the desert (not the default pair: its
+       coming back is the tail's doing), the aquarium's fish in freshwater (its one pair: the animals' tail proves it was taken; no
+       hide to keep damp) */
     {
         const uint8_t own_h = PT_TERRARIUM ? HABITAT_DESERT : HABITAT_FRESHWATER, own_p = PT_TERRARIUM ? SPECIES_TEST_WARM : SPECIES_FISH;
         const uint8_t other_h = PT_TERRARIUM ? HABITAT_FRESHWATER : HABITAT_DESERT, other_p = PT_TERRARIUM ? SPECIES_FISH : SPECIES_GECKO;
         remove(getenv("POCKET_TANK_SAVE"));
         tank_init(&tank, 24); progression_wake(&tank, 0);
         while (tank.n_fish < 3) tank_add_fish(&tank, 0, 1);
-        if (!tank_set_packs(&tank, own_h, own_p)) { printf("FAIL: the %s refused its own pair, species %d in habitat %d\n", PT_WORLD_NAME, own_p, own_h); return 1; }
+        { char why[200] = ""; if (!tank_set_packs(&tank, own_h, own_p, why, sizeof why)) { printf("FAIL: the %s refused its own pair, species %d in habitat %d: %s\n", PT_WORLD_NAME, own_p, own_h, why); return 1; } }
         const int humid = tank_humid_hide(&tank);                       /* (-1: freshwater keeps no hide damp) */
         static const uint8_t ST[3] = { SHED_STUCK, SHED_SOON, SHED_SHEDDING };
         for (int i = 0; i < 3; i++) {
@@ -2645,37 +2672,63 @@ static int selftest_saves(void) {
         if (tank.n_fish != 2 || tank.fish[1].uid != uid1 || tank.fish[1].shed != ST[2] || tank.fish[1].shed_clean != 9 || tank.fish[1].body_c != 33.75f - 8) {
             printf("FAIL: after a sale under an older head, slot 1 is %08x (want %08x) shed %d clean %d %.2f C - its tail is not its own\n",
                    (unsigned)tank.fish[1].uid, (unsigned)uid1, tank.fish[1].shed, tank.fish[1].shed_clean, tank.fish[1].body_c); return 1; }
-        /* a pair that does not fit, one this build has no pack for, and another world's: the defaults, the animals fresh (the default
-           pack's comfortable body and a new shed clock, tank_lizard_fresh), the humid hides at the habitat's start */
+        /* a pair that does not fit, one this build has no pack for, and another world's - named by the one-byte ids of an older save
+           (the uids zeroed) - is no longer the defaults with fresh animals (issue #4 phase 1): the tank is PAUSED for its pack, the
+           defaults only drawn for it, every animal's tail and the hides' moisture exactly as saved, and the pair - the ids, the tail -
+           comes back through a save and a reload while it waits (docs/ptpk.md "A tank and its packs") */
+        static uint8_t base[4096], again[4096];
+        memcpy(base, pk, SAVE_NOW);
         for (int bad = 0; bad < 3; bad++) {
+            memcpy(pk, base, SAVE_NOW); memset(pk + 2104, 0, SAVE_NOW - 2104);
             pk[1957] = bad == 2 ? other_p : bad ? 99 : SPECIES_GECKO; pk[1958] = bad == 2 ? other_h : bad ? HABITAT_DESERT : 77;
             wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(pk, 1, SAVE_NOW, wf); fclose(wf);
             tank_init(&tank, 27); progression_wake(&tank, 0);
-            if (tank.pack_id != SPECIES_DEFAULT || tank.habitat_id != HABITAT_DEFAULT) { printf("FAIL: a save of species %d in habitat %d loaded as %d in %d, not the defaults\n", pk[1957], pk[1958], tank.pack_id, tank.habitat_id); return 1; }
-            const species_t *dp = tank_species(&tank); const habitat_t *dh = tank_habitat(&tank);
-            for (int i = 0; i < tank.n_fish; i++) {
+            if (!tank.packs_missing || tank.pack_id != SPECIES_DEFAULT || tank.habitat_id != HABITAT_DEFAULT) {
+                printf("FAIL: a save of species %d in habitat %d loaded as %d in %d (missing %d): not a paused tank with the defaults drawn\n", pk[1957], pk[1958], tank.pack_id, tank.habitat_id, tank.packs_missing); return 1; }
+            const species_t *dp = tank_species(&tank);
+            for (int i = 0; i < tank.n_fish && i < 3; i++) {
                 const fish_t *f = &tank.fish[i];
-                if (f->shed != SHED_NORMAL || f->shed_growth || f->shed_clean || f->shed_damp != 0 || f->body_c != (dp->t_lo + dp->t_hi) * 0.5f || f->shed_s != dp->shed_every_s[f->stage & 3]) {
-                    printf("FAIL: a save of species %d in habitat %d: animal %d kept the tail's shed %d clean %d, %.2f C (want a fresh one)\n", pk[1957], pk[1958], i, f->shed, f->shed_clean, f->body_c); return 1; }
+                if (f->shed != ST[i] || f->shed_s != 100.5f + 11 * i || f->shed_damp != 2.25f * i || f->shed_growth != (i != 1) || f->shed_clean != 7 + i || f->body_c != 33.75f - 4 * i || f->heat != species_heat_of(dp, f->body_c)) {
+                    printf("FAIL: a save of species %d in habitat %d: animal %d's tail was not kept as saved (shed %d clean %d, %.2f C)\n", pk[1957], pk[1958], i, f->shed, f->shed_clean, f->body_c); return 1; }
             }
-            for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
-                const bool hu = k < dh->n_hides && dh->hides[k].kind == HIDE_HUMID;
-                if (tank.moist[k] != (hu ? dh->moist_start : 0)) { printf("FAIL: a save of species %d in habitat %d: hide %d's moisture %.4f, want %.4f\n", pk[1957], pk[1958], k, tank.moist[k], hu ? dh->moist_start : 0); return 1; }
-            }
+            for (int k = 0; k < HABITAT_HIDES_MAX; k++)
+                if (tank.moist[k] != (k == humid ? 0.4375f : 0)) { printf("FAIL: a save of species %d in habitat %d: hide %d's moisture %.4f was not kept as saved\n", pk[1957], pk[1958], k, tank.moist[k]); return 1; }
+            progression_save(&tank);                                    /* the save while it waits: the pair and the tail as they came */
+            if (saves_read(again, sizeof again) != SAVE_NOW || memcmp(again + 1956, pk + 1956, SAVE_NOW - 1956)) {
+                printf("FAIL: a save of species %d in habitat %d: the pair or the tail did not survive a save while its pack is missing\n", pk[1957], pk[1958]); return 1; }
+            tank_init(&tank, 27); progression_wake(&tank, 0);
+            if (!tank.packs_missing) { printf("FAIL: a save of species %d in habitat %d: the tank stopped waiting after a save and a reload\n", pk[1957], pk[1958]); return 1; }
         }
-        printf("selftest-saves: the packs tail: %s in the %s, three animals' heat and shed%s come back as saved, by print after a sale; an unknown pair loads as the defaults, "
-               "and another world's (%s in the %s) too, its animals fresh\n", species_get(own_p)->name, habitat_get(own_h)->name, humid >= 0 ? " and the humid hide's moisture" : "",
-               species_get(other_p)->name, habitat_get(other_h)->name);
+        /* the uids decide first: wrong one-byte ids over the pair's own uids load the pair; a uid that is not loaded over ids that name
+           a pack that is - the tank waits (the uid is its identity, the ids may be stale after a rollback); an older save's ids alone
+           load it too */
+        for (int via = 0; via < 3; via++) {
+            memcpy(pk, base, SAVE_NOW);
+            if (via == 0) { pk[1957] = 99; pk[1958] = 77; } else if (via == 1) pk[2104] ^= 0xff; else memset(pk + 2104, 0, SAVE_NOW - 2104);
+            wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(pk, 1, SAVE_NOW, wf); fclose(wf);
+            tank_init(&tank, 27); progression_wake(&tank, 0);
+            const bool want_missing = via == 1;
+            if (tank.packs_missing != want_missing || (!want_missing && (tank.pack_id != own_p || tank.habitat_id != own_h))) {
+                printf("FAIL: the packs by %s: missing %d, species %d in habitat %d (want %s)\n", via == 0 ? "uid over wrong ids" : via == 1 ? "an unloaded uid over right ids" : "ids alone",
+                       tank.packs_missing, tank.pack_id, tank.habitat_id, want_missing ? "waiting" : "the own pair"); return 1; }
+        }
+        printf("selftest-saves: the packs tail: %s in the %s, three animals' heat and shed%s come back as saved, by print after a sale; a pair this bin cannot hold (an unknown "
+               "pair, another world's %s in the %s) pauses the tank - the defaults drawn, the tail, the moisture and the ids kept through a save and a reload; the uids decide before the one-byte ids\n",
+               species_get(own_p)->name, habitat_get(own_h)->name, humid >= 0 ? " and the humid hide's moisture" : "", species_get(other_p)->name, habitat_get(other_h)->name);
     }
     /* the dish (pocket-terrarium P2c, save_t.dish_worms at 2096, appended past P2a's tail): the terrarium's worms come back as
        saved, more than a full dish loads full, P2a's own 2096-byte save (no dish byte) loads an empty dish, and a pair this bin
-       does not hold loads none (the defaults, as the hides' moisture); a habitat without a dish (the aquarium's freshwater)
-       writes 0 there whatever the tank holds */
+       does not hold keeps its worms as saved, for the pack to come (issue #4 phase 1); a habitat without a dish (the aquarium's
+       freshwater) writes 0 there whatever the tank holds */
     {
         const uint8_t other_h = PT_TERRARIUM ? HABITAT_FRESHWATER : HABITAT_DESERT, other_p = PT_TERRARIUM ? SPECIES_FISH : SPECIES_GECKO;
         remove(getenv("POCKET_TANK_SAVE"));
         tank_init(&tank, 28); progression_wake(&tank, 0);
+#if PT_TERRARIUM   /* terrarium only: tank_dish_here is its module's (worlds/terrarium/crickets.c); the aquarium's bin asks the habitat's flag it wraps */
         const bool dish = tank_dish_here(&tank);
+#else
+        const bool dish = tank_habitat(&tank)->dish;
+#endif
         if (dish != PT_TERRARIUM) { printf("FAIL: the %s's %s %s a mealworm dish\n", PT_WORLD_NAME, tank_habitat(&tank)->name, dish ? "has" : "lacks"); return 1; }
         const int want = dish ? 4 : 0;
         tank.dish_worms = 4; progression_save(&tank);
@@ -2684,17 +2737,17 @@ static int selftest_saves(void) {
         tank_init(&tank, 29); progression_wake(&tank, 0);
         if (tank.dish_worms != want) { printf("FAIL: the dish came back with %d worms, want %d\n", tank.dish_worms, want); return 1; }
         static const struct { const char *what; uint8_t worms; size_t len; bool other; int want; } DC[3] = {
-            { "more than a full dish", 200, SAVE_NOW, false, DISH_WORMS }, { "P2a's save, before the dish", 3, 2096, false, 0 }, { "another world's pair", 3, SAVE_NOW, true, 0 } };
+            { "more than a full dish", 200, SAVE_NOW, false, DISH_WORMS }, { "P2a's save, before the dish", 3, 2096, false, 0 }, { "another world's pair", 3, SAVE_NOW, true, 3 } };
         for (int c = 0; c < 3; c++) {
             dk[2096] = DC[c].worms;
-            if (DC[c].other) { dk[1957] = other_p; dk[1958] = other_h; }
+            if (DC[c].other) { dk[1957] = other_p; dk[1958] = other_h; memset(dk + 2104, 0, SAVE_NOW - 2104); }
             FILE *wf = fopen(getenv("POCKET_TANK_SAVE"), "wb"); fwrite(dk, 1, DC[c].len, wf); fclose(wf);
             tank_init(&tank, 30); progression_wake(&tank, 0);
-            const int w = dish ? DC[c].want : 0;
+            const int w = DC[c].other ? DC[c].want : dish ? DC[c].want : 0;
             if (tank.n_fish < 2 || tank.dish_worms != w) { printf("FAIL: the dish, %s: %d fish, %d worms (want %d)\n", DC[c].what, tank.n_fish, tank.dish_worms, w); return 1; }
         }
-        printf("selftest-saves: the dish at 2096: %s\n", dish ? "its worms come back as saved, more than a full dish loads full; P2a's 2096-byte save and another world's pair load an empty dish"
-                                                          : "the freshwater has none - 0 written whatever the tank holds, none loaded");
+        printf("selftest-saves: the dish at 2096: %s\n", dish ? "its worms come back as saved, more than a full dish loads full; P2a's 2096-byte save loads an empty dish; another world's pair keeps its worms for its pack"
+                                                          : "the freshwater has none - 0 written whatever the tank holds, none loaded; another world's pair keeps its worms for its pack");
     }
     remove(getenv("POCKET_TANK_SAVE"));
     for (int k = 0; k < nf; k++) free(names[k]);
@@ -3923,6 +3976,7 @@ static void frame_cb(lv_timer_t *timer) {
         if (battery_view && now - battery_view_ms > BATTERY_VIEW_MS) battery_view = false;
     }
     progression_tick(&tank, dt);
+    sim_packs_poll(tank.packs_missing, dt);       /* a tank waiting for a pack looks in the packs folder again every few seconds (the tick resumes it) */
     if (!confirm_view) {                          /* an arrival owed its welcome: the birth flow (setup.c) */
         int nb = setup_poll_birth(&tank);
         if (nb >= 0) { selected_fish = -1; milestones_view = false; snd(SND_ARRIVAL, AUDIO_PITCH_ONE);
@@ -4691,6 +4745,7 @@ static int page_shot(const char *prefix) {
     return 0;
 #endif
 }
+#if !PT_TERRARIUM   /* aquarium only, to --square-boot's end: the aquarium scene's shots and tests - the swim depth, the grass loop, the pieces, the crab, the urchin, the seahorse (worlds/aquarium/) */
 /* --depth-shot <prefix> (EXPLORATION 10-31, Strato: fish and critters choose to swim in front of, behind or through
  * the grass and the pieces; a piece's depth only orders the pieces). Each frame is built the way the board would:
  * the creature drawn, then the occluder's own pixels put back where it is behind them - here taken from renders
@@ -5797,6 +5852,7 @@ static int square_boot(const char *prefix) {
     render_grass_loop_on(false);
     return fails ? 1 : 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --selftest-order-squares (0.4, Strato 11-02: "a universal object in front / behind squares", the sword plant's page): taps on the
  * two squares in the DEPTH bar's place, through setup_touch as a finger. Alone: no piece to show, a tap does nothing. Beside the
@@ -5881,6 +5937,7 @@ static int order_shot(const char *prefix) {
     printf("order-shot: %s_order_*.ppm\n", prefix);
     return 0;
 }
+#if !PT_TERRARIUM   /* aquarium only: the sword plant's, the coral's and the pumpkin's placement pages (--place-shot stages the aquarium's plant) */
 /* --place-shot <prefix> (0.3.9.4 ART, Strato: the sword plant's stacking UI as the other decorations'): the square's own stack -
  * the sword plant, the coral, the pumpkin - and the plant's placement page at each depth, then the pumpkin's to compare */
 static int place_shot(const char *prefix) {
@@ -5923,6 +5980,7 @@ static int place_shot(const char *prefix) {
     printf("place-shot: %s_place_plant_{alone,by_pumpkin}.ppm (0.4), %s_place_plant_{behind,front}.ppm, %s_place_pumpkin.ppm, %s_place_{coral,cluster}_{behind,front}.ppm\n", prefix, prefix, prefix, prefix);
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --plant-order (Strato on the square 10-31: the plant's arrows never name the pumpkin): his stack, the plant stepped forward */
 static int plant_order(void) {
@@ -6013,6 +6071,7 @@ static int selftest_bake_order(const char *prefix) {
     return fails ? 1 : 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only, to --selftest-boot-show's end: the pieces against the grass loop, and the boot show as the aquarium's scene plays it */
 /* --selftest-footprint [prefix] (0.3.9.4, Strato on the square 10-31: "grass clicking on the edges" of the pumpkin): every piece IN
  * FRONT among the back grass, the sword plant IN FRONT ranked under it with its leaves across it - first with the grass loop on and
  * whole, then with the grass drawn live. On the piece's BODY (its recorded mask) every pixel is the piece's own, frame for frame
@@ -6330,6 +6389,7 @@ static int selftest_boot_show(void) {
     printf("selftest-boot-show: %s\n", fails ? "FAIL" : "PASS");
     return fails ? 1 : 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --shelf-shot <prefix> [jelly.ppm]: the tank switcher's pages for Strato's
  * eye (ART FOR APPROVAL, 2026-10-29, docs/tank-switcher.md). Five tanks
@@ -6474,7 +6534,9 @@ static int clip(const char *prefix, int seconds) {
     }
     tank.sd_unlocks |= SD_ITEM_CASTLE | SD_ITEM_CORAL | SD_ITEM_CLUSTER | SD_ITEM_URCHIN | SD_ITEM_SHRIMP | SD_ITEM_SEAHORSE;
     tank_castle_place(&tank); tank_coral_place(&tank); tank_cluster_place(&tank);
+#if !PT_TERRARIUM   /* aquarium only: the urchin, the shrimp school and the seahorse (worlds/aquarium/critters/) */
     tank_urchin_place(&tank); tank_shrimp_place(&tank, 6); tank_seahorse_place(&tank);
+#endif
     tank_decor_set(&tank, 2, 336 * sx, DECOR_Z_FRONT);
     tank_decor_set(&tank, 3, 208 * sx, DECOR_Z_FRONT);
     tank_coral_set_rgb(&tank, CORAL_PAL[7]); tank.coral_growth = CORAL_FULL;
@@ -6723,6 +6785,7 @@ static int genes_shot(const char *prefix) {
     return 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only: the host timer of the pumpkin, volcano, crab and grass-loop runs below */
 /* --pumpkin <prefix> (0.3.6): the pumpkin lantern in a lived-in tank - the
  * castle behind it, the urchin and the shrimp on the sand, the seahorse on a
  * blade, three fish about - by day and with the light off, BEHIND and IN
@@ -6731,6 +6794,7 @@ static int genes_shot(const char *prefix) {
  * and without it, day and night (host time: the difference, not the
  * board's milliseconds - the board's A/B is director `pumpkin on|off`). */
 static double now_us(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3; }
+#endif
 /* a bed at about growth g, RAGGED like a real tank's (every blade its own
  * height under its own ceiling; tank_veg_set makes them all one height) */
 float tank_veg_cap(int b, int i);
@@ -6937,6 +7001,7 @@ static int pumpkin_fish_shot(const char *prefix) {
     return 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only, to --selftest-stack's end: the depth, castle, seahorse, grass loop and render-stack hunts and tests (the shrimp school, the seahorse, the grass loop, the pieces' covers) */
 /* --pumpkin-fish-hunt <prefix> (0.3.9.6, the same thread): a pendant-like tank (the pumpkin IN FRONT of the left bed, the coral
  * beside it, the castle, the cluster, the volcano) lived for PF_SECS seconds; every frame a fish's box meets the pumpkin, a forked
  * copy of the sim renders the same moment without that fish (A), and without the pumpkin with and without it (B, B0). Over the
@@ -8827,6 +8892,7 @@ static int selftest_stack(const char *prefix) {
     printf("selftest-stack: %d cells of the render stack hold (the crab in %d states, the urchin and the snail in either lane, at a flank and the middle x %d pieces at either depth or none x %d passers x the light on and off; %d cells where the pair cannot meet skipped)\n", cells, SC_N, (SPC_N - 1) / 2, SP_N, skipped);
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --selftest-floor [prefix] (2026-10-24): nothing of a fish is ever painted
  * below the sand line. Strato: a fish leaving the pellets on the floor swung
@@ -8928,7 +8994,9 @@ static int selftest_restore(void) {
     tank_decor_set(&tank, 2, TANK_FLOOR_X(110), DECOR_Z_FRONT); tank_decor_set(&tank, 9, TANK_FLOOR_X(300), DECOR_Z_BACK); tank_decor_set(&tank, 8, TANK_FLOOR_X(220), DECOR_Z_BACK);
     tank.coral_growth = 1.2f; tank_veg_set(&tank, 3, 0.6f);
     veg_ragged(&tank, 0, 0.7f); veg_ragged(&tank, 1, 0.6f); veg_ragged(&tank, 2, 0.75f);
+#if !PT_TERRARIUM   /* aquarium only: its critters (the urchin, the shrimp school, the seahorse) */
     tank_urchin_place(&tank); tank_shrimp_place(&tank, 6); tank_seahorse_place(&tank);
+#endif
     for (int i = 0; i < 5 * 60; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
     tank.sd_balance = 500;
     render_set_scene_cache(scene_buf); render_set_vignette_cache(vig_buf); render_set_card_cache(card_buf); SIM_MODAL_CACHE(); render_set_dirty_mask(dirty_buf);
@@ -9447,7 +9515,10 @@ static int snapshot(const char *prefix, int seconds) {
     render_shop_tap(&tank, PAGE_X + 60, PAGE_Y + 320); render_shop(&tank, fb, TANK_W);                /* HOW TO EARN */
     snprintf(path, sizeof path, "%s_shop_earn.ppm", prefix); write_ppm(path, fb);
     render_shop_leave();
-    tank.sd_unlocks = SD_ITEM_PLANT | SD_ITEM_SNAIL; tank_plant_place(&tank); tank_snail_place(&tank);
+    tank.sd_unlocks = SD_ITEM_PLANT | SD_ITEM_SNAIL; tank_plant_place(&tank);
+#if !PT_TERRARIUM   /* aquarium only: the snail (worlds/aquarium/critters/snail.c) */
+    tank_snail_place(&tank);
+#endif
     tank_veg_set(&tank, 3, 0.45f);
     tank.snail_x = 120; tank.snail_y = 140;
     tank.sd_balance = 12; render_shop(&tank, fb, TANK_W);
@@ -9470,8 +9541,11 @@ static int snapshot(const char *prefix, int seconds) {
         render_tank(&tank, fb, TANK_W);
         snprintf(path, sizeof path, "%s_tank_snail_grass.ppm", prefix); write_ppm(path, fb);
         tank.snail_x = sx; }
-      tank.snail_grazed = 128; render_tank(&tank, fb, TANK_W); render_stats_card(&tank, RENDER_CARD_SNAIL, fb, TANK_W);
+      tank.snail_grazed = 128; render_tank(&tank, fb, TANK_W);
+#if !PT_TERRARIUM   /* aquarium only: the snail's card (a card for a critter only the aquarium has) */
+      render_stats_card(&tank, RENDER_CARD_SNAIL, fb, TANK_W);
       snprintf(path, sizeof path, "%s_snail_card.ppm", prefix); write_ppm(path, fb);         /* its card (2026-09-16) */
+#endif
       memcpy(tank.algae, film, sizeof film); }
     { memset(tank.algae, 0, sizeof tank.algae); tank.snail_cell = -1; tank.snail_x = 200; tank.snail_y = 250;
       tank.algae[2 * ALGAE_COLS + 12] = 150;                    /* film straight above: the glass snail climbs, head first */
@@ -9479,7 +9553,10 @@ static int snapshot(const char *prefix, int seconds) {
       render_tank(&tank, fb, TANK_W);
       snprintf(path, sizeof path, "%s_tank_snail_up.ppm", prefix); write_ppm(path, fb);
       memcpy(tank.algae, film, sizeof film); }
-    { tank.sd_unlocks |= SD_ITEM_URCHIN; tank_urchin_place(&tank);   /* the urchin (2026-10-02): at the foot of the right bed, chewing; its card */
+    { tank.sd_unlocks |= SD_ITEM_URCHIN;   /* the urchin (2026-10-02): at the foot of the right bed, chewing; its card */
+#if !PT_TERRARIUM   /* aquarium only: the urchin (worlds/aquarium/critters/urchin.c) */
+      tank_urchin_place(&tank);
+#endif
       for (int b = 0; b < VEG_BEDS; b++) tank_veg_set(&tank, b, 0.6f);
       tank.veg_h[1][2] = 0.85f; tank_veg_sync(&tank);
       float fx; tank_veg_frond(&tank, 1, 2, &fx);
@@ -9490,9 +9567,16 @@ static int snapshot(const char *prefix, int seconds) {
       tank.urchin_x = PLANT_X_DEFAULT + 40; tank.urchin_bed = tank.urchin_frond = -1; tank.urchin_rest = 60;   /* out on the sand */
       render_tank(&tank, fb, TANK_W);
       snprintf(path, sizeof path, "%s_tank_urchin_sand.ppm", prefix); write_ppm(path, fb);
-      tank.urchin_grazed_px = 1234; render_stats_card(&tank, RENDER_CARD_URCHIN, fb, TANK_W);
-      snprintf(path, sizeof path, "%s_urchin_card.ppm", prefix); write_ppm(path, fb); }
-    { tank.sd_unlocks |= SD_ITEM_SEAHORSE; tank_seahorse_place(&tank);   /* the seahorse (0.3.6): on a blade, swaying; adrift; at the finger; its card */
+      tank.urchin_grazed_px = 1234;
+#if !PT_TERRARIUM   /* aquarium only: the urchin's card */
+      render_stats_card(&tank, RENDER_CARD_URCHIN, fb, TANK_W);
+      snprintf(path, sizeof path, "%s_urchin_card.ppm", prefix); write_ppm(path, fb);
+#endif
+    }
+    { tank.sd_unlocks |= SD_ITEM_SEAHORSE;   /* the seahorse (0.3.6): on a blade, swaying; adrift; at the finger; its card */
+#if !PT_TERRARIUM   /* aquarium only: the seahorse (worlds/aquarium/critters/seahorse.c) */
+      tank_seahorse_place(&tank);
+#endif
       for (int i = 0; i < 30; i++) tank_tick(&tank, 1.0f / 60.0f, advisor_rules);
       render_tank(&tank, fb, TANK_W);
       snprintf(path, sizeof path, "%s_tank_seahorse.ppm", prefix); write_ppm(path, fb);
@@ -9551,12 +9635,16 @@ static int snapshot(const char *prefix, int seconds) {
       { /* the snatch at its furthest: the head and neck out (SH_SNAP_AT) */
         tank.sh_snap = SH_SNAP_AT; tank.sh_snap_food = -1;
         render_tank(&tank, fb, TANK_W); snprintf(path, sizeof path, "%s_tank_seahorse_snatch.ppm", prefix); write_ppm(path, fb);
+#if !PT_TERRARIUM   /* aquarium only: the seahorse's reach (tank_seahorse_jut) */
         printf("snatch shot: at %.0f,%.0f jut %.1f\n", tank.sh_x, tank.sh_y, tank_seahorse_jut(&tank));
+#endif
         tank.sh_snap = -1;
         render_tank(&tank, fb, TANK_W); snprintf(path, sizeof path, "%s_tank_seahorse_nosnatch.ppm", prefix); write_ppm(path, fb); }
       tank.sh_s = 3.5f * 86400; tank.sh_hitches = 12; tank.sh_trust_passed = 2.4f;
+#if !PT_TERRARIUM   /* aquarium only: the seahorse's card (a card for a critter only the aquarium has) */
       render_stats_card(&tank, RENDER_CARD_SEAHORSE, fb, TANK_W);
       snprintf(path, sizeof path, "%s_seahorse_card.ppm", prefix); write_ppm(path, fb);
+#endif
       tank.sd_unlocks &= ~SD_ITEM_SEAHORSE; tank.sh_x = -1; }
     tank.sd_unlocks = 0; tank.sd_balance = 0;
     render_milestones_tap(&tank, PAGE_X + 176 + 16, PAGE_Y + 4 + 40 + 20);           /* fish 1's first badge -> the detail modal */
@@ -9907,6 +9995,7 @@ static int selftest_battery(void) {
     return fails ? 1 : 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only, to --selftest-shop's end: the aquarium's shop, sand dollars and critters (the crab's pellet race first) */
 /* --selftest-shop (2026-09-15): the sand dollars. A fresh tank has none; a
  * feeding pays only once somebody eats from it; stages, a birth and full
  * trust pay once each, and a save round-trip never pays again; the two chore
@@ -12213,6 +12302,7 @@ static int selftest_shop(void) {
     printf("selftest-shop ok\n");
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --selftest-hunger: the hunger economy (tank.c, 2026-09-01). An untended
  * 4-fish tank for 40 minutes of awake time under the rules brain: the
@@ -12384,6 +12474,7 @@ static int bench(void) {
     return 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only: --bench-place, the placement pages over the grass loop and the critters */
 /* --bench-place (0.3.9.4, Strato's square 10-31: "the frame rate drops to a crawl" with a placement page up, "a
  * huge framerate drop" at DONE): his tank - five fish, the beds at 0.4, the sword plant IN FRONT at 0.72, the coral,
  * the pumpkin and the volcano IN FRONT (order coral < plant < pumpkin < volcano), the snail, the shrimp, the urchin
@@ -12459,6 +12550,7 @@ static int bench_place(void) {
     render_grass_loop_on(false);
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* --selftest-card [prefix] (2026-10-01): the milestones page's fish card -
  * RENAME (the letter wheel, CANCEL / DONE, the way back to the card) and SELL
@@ -12789,6 +12881,7 @@ static int selftest_clock(void) {
         gift_attach(&tank, NULL); tank.door_open[LINK_LEFT] = false;
 #endif
 
+#if !PT_TERRARIUM   /* aquarium only: the tail beat (render_fish_beat), the grass sway (render_sway_moment) and the snail (worlds/aquarium/critters/snail.c walks it) */
         /* the tail beat runs on through speed changes (a fish braking and bursting): no frame jumps it */
         { fish_t *f = &tank.fish[0]; float worst = 0, prev = render_fish_beat(&tank, 0), sp = f->speed;
           for (int n = 0; n < 150; n++) {
@@ -12814,12 +12907,14 @@ static int selftest_clock(void) {
         { int rested = 0, walked = 0; float x0 = tank.snail_x;
           for (int n = 0; n < 1500; n++) { float x = tank.snail_x, y = tank.snail_y; tank_tick(&tank, 0.04f, advisor_rules); if (tank.snail_x == x && tank.snail_y == y) rested++; else walked++; }
           if (rested < 100 || walked < 300) CK_CHECK("the snail in a minute: %d frames resting, %d walking (from x %.0f)", rested, walked, x0); }
+#endif
 
         /* a fish's wander after weeks of swimming (it was a float summed for good: stuck by ~8-12 days, the fish circled) */
         { fish_t *f = &tank.fish[1]; f->wander = 1048576.0f + 0.3f; float w0;
           tank_tick(&tank, 0.04f, advisor_rules); w0 = f->wander; ck_live(1);
           if (!(w0 >= 0 && w0 < 62.84f) || fabsf(f->wander - w0) < 0.4f) CK_CHECK("the wander phase is not running on (%.4f, then %.4f a second on)", w0, f->wander); }
 
+#if !PT_TERRARIUM   /* aquarium only: the seahorse (tank_seahorse_place; a save puts it back through the aquarium's restore hook) */
         /* the seahorse's days with the keeper, saved: they keep counting, and come back to the second */
         { tank.sd_unlocks |= SD_ITEM_SEAHORSE; tank_seahorse_place(&tank);
           tank.sh_s = days * 86400.0 + 0.5; ck_live(10);
@@ -12827,6 +12922,7 @@ static int selftest_clock(void) {
           double sh = tank.sh_s; progression_save(&tank);
           static tank_t back; tank_init(&back, 5); progression_boot(&back);
           if (!(back.sd_unlocks & SD_ITEM_SEAHORSE) || fabs((double)back.sh_s - sh) > 1.0) CK_CHECK("the seahorse's saved time came back %.1f s off", (double)back.sh_s - sh); }
+#endif   /* !PT_TERRARIUM */
 
 #if PT_NET
         /* a door visit, at this clock, ends on its own (the aquarium's: a lizard never takes a door - tank.h THE WALK) */
@@ -13182,6 +13278,7 @@ static int selftest_fry(const char *prefix) {
     return 0;
 }
 
+#if !PT_TERRARIUM   /* aquarium only, to --crab's end: the critters' cards and arrows and the crab's reels (the snail, the shrimp school, the urchin, the seahorse, the crab) */
 /* --crab <prefix> (0.3.9): the strawberry crab in --volcano's lived-in tank,
  * two scripted reels at 10 frames a second (every 6th tick at 60 Hz), real
  * time unless said: A (<prefix>_a_NNN.ppm) - a walk, a dig where it stops, a
@@ -13371,6 +13468,7 @@ shop:
     }
     return 0;
 }
+#endif   /* !PT_TERRARIUM */
 
 /* THE CAP's guard (progression.h): a tank past POP_CAP fails the running selftest at once, loudly, with the path that
    did it; the interactive sim says it once and runs on, as the device does */
@@ -13384,20 +13482,26 @@ static void cap_breach(const tank_t *t, int held, const char *file, int line, co
     if (g_cap_fatal) exit(3);
 }
 int main(int argc, char **argv) {
+#if !PT_TERRARIUM   /* aquarium only: the swim depth buffer */
     render_set_depth_buf(malloc(render_depth_buf_bytes()));   /* SWIM DEPTH (0.3.9.4): as the boards do */
+#endif
     progression_cap_hook = cap_breach;
     for (int a = 1; a < argc; a++) if (!strncmp(argv[a], "--selftest", 10) || !strcmp(argv[a], "--square-boot")) g_cap_fatal = true;
     if (g_cap_fatal) {                           /* a selftest never touches the sim's own tank, shelf or wifi: what it does not name is the run's (sim_tmp.h) */
-        static const char *const ENV[4][2] = { { "POCKET_TANK_SAVE", "tank.sav" }, { "POCKET_TANK_STORAGE", "storage.bin" }, { "POCKET_TANK_FRAME", "frame" }, { "POCKET_TANK_WIFI", "wifi.txt" } };
-        for (int k = 0; k < 4; k++) if (!getenv(ENV[k][0])) setenv(ENV[k][0], sim_tmp(ENV[k][1]), 1);
+        static const char *const ENV[5][2] = { { "POCKET_TANK_SAVE", "tank.sav" }, { "POCKET_TANK_STORAGE", "storage.bin" }, { "POCKET_TANK_FRAME", "frame" }, { "POCKET_TANK_WIFI", "wifi.txt" },
+                                               { "POCKET_PACKS_DIR", "packs" } };   /* (a folder that is not there: a selftest sees the built-in packs and the ones it makes itself) */
+        for (int k = 0; k < 5; k++) if (!getenv(ENV[k][0])) setenv(ENV[k][0], sim_tmp(ENV[k][1]), 1);
     }
+    sim_packs_scan(sim_packs_dir(), true);       /* the packs found in the folder (docs/ptpk.md): habitats first; a corrupt one is refused, said once */
 #if PT_NET
     collection_set_more(calloc(1, collection_more_size()));   /* the visitor pages 2..10 (0.4): the boards' PSRAM block */
 #endif
     for (int a = 1; a + 1 < argc; a++) if (strcmp(argv[a], "--hw") == 0) g_sim_hw = argv[a + 1];   /* the board it pretends to be (0.3.9.3) */
+#if !PT_TERRARIUM   /* aquarium only: the grass in row pairs and the grass cache (the aquarium scene's) */
     if (getenv("PT_VEG_STEP")) render_set_veg_step(atoi(getenv("PT_VEG_STEP")));   /* the grass in row pairs (2026-10-24) */
     if (getenv("PT_GRASS_CACHE")) { static uint16_t sg[TANK_W * TANK_H]; static uint32_t bgm[RENDER_DIRTY_WORDS];   /* the grass cache (2026-10-24): its period in ms */
         render_set_grass_cache(sg, bgm); render_set_grass_cache_on(true, atoi(getenv("PT_GRASS_CACHE"))); }
+#endif
     for (int a = 1; a < argc; a++)
         if (strcmp(argv[a], "--greedy") == 0) advisor_core_sample = false;
     for (int a = 1; a < argc; a++) {                 /* mode flags may sit anywhere */
@@ -13409,6 +13513,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-coll-pages") == 0) return selftest_coll_pages();
 #endif
         if (strcmp(argv[a], "--selftest-packs") == 0) return selftest_packs();
+        if (strcmp(argv[a], "--selftest-ptpk") == 0) return selftest_ptpk();
+        if (strcmp(argv[a], "--selftest-caps") == 0) return selftest_caps();
+#if PT_TERRARIUM   /* terrarium only: their definitions are compiled into that world's bin alone (selftest_packs.c, selftest_l1.c, selftest_walk.c) */
         if (strcmp(argv[a], "--selftest-heat") == 0) return selftest_heat();
         if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
         if (strcmp(argv[a], "--selftest-mister") == 0) return selftest_mister();
@@ -13423,11 +13530,15 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--census-llm") == 0 && a + 2 < argc)
             return census_llm(argv[a + 1], argv[a + 2], a + 3 < argc ? atoi(argv[a + 3]) : SPECIES_DEFAULT,
                               a + 4 < argc ? atoi(argv[a + 4]) : HABITAT_DEFAULT);
+#endif
         if (strcmp(argv[a], "--genes") == 0 && a + 1 < argc) return genes_shot(argv[a + 1]);
         if (strcmp(argv[a], "--plant-order") == 0) return plant_order();
+#if !PT_TERRARIUM   /* aquarium only: the shots and tests of its scene - their definitions are fenced above */
         if (strcmp(argv[a], "--place-shot") == 0 && a + 1 < argc) return place_shot(argv[a + 1]);
+#endif
         if (strcmp(argv[a], "--order-shot") == 0 && a + 1 < argc) return order_shot(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-order-squares") == 0) return selftest_order_squares();
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--pumpkin-grass") == 0) return pumpkin_grass();
         if (strcmp(argv[a], "--pumpkin-show") == 0) { int bad = 0; for (int x = 70; x <= 230; x += 40) { bad += pumpkin_show(false, x * TANK_W / 480); bad += pumpkin_show(true, x * TANK_W / 480); } return bad ? 1 : 0; }
         if (strcmp(argv[a], "--crab-card-shot") == 0 && a + 1 < argc) return crab_card_shot(argv[a + 1]);
@@ -13435,9 +13546,13 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--boot-show") == 0 && a + 1 < argc) return boot_show_shot(argv[a + 1], false);
         if (strcmp(argv[a], "--boot-show-fill") == 0 && a + 1 < argc) return boot_show_shot(argv[a + 1], true);
         if (strcmp(argv[a], "--selftest-boot-show") == 0) return selftest_boot_show();
+#endif
         if (strcmp(argv[a], "--shelf-shot") == 0 && a + 1 < argc) return shelf_shot(argv[a + 1], a + 2 < argc ? argv[a + 2] : NULL);
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--pumpkin") == 0 && a + 1 < argc) return pumpkin_shot(argv[a + 1]);
+#endif
         if (strcmp(argv[a], "--pumpkin-fish-shot") == 0 && a + 1 < argc) return pumpkin_fish_shot(argv[a + 1]);
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--pumpkin-fish-hunt") == 0 && a + 1 < argc) return pumpkin_fish_hunt(argv[a + 1]);
         if (strcmp(argv[a], "--depth-pop-hunt") == 0 && a + 1 < argc) return depth_pop_hunt(argv[a + 1]);
         if (strcmp(argv[a], "--castle-shot") == 0 && a + 1 < argc) return castle_shot(argv[a + 1]);
@@ -13446,20 +13561,26 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-hold-emerge") == 0) return selftest_hold_emerge(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-seahorse-post") == 0) return selftest_seahorse_post(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-depth-pop") == 0) return selftest_depth_pop(a + 1 < argc ? argv[a + 1] : NULL);
+#endif
         if (strcmp(argv[a], "--pumpkin-light") == 0 && a + 1 < argc) return pumpkin_light(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-pumpkin-light") == 0) return selftest_pumpkin_light();
         if (strcmp(argv[a], "--breather-trace") == 0 || strcmp(argv[a], "--selftest-breather") == 0) return breather_trace();
         if (strcmp(argv[a], "--selftest-hold") == 0) return selftest_hold();
         if (strcmp(argv[a], "--selftest-under-card") == 0) return selftest_under_card();
         if (strcmp(argv[a], "--save-shot") == 0 && a + 1 < argc) return save_shot(argv[a + 1]);
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--selftest-grassloop") == 0) return selftest_grassloop();
         if (strcmp(argv[a], "--selftest-grasspatch") == 0) return selftest_grasspatch();
+#endif
         if (strcmp(argv[a], "--selftest-touch-lock") == 0) return selftest_touch_lock();
         if (strcmp(argv[a], "--selftest-double-tap") == 0) return selftest_double_tap();
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--selftest-depth") == 0) return selftest_depth();
         if (strcmp(argv[a], "--selftest-fish-pair") == 0) return selftest_fish_pair(a + 1 < argc && argv[a + 1][0] != '-' ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--urchin-frond-shot") == 0) return urchin_frond_shot(a + 1 < argc ? argv[a + 1] : NULL);
+#endif
         if (strcmp(argv[a], "--selftest-bake-order") == 0) return selftest_bake_order(a + 1 < argc && argv[a + 1][0] != '-' ? argv[a + 1] : NULL);
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--selftest-footprint") == 0) return selftest_footprint(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-place") == 0) return selftest_place(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--square-boot") == 0) return square_boot(a + 1 < argc ? argv[a + 1] : NULL);
@@ -13467,9 +13588,12 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--selftest-roost") == 0) return selftest_roost(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-front-keep") == 0) return selftest_front_keep(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-seahorse-stack") == 0) return selftest_seahorse_stack(a + 1 < argc ? argv[a + 1] : NULL);
+#endif
         if (strcmp(argv[a], "--selftest-shelf-rename") == 0) return selftest_shelf_rename();
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--volcano") == 0 && a + 1 < argc) return volcano_shot(argv[a + 1]);
         if (strcmp(argv[a], "--crab") == 0 && a + 1 < argc) return crab_shot(argv[a + 1]);
+#endif
 #if PT_TERRARIUM
         if (strcmp(argv[a], "--lizard-sheet") == 0 && a + 1 < argc) { int lizard_sheet(const char *prefix); return lizard_sheet(argv[a + 1]); }   /* sheet_lizard.c (P3a) */
         if (strcmp(argv[a], "--terr-shot") == 0 && a + 1 < argc) { int terr_shot(const char *prefix); return terr_shot(argv[a + 1]); }   /* shot_terrarium.c (P3b) */
@@ -13480,8 +13604,10 @@ int main(int argc, char **argv) {
         if (strcmp(argv[a], "--terr-deco-shot") == 0 && a + 1 < argc) { int terr_deco_shot(const char *prefix); return terr_deco_shot(argv[a + 1]); }   /* ... its decorations (P5b) */
         if (strcmp(argv[a], "--selftest-terr-deco") == 0) { int selftest_terr_deco(void); return selftest_terr_deco(); }              /* ... bought, kept clear, saved, sold */
 #endif
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--critter-cards") == 0 && a + 1 < argc) return critter_cards(argv[a + 1]);
         if (strcmp(argv[a], "--selftest-critter-nav") == 0) return selftest_critter_nav();
+#endif
         if (strcmp(argv[a], "--fluid") == 0 && a + 1 < argc) return fluid(argv[a + 1]);
         if (strcmp(argv[a], "--clip") == 0 && a + 1 < argc)
             return clip(argv[a + 1], a + 2 < argc ? atoi(argv[a + 2]) : 6);
@@ -13490,14 +13616,20 @@ int main(int argc, char **argv) {
             return snapshot(argv[a + 1], a + 2 < argc ? atoi(argv[a + 2]) : 20); }
         if (strcmp(argv[a], "--selftest") == 0) return selftest();
         if (strcmp(argv[a], "--bench") == 0) return bench();
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--bench-place") == 0) return bench_place();
+#endif
         if (strcmp(argv[a], "--selftest-hunger") == 0) return selftest_hunger();
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--selftest-shop") == 0) return selftest_shop();
+#endif
         if (strcmp(argv[a], "--selftest-battery") == 0) return selftest_battery();
         if (strcmp(argv[a], "--selftest-restore") == 0) return selftest_restore();
         if (strcmp(argv[a], "--selftest-floor") == 0) return selftest_floor(a + 1 < argc ? argv[a + 1] : NULL);
+#if !PT_TERRARIUM   /* aquarium only */
         if (strcmp(argv[a], "--selftest-stack") == 0) return selftest_stack(a + 1 < argc ? argv[a + 1] : NULL);
         if (strcmp(argv[a], "--selftest-grasscache") == 0) return selftest_grasscache();
+#endif
         if (strcmp(argv[a], "--selftest-saves") == 0) return selftest_saves();
         if (strcmp(argv[a], "--selftest-genes") == 0) return selftest_genes();
         if (strcmp(argv[a], "--selftest-pop") == 0) return selftest_pop();
@@ -13629,10 +13761,12 @@ int main(int argc, char **argv) {
     bool kdown = false;             /* K: the coral (colours cycle) */
     bool jdown = false;             /* J: the coral's growth, a step */
     bool idown = false, odown = false;   /* I: the reef cluster (looks cycle); O: its growth */
+#if !PT_TERRARIUM   /* aquarium only: the keys of the shrimp school, the urchin, the crab and the seahorse */
     bool wdown = false;                  /* W: the shrimp school (grant; again +1; past the last takes it away) */
     bool ydown = false;                  /* Y: the urchin (grant; again takes it away) */
     bool hdown = false;                  /* 7: the strawberry crab (0.3.9), likewise (H is the held hand) */
     bool eightdown = false;              /* 8: the seahorse (grant; again takes it away) - every letter is taken */
+#endif
     bool held_page = false;              /* this press opened a piece's page by holding on it */
     uint32_t press_ms = 0; int press_x = 0, press_y = 0;
     float press_fx[N_FISH_MAX] = {0}, press_fy[N_FISH_MAX] = {0};
@@ -13868,6 +14002,7 @@ int main(int argc, char **argv) {
                 else if ((selected_fish < 0 || selected_fish >= tank.n_fish) && render_tool_chip_hit(&tank, (float)press_x, (float)press_y)) {
                     tank_set_tool(&tank, TOOL_HAND); printf("toolbox: DONE - back to bare hands\n");
                 }
+#if !PT_TERRARIUM   /* aquarium only: a crab's sand dollar held up (its card's COLLECT; the crab is the aquarium's) */
                 else if (selected_fish == RENDER_CARD_CRAB && render_crab_collect_hit(&tank, (float)press_x, (float)press_y)) {   /* the crab card's COLLECT (0.3.9.4) */
                     tank_crab_tap(&tank, tank.cr_x);
                     printf("crab card: COLLECT - you took its sand dollar (%u so far)\n", (unsigned)tank.cr_found);
@@ -13876,7 +14011,9 @@ int main(int argc, char **argv) {
                     tank_crab_tap(&tank, (float)press_x);
                     printf("crab tapped: you took its sand dollar (%u so far), first in line\n", (unsigned)tank.cr_found);
                 }
+#endif
                 else if (best >= 0) selected_fish = (best == selected_fish) ? -1 : best;
+#if !PT_TERRARIUM   /* aquarium only: a tap on the snail, the urchin, the crab, the seahorse or the shrimp school (worlds/aquarium/critters/) */
                 else if (tank_snail_hit(&tank, (float)press_x, (float)press_y))   /* the snail: its card (2026-09-16) */
                     selected_fish = selected_fish == RENDER_CARD_SNAIL ? -1 : RENDER_CARD_SNAIL;
                 else if (tank_urchin_hit(&tank, (float)press_x, (float)press_y)) {  /* the urchin: its card (2026-10-02) */
@@ -13899,6 +14036,7 @@ int main(int argc, char **argv) {
                     if (taps == 1) selected_fish = selected_fish == RENDER_CARD_SHRIMP ? -1 : RENDER_CARD_SHRIMP;
                     else if (taps >= 3) { selected_fish = -1; printf("shrimp: scared off (triple tap)\n"); }
                 }
+#endif
                 else if (selected_fish >= 0) selected_fish = -1;   /* card up: empty-glass tap dismisses, nothing else */
                 else tank_touch_tap(&tank, (float)press_x, (float)press_y);
             } else if (tank.tool == TOOL_HAND && press_y - tank_glass_top(press_x) < 60 && dy >= 40) tank_feed(&tank, (float)mx, 3);
@@ -13976,6 +14114,7 @@ int main(int argc, char **argv) {
             printf("cluster growth %.2f (1.0 = full size, %.2f = every tentacle)\n", tank.cluster_growth, CLUSTER_FULL);
         }
         odown = k[SDL_SCANCODE_O];
+#if !PT_TERRARIUM   /* aquarium only: W the shrimp school, Y the urchin */
         if (k[SDL_SCANCODE_W] && !wdown) {         /* the shrimp school (2026-09-29): granted free; again = one more; past SHRIMP_MAX takes them away */
             if (!(tank.sd_unlocks & SD_ITEM_SHRIMP)) { tank.sd_unlocks |= SD_ITEM_SHRIMP; tank_shrimp_place(&tank, SHRIMP_START); }
             else if (tank.shrimp_n < SHRIMP_MAX) tank_shrimp_place(&tank, tank.shrimp_n + 1);
@@ -13991,6 +14130,7 @@ int main(int argc, char **argv) {
                    (tank.sd_unlocks & SD_ITEM_URCHIN) ? "in the tank" : "gone", SD_PRICE_URCHIN);
         }
         ydown = k[SDL_SCANCODE_Y];
+#endif
         {   /* the genes (0.4): 1 / 2 / 3 step the body shape / fin set / pattern of the
                fish whose card is up, or of every fish (each one step on); 5 rolls every fish */
             static bool gdown[4];
@@ -14012,6 +14152,7 @@ int main(int argc, char **argv) {
                 gdown[g] = k[GK[g]];
             }
         }
+#if !PT_TERRARIUM   /* aquarium only: F the crab's dig, 7 the crab, 8 the seahorse */
         if (k[SDL_SCANCODE_F] && !hdown && (tank.sd_unlocks & SD_ITEM_CRAB)) {   /* F: the crab digs up a sand dollar within seconds (0.3.9) */
             tank.cr_find_cool = 0; tank.cr_y = 0; tank.cr_tilt = 0; tank.cr_cave = -1; tank.cr_mode = CR_DIG; tank.cr_mode_s = 0; tank.cr_timer = 60; tank.cr_find = 0;
             tank_handled(&tank);                                                 /* (the keeper is here: a due find needs that, and the light on) */
@@ -14031,6 +14172,7 @@ int main(int argc, char **argv) {
                    (tank.sd_unlocks & SD_ITEM_SEAHORSE) ? "in the tank" : "gone", SD_PRICE_SEAHORSE);
         }
         eightdown = k[SDL_SCANCODE_8];
+#endif
         if (k[SDL_SCANCODE_D] && !ddown) { progression_sd_grant(&tank, 50); printf("+50 sand dollars (%d)\n", tank.sd_balance); }
         ddown = k[SDL_SCANCODE_D];
         if (k[SDL_SCANCODE_U] && !udown) { ui_visible = !ui_visible; }

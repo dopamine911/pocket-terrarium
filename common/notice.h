@@ -49,20 +49,29 @@
  * watch): the 1.8's image runs on every board, small and on its side, and
  * the boot's chip probe knows the board (board_port_hw). When that is not the
  * board this version is for, a cold start (not a wake from sleep) says so and
- * names the fix; it waits for a tap, as the damaged model does. */
+ * names the fix; it waits for a tap, as the damaged model does.
+ *
+ * NOTICE_PACK_MISSING (issue #4 phase 1, docs/ptpk.md "A tank and its packs"): the save names a species or a habitat pack
+ * this build does not have (tank.h packs_missing): the tank holds still - the card says so, with the pack's name as the
+ * save knew it (progression_packs_missing_name) - and waits for a tap, then again every NOTICE_PACKS_AGAIN_S while the tank
+ * stays paused (the glass does nothing, so the card is the only voice it has). It goes when the pack comes. Phase 2: both
+ * packs may be here and the species still need what its habitat, the firmware or the model does not provide (a gecko that
+ * needs BASK in a water tank): the same card and the same pause, worded PACK NEEDS <NEED> (progression_packs_need), and it
+ * goes when the need is met. Raised by the tick from tank_t.packs_missing: nothing for the platform to call. */
 #ifndef NOTICE_H
 #define NOTICE_H
 #include <stdbool.h>
 #include <stdint.h>
 #include "tank.h"
 
-enum { NOTICE_MILESTONE, NOTICE_TANK_MILESTONE, NOTICE_STAGE, NOTICE_LOW_BATTERY, NOTICE_UPDATED, NOTICE_LIGHTS_OUT, NOTICE_MODEL_DAMAGED, NOTICE_WRONG_BOARD };
+enum { NOTICE_MILESTONE, NOTICE_TANK_MILESTONE, NOTICE_STAGE, NOTICE_LOW_BATTERY, NOTICE_UPDATED, NOTICE_LIGHTS_OUT, NOTICE_MODEL_DAMAGED, NOTICE_WRONG_BOARD, NOTICE_PACK_MISSING };
 typedef struct { int kind; int fish; uint32_t bit; float age; } notice_t;
 
 #define NOTICE_UP_S   6.0f
 #define NOTICE_HOLD_S 2.0f                  /* a tap this soon after it came up is spent, not a close */
 #define NOTICE_GAP_S  1.0f
 #define NOTICE_QUEUE  8
+#define NOTICE_PACKS_AGAIN_S 120.0f         /* a pack-missing card closed by a tap comes back this long after, while the tank is still paused */
 
 void notice_sync(const tank_t *t);
 void notice_tick(const tank_t *t, float dt, bool blocked);

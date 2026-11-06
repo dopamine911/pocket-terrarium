@@ -1,6 +1,7 @@
 /* notice.c - the announcement queue. See notice.h. */
 #include "notice.h"
 #include "sounds.h"
+#include "world_ops.h"
 #include <string.h>
 
 static uint32_t s_ms[N_FISH_MAX], s_tms;
@@ -14,13 +15,13 @@ static bool     s_up;
 static float    s_gap;                       /* seconds until the next may come up */
 static int      s_cue = -1;
 static bool     s_model_told;                /* NOTICE_MODEL_DAMAGED: once per start (a sync does not forget it) */
+static bool     s_pm;                        /* the tank's packs_missing, last frame */
+static float    s_pm_wait;                   /* ... seconds to the card's next reminder */
 
-/* never announced: they belong to the birth of a tank or a fish - and in the terrarium the fish's follow and seagrass,
-   which are no badge there (pocket-terrarium P5, tank.h: FOLLOW still reveals the card's slider) */
-#define MS_SILENT   (MS_ARRIVED | MS_INSPECTED | MS_RETIRED_6 | MS_RETIRED_7 | MS_CROSSBRED | (PT_TERRARIUM ? MS_FIRST_FOLLOW | MS_FIRST_GRASS : 0))   /* (MS_INSPECTED: no badge since 0.3.0) */
-/* ... and the terrarium's tank bits that are no badge on its row (P5): the first feeding (the first meal from you says it),
-   the trimming, the fish's bought creatures, a mutation (the birth page names a new morph) */
-#define TMS_SILENT  (TMS_PAIR | (PT_TERRARIUM ? TMS_FIRST_FEEDING | TMS_FIRST_TRIM | TMS_FIRST_MUTATION | TMS_FULL_SCHOOL | TMS_FIRST_REEF | TMS_SEAHORSE_FED | TMS_CRAB_FIND : 0))
+/* never announced: they belong to the birth of a tank or a fish - and, per world, the bits that are no badge there (world_ops.h
+   ms_silent / tms_silent: the terrarium's follow and seagrass, its first feeding, trimming, bought creatures and mutation) */
+#define MS_SILENT   (world_cur()->ms_silent)
+#define TMS_SILENT  (world_cur()->tms_silent)
 #define MS_STAGES   (MS_REACHED_JUV | MS_REACHED_ADULT | MS_REACHED_ELDER)
 
 static void push(int kind, int fish, uint32_t bit) {
@@ -31,7 +32,7 @@ static void push(int kind, int fish, uint32_t bit) {
 void notice_sync(const tank_t *t) {
     for (int i = 0; i < N_FISH_MAX; i++) { s_ms[i] = t->fish[i].ms_bits; s_stage[i] = t->fish[i].stage; }
     s_tms = t->tank_ms_bits; s_n_fish = t->n_fish; s_tip = t->light_tip_seen;
-    s_qn = 0; s_up = false; s_gap = 0; s_cue = -1;
+    s_qn = 0; s_up = false; s_gap = 0; s_cue = -1; s_pm = false;   /* (a tank that is paused for a pack says so from its first tick: s_pm false) */
 }
 
 void notice_tick(const tank_t *t, float dt, bool blocked) {
@@ -63,7 +64,20 @@ void notice_tick(const tank_t *t, float dt, bool blocked) {
     s_tms = t->tank_ms_bits;
     if (t->light_tip_seen && !s_tip) push(NOTICE_LIGHTS_OUT, -1, 0);   /* the first double-tap that turned the light off */
     s_tip = t->light_tip_seen;
-
+    if (t->packs_missing) {                  /* paused for a pack that is not here: the card, up until a tap, and again every NOTICE_PACKS_AGAIN_S */
+        bool queued = false;
+        for (int i = 0; i < s_qn; i++) queued |= s_q[i].kind == NOTICE_PACK_MISSING;
+        const bool up = s_up && s_cur.kind == NOTICE_PACK_MISSING;
+        if (!s_pm) { s_pm = true; s_pm_wait = NOTICE_PACKS_AGAIN_S; if (!queued && !up) push(NOTICE_PACK_MISSING, -1, 0); }
+        else if (up || queued) s_pm_wait = NOTICE_PACKS_AGAIN_S;      /* on its way or up: the reminder counts from its end */
+        else if ((s_pm_wait -= dt) <= 0) { s_pm_wait = NOTICE_PACKS_AGAIN_S; push(NOTICE_PACK_MISSING, -1, 0); }
+    } else if (s_pm) {                       /* the pack came: the card goes */
+        s_pm = false;
+        int n = 0;
+        for (int i = 0; i < s_qn; i++) if (s_q[i].kind != NOTICE_PACK_MISSING) s_q[n++] = s_q[i];
+        s_qn = n;
+        if (s_up && s_cur.kind == NOTICE_PACK_MISSING) { s_up = false; s_gap = NOTICE_GAP_S; }
+    }
     if (s_up) {
         if (blocked) {                       /* something opened over it (2026-09-29: the birth flow over
                                                 a fry's population badge): it steps aside and comes back
@@ -76,7 +90,7 @@ void notice_tick(const tank_t *t, float dt, bool blocked) {
             return;
         }
         s_cur.age += dt;
-        if (s_cur.age >= NOTICE_UP_S && s_cur.kind != NOTICE_MODEL_DAMAGED && s_cur.kind != NOTICE_WRONG_BOARD) { s_up = false; s_gap = NOTICE_GAP_S; }   /* (these two wait for a tap) */
+        if (s_cur.age >= NOTICE_UP_S && s_cur.kind != NOTICE_MODEL_DAMAGED && s_cur.kind != NOTICE_WRONG_BOARD && s_cur.kind != NOTICE_PACK_MISSING) { s_up = false; s_gap = NOTICE_GAP_S; }   /* (these three wait for a tap) */
         return;
     }
     if (s_gap > 0) { s_gap -= dt; return; }
@@ -85,7 +99,7 @@ void notice_tick(const tank_t *t, float dt, bool blocked) {
     s_cur = s_q[0]; s_cur.age = 0;
     memmove(&s_q[0], &s_q[1], sizeof(notice_t) * (size_t)(s_qn - 1)); s_qn--;
     s_up = true;
-    s_cue = again || s_cur.kind == NOTICE_LIGHTS_OUT ? -1 : s_cur.kind == NOTICE_STAGE ? SND_STAGE_UP : s_cur.kind == NOTICE_LOW_BATTERY || s_cur.kind == NOTICE_MODEL_DAMAGED || s_cur.kind == NOTICE_WRONG_BOARD ? SND_LOW_BATTERY : SND_MILESTONE;
+    s_cue = again || s_cur.kind == NOTICE_LIGHTS_OUT ? -1 : s_cur.kind == NOTICE_STAGE ? SND_STAGE_UP : s_cur.kind == NOTICE_LOW_BATTERY || s_cur.kind == NOTICE_MODEL_DAMAGED || s_cur.kind == NOTICE_WRONG_BOARD || s_cur.kind == NOTICE_PACK_MISSING ? SND_LOW_BATTERY : SND_MILESTONE;
 }
 
 /* a fish left and the slots shifted (progression: a sale, a gift): a notice about a fish follows it; about the one that

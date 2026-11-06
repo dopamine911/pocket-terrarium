@@ -1,4 +1,4 @@
-/* render_scene_desert.c - the desert terrarium's static scene (pocket-terrarium P3a, P2c): render_scene_desert.h.
+/* scene_desert.c - the desert terrarium's static scene (pocket-terrarium P3a, P2c; common/worlds/terrarium since issue #4 phase 3): scene_desert.h.
  *
  * Painted row by row into the frame (the scene cache's bake: once per light switch or moisture step). What varies
  * along a column (the strata's sway, the sand's back edge, the wall's streaks) and along a row (the glass, the
@@ -26,7 +26,7 @@
  *                       warmer, the cool end bluer;
  *   dark                the lamp out, a moonlit blue over everything;
  * then the night's dim, the vignette and a 4x4 Bayer dither to RGB565, as render.c bake_scene does. */
-#include "render_scene_desert.h"
+#include "worlds/terrarium/scene_desert.h"
 #include "render.h"                 /* FB_SWAP16 */
 #include <math.h>
 #include <string.h>

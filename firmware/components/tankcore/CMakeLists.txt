@@ -10,16 +10,35 @@ set(COMMON ${CMAKE_CURRENT_LIST_DIR}/../../../common)
 file(STRINGS "${COMMON}/version.h" PT_NET_LINE REGEX "^#define[ \t]+PT_NET[ \t]+[01]")
 string(REGEX REPLACE "^#define[ \t]+PT_NET[ \t]+([01]).*$" "\\1" PT_NET "${PT_NET_LINE}")
 set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
-         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c"
+         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c"
          "${COMMON}/species.c" "${COMMON}/habitat.c" "${COMMON}/terrain.c"
+         "${COMMON}/packs/ptpk.c" "${COMMON}/packs/ptpk_write.c" "${COMMON}/packs/builtin.c"
+         "${COMMON}/packs/caps.c" "${COMMON}/packs/manifest.c" "${COMMON}/packs/models.c" "${COMMON}/packs/compat.c"
          "persist_port_esp.c" "rtc_port_pcf85063.c")
-# THE WORLD's owned const packs and renderer art. The simulator deliberately carries both packs for cross-world tests;
-# a release image carries only its own. render.c preprocessor-excludes the other live renderer before link resolution.
+# THE PACKS (docs/ptpk.md): the built-in packs' source is a const species_t / habitat_t / model_manifest_t in C (common/species,
+# common/habitat, packs/models.c; capabilities and the pair check: packs/caps.c, compat.c, the registry of the model manifests: manifest.c);
+# packs_load_builtin encodes each (packs/ptpk_write.c) into a PTPK file on the main task's stack at boot and loads it through
+# the one loader (packs/ptpk.c, packs_add), as a file from a card would be. The table of them (packs/builtin.c) names only what
+# this image links: a release image carries its own world's pair, test-only packs left out - the simulator carries them all
+# (PT_ALL_PACKS). THE WORLD's owned const packs and renderer art; render.c preprocessor-excludes the other live renderer
+# before link resolution.
 if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
     list(APPEND SRCS "${COMMON}/species/fish.c" "${COMMON}/habitat/freshwater.c")
 else()
-    list(APPEND SRCS "${COMMON}/species/gecko.c" "${COMMON}/habitat/desert.c"
-                     "${COMMON}/render_lizard.c" "${COMMON}/render_scene_desert.c")
+    list(APPEND SRCS "${COMMON}/species/gecko.c" "${COMMON}/habitat/desert.c")
+endif()
+# THE MODULES (issue #4 phase 3): this world's mechanics (common/worlds/<world>/), its body type's art (common/bodies/<body>/)
+# and the movement modules (common/locomotion/), found by directory
+if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
+    set(PT_WORLD_DIR aquarium)
+    set(PT_BODY_DIR fish)
+else()
+    set(PT_WORLD_DIR terrarium)
+    set(PT_BODY_DIR lizard)
+endif()
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)   # (the early scan of the component's requirements runs in script mode, where CONFIGURE_DEPENDS is invalid)
+    file(GLOB_RECURSE MODULE_SRCS CONFIGURE_DEPENDS "${COMMON}/worlds/${PT_WORLD_DIR}/*.c" "${COMMON}/bodies/${PT_BODY_DIR}/*.c" "${COMMON}/locomotion/*.c")
+    list(APPEND SRCS ${MODULE_SRCS})
 endif()
 if(PT_NET STREQUAL "1")
     list(APPEND SRCS "${COMMON}/update.c" "${COMMON}/passport.c" "${COMMON}/link.c" "${COMMON}/tank_link.c" "${COMMON}/collection.c" "${COMMON}/gift.c")

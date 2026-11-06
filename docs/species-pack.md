@@ -1,45 +1,57 @@
-# Species packs — DRAFT
+# Species packs
 
 A species pack is everything that makes a leopard gecko a leopard gecko and
 not a bearded dragon - or pocket-tank's fish a fish. The engine
 (`common/tank.c`, `common/render.c`, `common/progression.c`) and the model
 (`model/schema-lizard.md`) never name a species; they read the pack. Adding a
-species that fits its world's goals is a new pack file, no engine change and
-no retrain.
+species whose needs the firmware, a habitat and the model already meet is a new
+pack file, no engine change and no retrain.
 
 ## Where packs live
 
-- `common/species.h`: the `species_t` type and `species_get(id)`; `common/species.c` the registry and the rules.
-- `common/species/<name>.c`: one `const species_t` per species, compiled in.
-  No runtime loading, so no file format to freeze. Today: `gecko.c` (the leopard gecko, id 1, and A16's test pack,
-  id 250, never offered to a keeper) and `fish.c` (the aquarium's fish, id 2, P2b).
-- Every pack carries a **world** (`WORLD_TERRARIUM` or `WORLD_AQUARIUM`, PLAN.md D11) and is compiled into both
-  worlds' bins, but a tank holds only its build's world's (`tank_set_packs` refuses the other world's pairs:
-  `docs/habitat-pack.md` "Worlds"). A new tank holds its world's default pair: the gecko in the desert, or the fish in
-  freshwater (`SPECIES_DEFAULT`, `HABITAT_DEFAULT`).
-- The save stores the pack **id** (a byte) per tank beside the habitat's, and each animal's heat and shed (the
-  tail at 1956..2095; the habitat's mealworm dish at 2096, P2c). A tank holds one species; mixed terrariums are out of scope (real keepers don't mix either).
-  A save whose pair this bin cannot hold (an id it lacks, a pair that does not fit, another world's) loads as the
-  defaults, and its animals start fresh: the tail's heat and sheds are that pack's.
-- `--selftest-packs` (sim, both worlds) checks every pack against the rules in "Validation".
+A pack is a **PTPK file** (`docs/ptpk.md`: the byte-exact format, the loader, the save). Everything below is what a species
+pack says; how it is stored and loaded is that page's.
+
+- `common/species.h`: the `species_t` type and the registry (`species_get(id)`, `species_by_uid(uid)`, `species_at(i)`);
+  `common/species.c` the registry's pool and the rules (`species_check`). `common/packs/ptpk.c` is the loader.
+- `common/species/<name>.c`: one `const species_t` per species, the **source** of the built-in packs: `gecko.c` (the leopard
+  gecko, id 1, and A16's test pack, id 250, never offered to a keeper) and `fish.c` (the aquarium's fish, id 2, P2b).
+  `common/packs/ptpk_write.c` encodes each into a PTPK file at boot and the loader takes it like any other pack (the firmware
+  ships the structs, not file bytes); `tools/ptpk_emit.c` writes them as `packs/<uid_ns>.ptpk` (`docs/ptpk.md` "Authoring").
+  A pack from a folder (the simulator's `POCKET_PACKS_DIR`) or, from phase 4, the card, goes through the same loader.
+- A pack may carry a **`WORLDS` filter** (`species_t.worlds`, PLAN.md D11): the worlds whose shop and menus offer it, nothing
+  more (0: every world). It decides no pair: a tank runs a pair whose **needs are met** (`docs/ptpk.md` "Capabilities": the
+  species' needs against the habitat, the firmware and the model; `docs/habitat-pack.md` "Worlds"), and `tank_set_packs`
+  refuses a pair that fails it with the reason. A release image still ships only its world's built-in packs, because the
+  firmware links only those (the simulator, with `PT_ALL_PACKS`, all of them). A new tank holds its world's default pair:
+  the gecko in the desert, or the fish in freshwater (`SPECIES_DEFAULT`, `HABITAT_DEFAULT`).
+- The save stores the pack's **uid** (32 bits) and its one-byte **id** (built-in packs only) per tank beside the habitat's, and
+  each animal's heat and shed (the tail at 1956..2095; the habitat's mealworm dish at 2096, P2c; the uids and names at
+  2104..2159, issue #4). A tank holds one species; mixed terrariums are out of scope (real keepers don't mix either). A save
+  whose pair this build cannot hold (a pack it lacks, a pair whose needs are unmet) no longer loads as the
+  defaults: the tank keeps the saved pair, shows PACK MISSING and holds still until the pack comes (`docs/ptpk.md` "A tank and
+  its packs").
+- `--selftest-packs` (sim, both worlds) checks every pack against the rules in "Validation"; `--selftest-ptpk` the format and
+  the loader.
 
 ## The contract
 
-All numbers are in the pack's own world units: °C, seconds of tended time
+All numbers are in the pack's own units: °C, seconds of tended time
 (the progression clock), pixels at the 1.8's scale.
 
 ```c
-typedef enum { WORLD_AQUARIUM, WORLD_TERRARIUM } world_t;
 typedef enum { SCHED_DAY, SCHED_DUSK, SCHED_NIGHT } sched_t;
 typedef enum { PLAN_LIZARD, PLAN_FISH } body_plan_t;     /* P3's draw_lizard; render.c's draw_fish */
 typedef enum { SHED_WHOLE, SHED_PATCHES } shed_style_t;
 
 typedef struct {
-    const char *name;               /* "LEOPARD GECKO" (shown on cards) */
-    uint8_t     id;                 /* stored in the save; never reused */
-    bool        test_only;          /* compiled in for the tests (A16's warm pack), never offered */
-    world_t     world;              /* the bin it belongs to; its habitats share it */
-    uint32_t    habitats;           /* bit (1u << habitat id): where it can live (ids 1..31) */
+    char        name[PACK_NAME_MAX];   /* "LEOPARD GECKO" (shown on cards): everything is inline, nothing points into the file */
+    uint8_t     id;                 /* the registry's one-byte handle: a built-in pack's is the one old saves hold, never reused */
+    bool        builtin;            /* shipped in the firmware (its id is the one a save may hold) */
+    bool        test_only;          /* compiled in for the tests (A16's warm pack), never offered to a keeper */
+    uint32_t    uid;                /* the pack's identity for good: FNV-1a-32 of its uid string; what a save stores */
+    uint32_t    habitats;           /* bit (1u << habitat id): where it can live (ids 1..31); derived from habitat_uid[] */
+    uint8_t     n_habitat_uids; uint32_t habitat_uid[SPECIES_HABITATS_MAX];   /* the habitats it lists, by uid (the file's) */
 
     /* activity: how the light maps to the model's phase */
     sched_t     schedule;
@@ -54,7 +66,13 @@ typedef struct {
     float       hunger_per_cricket; /* how much one catch takes off */
     float       sleep_hunger_per_h, sleep_energy_per_h, sleep_stress_per_h;
 
-    /* the walk (a terrarium pack's, P2b: tank.h THE WALK; an aquarium pack swims and leaves them 0) */
+    /* locomotion and media (issue #4 phase 2): what it moves by, on what, and what it needs of its tank */
+    uint8_t     worlds;             /* the WORLDS filter mask (aquarium 1, terrarium 2); 0 = no filter */
+    uint8_t     n_loco;             /* 1..SPECIES_LOCO_MAX (3) */
+    loco_t      loco[SPECIES_LOCO_MAX];   /* { caps_t mode, area; }: each a single capability bit, a mode once */
+    caps_t      media_needs;        /* areas and fittings it cannot live without (WATER LAND BASK SHORE LAMP HIDES) */
+    caps_t      media_wants;        /* what it makes use of when it is there, and runs without */
+    /* the walk numbers are the WALK entry's (tank.h THE WALK); all 0 when there is none */
     float       walk_px_s[4];       /* pace per stage, px/s at the 1.8's scale */
     float       bout_s[2], pause_s[2];   /* stop-and-go: a bout of walking, then a stop, each lo..hi s */
     float       turn_s;             /* a turn about on the spot (it stands meanwhile) */
@@ -68,21 +86,24 @@ typedef struct {
     shed_style_t shed_style;
     uint8_t     diet;               /* DIET_CRICKET | DIET_MEALWORM | DIET_GREENS | DIET_PELLET */
 
-    /* the body, for render.c */
+    /* the body, for render.c (inline: SPECIES_MORPHS_MAX 6 morphs, a pattern name per stage) */
     body_plan_t plan;
     lizard_geom_t geom;             /* length, head shape, limb length, tail fat, eye size, eyelids */
-    const morph_t *morphs; uint8_t n_morphs;
-    const pattern_t *pattern[4];    /* per stage: gecko banded as a hatchling, spotted as an adult */
+    morph_t     morphs[SPECIES_MORPHS_MAX]; uint8_t n_morphs;
+    pattern_t   pattern[4];         /* per stage: gecko banded as a hatchling, spotted as an adult */
 
-    /* the goals its reflex performs: a bit per goal of its world's set (the lizard's seven, LZ_*;
-       the fish's eight, FISH_SCHEMA_GOALS) */
-    uint16_t    goals;
+    /* the goals its reflex performs, by NAME (SPECIES_GOALS_MAX 8 x GOAL_NAME_MAX 16): `species_check` resolves each
+       against the model manifests (docs/ptpk.md "Capabilities"); the pair check against the loaded model's */
+    uint8_t     n_goals;
+    char        goal[SPECIES_GOALS_MAX][GOAL_NAME_MAX];
 } species_t;
 ```
 
-The layout above is `common/species.h`'s (P2a, the walk and the world P2b); the fields and their meaning are the
-contract. How a goal is performed is the engine's per world (tank.h THE WALK for the terrarium, the swim for the
-aquarium), read from the pack's numbers.
+The layout above is `common/species.h`'s (P2a, the walk P2b, the inline body and the uid issue #4, the capabilities and the
+goal names issue #4 phase 2); the fields and their meaning are the contract, and `docs/ptpk.md` maps each to its record in
+the file, with its unit. How a goal is performed is the engine's per movement mode (tank.h THE WALK for WALK, the swim for
+SWIM), read from the pack's numbers. What a species **needs** (`species_needs`) is derived from the pack: every locomotion
+entry's mode and area, `media_needs`, and its `diet` foods.
 
 ## Normalisation (the only bridge between a pack and the model)
 
@@ -108,7 +129,7 @@ stress is a pull toward 4 + 2 × (heat − 8) at 0.15 a second (it settles near 
 `T_env` is the habitat's (`common/habitat.h`: the enclosure is a pack of its own, apart from the species - the
 floor's profile and the air's rise toward the lamp, the ground (its rocks and ramps, `docs/habitat-pack.md` "The
 ground"), the basking spot up on the high rock, the hides, the humid hide's moisture; the desert's numbers are in
-`common/habitat/desert.c`), and a species lists the habitats it lives in (`species_t.habitats`, same `world`).
+`common/habitat/desert.c`), and a species lists the habitats it lives in (`species_t.habitats`; the capability check is in addition).
 
 ### Phase
 
@@ -145,8 +166,11 @@ reads into its fields, so the pack and the swim cannot drift apart.
 | energy_per_s / energy_rest_per_s | 0.006 / 0.05 | |
 | curiosity_per_s | 0.004 | |
 | sleep_*_per_h | hunger rises 0.6, energy rises 2.0, stress falls 2.0 (all stored as positive rates) | the fish's numbers, hunger slower |
-| walk_px_s (hatch, juv, adult, elder) | 24, 22, 18, 15 | unhurried: the 1.8's 388 px floor in about half a minute, pauses and all |
+| locomotion | WALK on LAND: walk_px_s (hatch, juv, adult, elder) 24, 22, 18, 15 | unhurried: the 1.8's 388 px floor in about half a minute, pauses and all |
 | bout_s / pause_s / turn_s | 0.8–3 s / 0.5–2.5 s / 0.7 s | a stalker's stop-and-go; it turns about on the spot |
+| media_needs / media_wants | LAND, BASK, HIDES / none | the floor to walk on, a basking spot under a lamp, a hide (a humid one: it sheds) |
+| needs (derived) | WALK, LAND, BASK, HIDES, CRICKET, MEALWORM | locomotion + media_needs + diet |
+| worlds | terrarium | the `WORLDS` filter |
 | stage_s | juv 1,200, adult 5,400, elder 28,800 | 20 min / 90 min / 8 h, a POC's pace (the fish's are 2 h / 12 h / 96 h since pocket-tank 0.3.5, `progression.h`); reaching one starts a growth shed and the stage changes when it comes off clean (`docs/shed.md`) |
 | pop_cap | 3 | solitary; three already crowds a low-social lizard |
 | sheds | yes | a stage's age starts a growth shed; the stage changes when it comes off clean |
@@ -167,35 +191,44 @@ core. Everything in it is what the fish already were; nothing here retunes them.
 
 | Field | Value | Why |
 |---|---|---|
-| name, world, habitats | FISH, `WORLD_AQUARIUM`, freshwater | `docs/habitat-pack.md` |
+| name, worlds, habitats | FISH, aquarium (`WORLDS`), freshwater | `docs/habitat-pack.md` |
 | schedule / settle_s | `SCHED_DAY` / 600 | the fish model sees day and night, not the phase |
 | t_cold / t_lo / t_hi / t_hot | 18 / 22 / 28 / 32 °C | a tropical fish: the water's 25 °C is heat 6, so no heat effect ever touches a fish |
 | tau_s | 60, 90, 120, 150 | (the body follows the even water: it never leaves heat 6) |
 | drives | `tank.h` THE FISH'S DRIVES: hunger 0.010/s, energy 0.012/s swimming and 0.30/s back resting, curiosity 0.08/s exploring, a pellet 4.3, asleep 0.8 / 2.0 / 2.0 an hour | pocket-tank's numbers (the swim runs on them) |
-| walk_* | 0 | it swims (tank.c `update_fish`) |
+| locomotion / media_needs | SWIM on WATER, with no numbers (the swim runs on `tank.h`'s constants: tank.c `update_fish`) / WATER | needs (derived): SWIM, WATER, PELLET; walk numbers 0 |
 | stage_s | 7,200, 43,200, 345,600 | 2 h / 12 h / 96 h of tended time, pocket-tank 0.3.5 |
 | pop_cap | `POP_CAP` (5) | the keeper's cap |
 | sheds | no | the stage changes at the age itself, pocket-tank's growing exactly; no shed clock, no mister (the toolbox keeps the sponge and the scissors in halves) |
 | diet / plan | pellets / `PLAN_FISH` | render.c's `draw_fish` |
 | morphs / pattern | one (the looks are the roster's and the genes', 0.4) / plain fry, bars from juvenile | |
-| goals | the fish's eight (schema v2–v4) | |
+| goals (by name) | the fish's eight: `seek_food flee_shadow visit_bubbles follow_friend explore rest dart_play inspect_reef` (schema v2–v4) | the fish model `v3m`'s manifest lists them |
 
-## Validation (`--selftest-packs`)
+## Validation (`--selftest-packs`, and the loader)
 
-For every pack, of both worlds (`species_check`):
-- A name, a world, and at least one habitat (ids from 1).
-- `t_cold < t_lo < t_hi < t_hot`, and the comfort band is at least 2 °C wide.
+The loader (`docs/ptpk.md` "What a loader refuses") runs these rules on every pack it takes - built in, from a folder, later from
+the card - after its own checks of the file; a pack that breaks one is refused with the rule's words. `--selftest-packs` runs them on
+every loaded pack and on broken copies. For every pack, of both worlds (`species_check`):
+- A name, at least one habitat (ids from 1).
+- `-100 < t_cold < t_lo < t_hi < t_hot < 200` °C, and the comfort band is at least 2 °C wide (the bound keeps a file's hostile float - 1e19 - from walking the heat-map check for ever).
 - Every rate > 0; `stage_s` strictly increasing; `SCHED_DAY` (the others need a clock-based day).
 - A pack that sheds: every shed time > 0 and `shed_every_s[s] ≥ shed_soon_s + shed_window_s` (a lizard spends at
-  most half its life in a shed cycle). A pack that does not shed (the fish) has no shed times to keep.
-- A terrarium pack walks: every `walk_px_s` > 0, `bout_s` and `pause_s` spans of seconds, `turn_s` > 0.
-- `1 ≤ pop_cap ≤ POP_CAP`; `id` unique across packs; `n_morphs ≥ 1`; a pattern for every stage.
+  most half its life in a shed cycle), and HIDES in `media_needs` (the humid hide). A pack that does not shed (the fish) has no shed times to keep.
+- **Capabilities.** At least one locomotion entry; modes distinct and each a movement mode, each area an area; every mode in
+  `firmware_caps()` (`moves by SWIM, and this firmware has no such module`); `media_needs` a subset of the media bits (areas
+  and fittings) and every bit known (an unknown one is refused at load, naming the bit; an unknown `media_wants` bit is
+  dropped); SHORE in `media_needs` needs WATER and LAND in `needs` or in a locomotion area. WALK in the locomotion: every `walk_px_s` > 0,
+  `bout_s` and `pause_s` spans of seconds, `turn_s` > 0, and for a `PLAN_LIZARD` body its biggest elder's half length inside
+  `TERRAIN_LINK_IN_PX`; no WALK: the walk numbers are all 0. A SWIM or SLITHER entry carries no numbers yet.
+- `1 ≤ pop_cap ≤ POP_CAP`; the id and the uid unique across the packs of its kind (the registry's); `1 ≤ n_morphs ≤ 6`; a pattern for every stage.
 - The heat map is monotonic and hits 0, 5.0, 7.0 and 10 at `t_cold`, `t_lo`, `t_hi`, `t_hot`.
-- Its goals are of its own world's set: a terrarium pack whose goals do not fit the schema's seven (a climber) is
-  refused until the schema grows a goal; an aquarium pack keeps to the fish's eight.
+- **Goals:** 1..8 names, each `[a-z][a-z0-9_]*` of 1..15 bytes, none twice, and each in the goal list of some model manifest this
+  build carries (`the goal "climb" is in no model's goal list`): a climber is refused until a model has the word. A release
+  image carries only its own model's manifest, the simulator both.
 
-And for the pairs: a habitat a species lists is of its world; every fitting pair's lit floor reaches the species'
-band; a tank holds every fitting pair of its build's world and refuses the other world's (`docs/habitat-pack.md`).
+And for the pairs (`packs_compatible`, `docs/ptpk.md` "Capabilities"): a habitat a species lists; every need of the species
+provided by the habitat and the firmware; every goal in the loaded model's manifest; and every fitting pair's lit floor reaches the
+species' band (`docs/habitat-pack.md`). A pair that fails is refused with the reason of the first failing leg.
 
 ## Not in v1
 

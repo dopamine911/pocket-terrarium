@@ -876,7 +876,7 @@ seven-minute prompt check before an overnight run is always worth it.
   (reflex layer, the snail), `render.c` (RGB565 software renderer, stats
   card, milestones page, the shop, the reset prompt and its pixel font),
   `progression.c` (the long game, the sand dollars and persistence),
-  `icons.c` (baked pixel art), `audio.c` (the sound mixer), `notice.c` (the
+  `icons.c` (baked pixel art; each world's own under `worlds/<world>/icons.c`), `audio.c` (the sound mixer), `notice.c` (the
   milestone and low-battery announcements), `update.c` (the update pages
   and their flow), `link.c` and `tank_link.c` (tanks side by side),
   `passport.c`, `collection.c` and `gift.c` (visitors, the collection and

@@ -862,6 +862,7 @@ void touch_port_poll(tank_t *t) {
                 ESP_LOGI(TAG, "card tap at %.0f,%.0f -> milestones", s_px, s_py);         under its MORE button) = milestones page */
                 s_ms = true; goto released;
             }
+#if !PT_TERRARIUM                                       /* aquarium only: the crab's sand dollar (the terrarium has no crab) */
             if (s_sel == RENDER_CARD_CRAB && render_crab_collect_hit(t, s_px, s_py)) {   /* the crab card's COLLECT (0.3.9.4): the find taken, the card stays up */
                 tank_crab_tap(t, t->cr_x); s_sel_us = now;
                 ESP_LOGI(TAG, "crab card: COLLECT - the keeper took its sand dollar (%u so far)", (unsigned)t->cr_found);
@@ -872,6 +873,7 @@ void touch_port_poll(tank_t *t) {
                 ESP_LOGI(TAG, "crab tapped: the keeper took its sand dollar (%u so far), first in line", (unsigned)t->cr_found);
                 goto released;
             }
+#endif
             /* fish first; only an empty tap reaches the water. TANK_TAP_R (38 px:
                a fingertip on this 322 ppi panel covers ~60 px) against BOTH
                the press-time snapshot and the current position - whichever is
@@ -893,6 +895,7 @@ void touch_port_poll(tank_t *t) {
 #endif
             if (best >= 0) { s_sel = (best == s_sel) ? -1 : best; s_sel_us = now;
                              if (best >= N_FISH_MAX) ESP_LOGI(TAG, "visitor tapped: %s's passport %s", t->fish[best].name, s_sel >= 0 ? "up" : "down"); }
+#if !PT_TERRARIUM                                       /* aquarium only: the critters' taps (snail, urchin, crab, seahorse, shrimp) */
             else if (tank_snail_hit(t, s_px, s_py)) {   /* the snail: its card (2026-09-16), the fish first */
                 s_sel = s_sel == RENDER_CARD_SNAIL ? -1 : RENDER_CARD_SNAIL; s_sel_us = now;
                 ESP_LOGI(TAG, "snail tapped: card %s (%d spots grazed)", s_sel >= 0 ? "up" : "down", (int)t->snail_grazed); }
@@ -914,6 +917,7 @@ void touch_port_poll(tank_t *t) {
                 else if (taps >= 3) s_sel = -1;
                 ESP_LOGI(TAG, "shrimp tapped (%d): card %s | %d shrimp, %d eaten, %d/%d to the next", taps, s_sel == RENDER_CARD_SHRIMP ? "up" : "down",
                          t->shrimp_n, (int)t->shrimp_eaten, t->shrimp_food, SHRIMP_PER_JOIN); }
+#endif
             else if (s_sel >= 0) s_sel = -1;   /* card up: a tap on empty glass just
                                                   dismisses it - it is NOT a tank tap
                                                   (no feed, no light-toggle burst) */

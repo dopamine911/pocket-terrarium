@@ -10,6 +10,8 @@ RUN git clone --depth 1 --branch v9.2.2 https://github.com/lvgl/lvgl.git sim/lvg
     && rm -rf sim/lvgl/.git
 COPY common/ common/
 COPY sim/*.c sim/*.h sim/Makefile sim/
+COPY tools/ptpk_emit.c tools/ptpk_emit.c
+COPY packs/ packs/
 ARG WORLD=terrarium
 ARG BOARD=rect
 ARG JOBS=4
@@ -33,6 +35,7 @@ WORKDIR /opt/pocket/sim
 COPY --from=build /out/fishsim ./fishsim
 COPY model/out/model_q4.bin model/out/tokenizer.bin model/out/model_q4_lizard.bin model/out/tokenizer_lizard.bin /opt/pocket/model/out/
 COPY assets/sounds/sounds.bin /opt/pocket/assets/sounds/sounds.bin
+COPY --from=build /src/packs/ /opt/pocket/packs/
 COPY LICENSE NOTICE /opt/pocket/
 ENV HOME=/home/sim USER=sim LOGNAME=sim SDL_RENDER_DRIVER=software
 USER 1000:1000

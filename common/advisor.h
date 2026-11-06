@@ -10,6 +10,9 @@
 #include "tank.h"
 
 goal_t advisor_rules(const tank_t *t, int fish_idx, bool request);
+/* the stateless draw a world's reflex rules roll with (0..1; never mutates the tank): advisor_rules asks the tank's world
+ * (world_ops.h world_t.rules: common/worlds/<world>/rules.c) */
+float advisor_frand(const tank_t *t, int fish_idx);
 
 /* LLM advisor (advisor_llm.c): trained llama2.c student, async worker thread.
  * init returns false if model files are missing; advisor_llm then no-ops.

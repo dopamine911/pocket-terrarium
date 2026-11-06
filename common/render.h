@@ -33,6 +33,13 @@
  * so most of every page is inside that window as it stands; PAGE_NARROW
  * marks the few columns that had to come in. */
 #define PAGE_NARROW (TANK_W < PAGE_W)
+/* THE RENDERER'S PARTS (issue #4 phase 3): render.c is the core - the pixel layer (render_core.h), the pages, the cards - and draws a
+ * world's scene through that world's descriptor (world_view.h): render_tank is its `render`. What belongs to a world's scene is
+ * defined by that world's own file, and a bin of the other world does not link it (its callers are fenced the same way): the
+ * aquarium's grass cache and loop, swim depth, the pieces' and critters' tests and sizes, the boot scene and its debug switches
+ * (render_set_grass_*, render_grass_*, render_depth_*, render_debug_*, render_*_px / _cells, render_fish_beat ...) are
+ * common/worlds/aquarium/scene.c's and bodies/fish/fish.c's; the terrarium's second scene and its bake stats
+ * (render_set_scene_spare, render_terrarium_bake_stats*) are common/worlds/terrarium/scene.c's. */
 void render_tank(const tank_t *t, uint16_t *fb, int stride);
 
 /* Optional frame profiling: set a microsecond clock and render_tank fills
@@ -64,7 +71,7 @@ extern int64_t render_prof_us[14];   /* 0..6 the stages; 7..13 the fish stage sp
  * frame instead of recomputed - keeps core 0's frame budget flat as the scene
  * gets lusher. NULL disables. */
 void render_set_scene_cache(uint16_t *buf);
-/* THE TERRARIUM's second scene (render.c THE TERRARIUM, P3b): the light not shown, baked in the background, so a light's
+/* THE TERRARIUM's second scene (worlds/terrarium/scene.c, P3b): the light not shown, baked in the background, so a light's
  * switch is a swap of the two (TANK_W*TANK_H uint16, PSRAM on the board). NULL (and the sim with none given): calloc'd
  * at the first bake in the sim; on the board none means every switch bakes the scene whole in one frame. The aquarium
  * never reads it */
@@ -414,16 +421,16 @@ size_t render_decor_scratch_size(void);
 /* the pumpkin lantern (0.3.6, SD_ITEM_PUMPKIN): its sprite's pixels, and
  * in *glow the ones redrawn every frame (the face + the flame) */
 int    render_pumpkin_px(int *glow);   /* its pixels; *glow = the ones redrawn every frame */
-/* the touched mask and the restore (2026-10-23; render.c "The TOUCHED mask"): the firmware keeps a mask per framebuffer
+/* the touched mask and the restore (2026-10-23; render_core.h "The TOUCHED mask"): the firmware keeps a mask per framebuffer
  * (RENDER_DIRTY_WORDS words), hands the frame's over before render_tank, says when a frame is a whole page
  * (render_touch_all), and once the frame has left the wire puts the scene back under it (render_restore_touched: the
  * epoch it returns primes the buffer, render_fb_primed) */
 void     render_set_touched_mask(uint32_t *buf);
-/* the grass cache (2026-10-24, render.c "THE GRASS CACHE"): a scene-sized buffer and a RENDER_DIRTY_WORDS mask, then on/off and
+/* the grass cache (2026-10-24, worlds/aquarium/scene.c "THE GRASS CACHE"): a scene-sized buffer and a RENDER_DIRTY_WORDS mask, then on/off and
  * its period; the prof gives the refreshes' time and count since the last call */
 void     render_set_grass_cache(uint16_t *buf, uint32_t *mask);
 void     render_set_grass_cache_on(bool on, int period_ms);
-/* THE GRASS LOOP (0.3.9.3, render.c): the back grass baked into a loop of bands of its sway (up to 16), and eight
+/* THE GRASS LOOP (0.3.9.3, worlds/aquarium/scene.c): the back grass baked into a loop of bands of its sway (up to 16), and eight
  * fine moments a band kept as their difference from it; a frame is primed with the scene above the grass's band
  * and the band of its moment below, its fine moment laid over that. The platform hands over an allocator
  * (64-byte aligned; PSRAM on the board) and a memory budget, then turns it on. render_grass_loop_parts is the

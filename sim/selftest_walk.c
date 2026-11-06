@@ -59,6 +59,8 @@
 #include "sim_tmp.h"
 #include "notice.h"
 
+#if PT_TERRARIUM   /* terrarium only: this whole file is the terrarium's tests (tank_lizard_*, tank_cricket_*, tank_dish_*), compiled into that world's bin alone */
+
 static const char *s_name = "";
 #define WF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 static tank_t s_t;                           /* (tank_t is big: never on the stack) */
@@ -1683,7 +1685,8 @@ static int terrarium_census(advisor_fn brain, uint8_t habitat, uint8_t pack, boo
     tank_t *t = &s_t;
     const char *seed_env = getenv("PT_CENSUS_SEED");   /* another terrarium: the same run, other starts and other dice */
     fresh(t, seed_env ? (uint32_t)strtoul(seed_env, NULL, 10) : 501, 3, true);   /* the founding pair and one more, the tank's own trickle on */
-    if ((habitat != t->habitat_id || pack != t->pack_id) && !tank_set_packs(t, habitat, pack)) WF("a tank refused habitat %d with pack %d", habitat, pack);
+    char why[200] = "";
+    if ((habitat != t->habitat_id || pack != t->pack_id) && !tank_set_packs(t, habitat, pack, why, sizeof why)) WF("a tank refused habitat %d with pack %d: %s", habitat, pack, why);
     /* (another pair: the same lizards take its rates and band from the next tick, the same rocks - selftest-heat's test pack
        does; the warm desert's ground is the desert's, so where they stand stays ground) */
     const species_t *sp = tank_species(t);
@@ -1802,3 +1805,5 @@ int census_llm(const char *model_path, const char *tok_path, int pack, int habit
     memset(&s_llm, 0, sizeof s_llm); s_llm.fish = -1;
     return terrarium_census(advisor_llm_paced, (uint8_t)habitat, (uint8_t)pack, true);
 }
+
+#endif   /* PT_TERRARIUM */

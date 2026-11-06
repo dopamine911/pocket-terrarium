@@ -27,11 +27,13 @@
 #include "progression.h"
 #include "render.h"
 #include "advisor_core.h"
+#include "packs/compat.h"
 #include "sim_tmp.h"
 
 static const char *s_name = "";
 #define PF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 
+#if PT_TERRARIUM   /* terrarium only: the state and helpers of the heat, shed and mister tests below (parked lizards, tank_lizard_enter) */
 static tank_t s_t, s_u;                      /* (tank_t is big: never on the stack) */
 static bool  s_parked[N_FISH_MAX];
 static float s_px[N_FISH_MAX], s_py[N_FISH_MAX];
@@ -80,11 +82,14 @@ static int hide_of_kind(const tank_t *t, hide_kind_t kind) {
     return -1;
 }
 static const char *SHED_WORD[SHED_STATES] = { "normal", "soon", "shedding", "stuck", "clean" };
+#else
+static tank_t s_t;                           /* (the aquarium's bin runs only the packs test: no s_u, no parked lizards) */
+#endif
 
 /* ================================================================ --selftest-packs */
 int selftest_packs(void) {
     s_name = "selftest-packs";
-    char why[200];
+    char why[200], list[120];
     const int ns = species_count(), nh = habitat_count();
     if (ns < 2 || nh < 1) PF("%d species packs and %d habitats compiled in (the gecko and A16's test pack, the desert at least)", ns, nh);
     for (int i = 0; i < ns; i++) {
@@ -95,8 +100,9 @@ int selftest_packs(void) {
         char shed[64];
         if (p->sheds) snprintf(shed, sizeof shed, "sheds every %.0f..%.0f s", p->shed_every_s[0], p->shed_every_s[3]);
         else snprintf(shed, sizeof shed, "no sheds (the stage at its age)");
-        printf("selftest-packs: species %3d %-15s ok: %s, band %.0f / %.0f / %.0f / %.0f C, stages at %.0f / %.0f / %.0f s, %s, %d morphs%s\n",
-               p->id, p->name, p->world == WORLD_TERRARIUM ? "terrarium" : "aquarium", p->t_cold, p->t_lo, p->t_hi, p->t_hot,
+        caps_list(species_needs(p), list, sizeof list);
+        printf("selftest-packs: species %3d %-15s ok: worlds %02x, needs %s; band %.0f / %.0f / %.0f / %.0f C, stages at %.0f / %.0f / %.0f s, %s, %d morphs%s\n",
+               p->id, p->name, p->worlds, list, p->t_cold, p->t_lo, p->t_hi, p->t_hot,
                p->stage_s[0], p->stage_s[1], p->stage_s[2], shed, p->n_morphs, p->test_only ? " (tests only)" : "");
     }
     for (int i = 0; i < nh; i++) {
@@ -104,23 +110,30 @@ int selftest_packs(void) {
         if (!habitat_check(h, why, sizeof why)) PF("habitat %s (id %d): %s", h->name, h->id, why);
         for (int j = 0; j < i; j++) if (habitat_at(j)->id == h->id) PF("habitats %s and %s share id %d", habitat_at(j)->name, h->name, h->id);
         if (habitat_get(h->id) != h) PF("habitat_get(%d) is not %s", h->id, h->name);
-        printf("selftest-packs: habitat %3d %-15s ok: %s, floor %.0f -> %.0f C (dark -%.0f), basking spot %.0f C at %.2f, %d hides, humidity %.2f\n",
-               h->id, h->name, h->world == WORLD_TERRARIUM ? "terrarium" : "aquarium", h->floor_warm_c, h->floor_cool_c, h->night_drop_c, h->bask_c, h->bask_u, h->n_hides, h->humidity);
+        caps_list(habitat_provides(h), list, sizeof list);
+        printf("selftest-packs: habitat %3d %-15s ok: worlds %02x, provides %s; floor %.0f -> %.0f C (dark -%.0f), basking spot %.0f C at %.2f, %d hides, humidity %.2f\n",
+               h->id, h->name, h->worlds, list, h->floor_warm_c, h->floor_cool_c, h->night_drop_c, h->bask_c, h->bask_u, h->n_hides, h->humidity);
     }
-    /* the pairs: a habitat a species lists is of its world, and its lit ground (the floor, its rocks, its ramps) reaches the
-     * species' band somewhere; a tank holds a fitting pair of this build's world and refuses the other world's (P2b: that
-     * pair is another bin's - its ground is still checked here, staged straight into the tank as that bin holds it) */
-    int fit_ours = 0;
+    /* the pairs: a species lists its habitats; a pair it lists is held when everything the species needs is provided by the habitat,
+     * this firmware and this build's model (packs_compatible), and its lit ground (the floor, its rocks, its ramps) reaches the
+     * species' band somewhere. The simulator carries both worlds' packs: a pair of the other world's is listed but refused at the
+     * tank (its model has not the goals - tank_set_packs), and its ground is still checked here, staged straight into the tank */
+    int fit_ours = 0, listed = 0;
     for (int i = 0; i < ns; i++) for (int j = 0; j < nh; j++) {
         const species_t *p = species_at(i); const habitat_t *h = habitat_at(j);
-        if (((p->habitats >> h->id) & 1u) && p->world != h->world) PF("%s lists the %s, a habitat of another world", p->name, h->name);
-        if (!habitat_fits(h, p)) continue;
+        if (!((p->habitats >> h->id) & 1u)) continue;
+        listed++;
+        if (p->worlds && h->worlds && !(p->worlds & h->worlds)) PF("%s (worlds %02x) lists the %s (worlds %02x), a habitat of another world", p->name, p->worlds, h->name, h->worlds);
         tank_init(&s_t, 1);
-        const bool ours = p->world == PT_WORLD_ID;
-        if (ours && !tank_set_packs(&s_t, h->id, p->id)) PF("a tank refused %s in the %s, a pair of its world (%s) that fits", p->name, h->name, PT_WORLD_NAME);
+        const bool ours = packs_compatible(p, h, why, sizeof why);
+        const uint8_t h0 = s_t.habitat_id, p0 = s_t.pack_id;
+        char took_why[200] = "";
+        const bool took = tank_set_packs(&s_t, h->id, p->id, took_why, sizeof took_why);
+        if (took != ours) PF("packs_compatible says %d for %s in the %s, a tank says %d (%s)", ours, p->name, h->name, took, took_why);
+        if (ours && (s_t.habitat_id != h->id || s_t.pack_id != p->id)) PF("a tank took %s in the %s and does not hold it", p->name, h->name);
         if (!ours) {
-            const uint8_t h0 = s_t.habitat_id, p0 = s_t.pack_id;
-            if (tank_set_packs(&s_t, h->id, p->id) || s_t.habitat_id != h0 || s_t.pack_id != p0) PF("the %s's tank took %s in the %s, another world's pair", PT_WORLD_NAME, p->name, h->name);
+            if (s_t.habitat_id != h0 || s_t.pack_id != p0) PF("a refusal of %s in the %s changed the tank", p->name, h->name);
+            if (!strstr(took_why, "needs the goal") || strcmp(took_why, why) != 0) PF("%s in the %s is listed and refused, but not for the model's goals: \"%s\" / \"%s\"", p->name, h->name, took_why, why);
             s_t.habitat_id = h->id; s_t.pack_id = p->id;
         }
         fit_ours += ours;
@@ -138,36 +151,46 @@ int selftest_packs(void) {
         }
         if (at < 0) PF("the %s's lit ground (%.1f..%.1f C) never reaches %s's band %.0f-%.0f C", h->name, lo, hi, p->name, p->t_lo, p->t_hi);
         printf("selftest-packs: %s in the %s: %s; the lit ground runs %.1f..%.1f C and is in its band (%.0f-%.0f C) first at (%.0f, %.0f)\n",
-               p->name, h->name, ours ? "held" : "refused (another world's)", lo, hi, p->t_lo, p->t_hi, at, at_y);
+               p->name, h->name, ours ? "held" : "listed, refused by the model (another world's)", lo, hi, p->t_lo, p->t_hi, at, at_y);
     }
-    /* every pair a tank can hold fits and is this world's - each fitting one of this world, no other; a fresh tank holds
-     * the world's default pair; A16's test pack lives in the desert (the terrarium's) */
+    if (!fit_ours || fit_ours == listed) PF("%d of %d listed pairs are held: the simulator carries both worlds' packs, so some must be refused and some held", fit_ours, listed);
+    /* every pair a tank can hold is listed and compatible - each listed compatible one of this build, no other; a fresh tank holds
+     * the world's default pair; A16's test pack lives in the desert and the warm desert (the terrarium's) */
     tank_init(&s_t, 1);
     if (s_t.habitat_id != HABITAT_DEFAULT || s_t.pack_id != SPECIES_DEFAULT) PF("a new tank holds habitat %d / species %d, not the defaults", s_t.habitat_id, s_t.pack_id);
     int held = 0;
     for (int hid = 0; hid < 256; hid++) for (int pid = 0; pid < 256; pid++) {
-        if (!tank_set_packs(&s_t, (uint8_t)hid, (uint8_t)pid)) {
-            if (s_t.habitat_id != HABITAT_DEFAULT && held == 0) PF("a refused pair changed the tank");
+        if (!tank_set_packs(&s_t, (uint8_t)hid, (uint8_t)pid, why, sizeof why)) {
+            if (s_t.habitat_id != HABITAT_DEFAULT || s_t.pack_id != SPECIES_DEFAULT) PF("a refused pair (habitat %d, species %d) changed the tank", hid, pid);
+            if (!why[0]) PF("a refused pair (habitat %d, species %d) gave no reason", hid, pid);
             continue;
         }
         const habitat_t *h = habitat_get((uint8_t)hid); const species_t *p = species_get((uint8_t)pid);
-        if (!h || !p || !habitat_fits(h, p) || h->world != p->world) PF("a tank took habitat %d with species %d, a pair that does not fit", hid, pid);
-        if (p->world != PT_WORLD_ID) PF("the %s's tank took habitat %d with species %d, another world's pair", PT_WORLD_NAME, hid, pid);
+        if (!h || !p || !((p->habitats >> h->id) & 1u) || !packs_compatible(p, h, NULL, 0)) PF("a tank took habitat %d with species %d, a pair that is not listed and compatible", hid, pid);
         held++;
-        tank_set_packs(&s_t, HABITAT_DEFAULT, SPECIES_DEFAULT);
+        if (!tank_set_packs(&s_t, HABITAT_DEFAULT, SPECIES_DEFAULT, why, sizeof why)) PF("a tank refused the default pair: %s", why);
     }
-    if (held != fit_ours) PF("a tank holds %d pairs, but %d fitting pairs are the %s's", held, fit_ours, PT_WORLD_NAME);
-    if (PT_TERRARIUM && !tank_set_packs(&s_t, HABITAT_DESERT, SPECIES_TEST_WARM)) PF("A16's test pack is refused the desert");
+    if (held != fit_ours) PF("a tank holds %d pairs, but %d listed pairs are compatible with this %s build", held, fit_ours, PT_WORLD_NAME);
+    if (PT_TERRARIUM) {
+        if (!tank_set_packs(&s_t, HABITAT_DESERT, SPECIES_TEST_WARM, why, sizeof why)) PF("A16's test pack is refused the desert: %s", why);
+        if (!tank_set_packs(&s_t, HABITAT_TEST_WARM, SPECIES_TEST_WARM, why, sizeof why)) PF("A16's test pack is refused its warm desert: %s", why);
+    } else if (tank_set_packs(&s_t, HABITAT_DESERT, SPECIES_TEST_WARM, why, sizeof why) || !strstr(why, "needs the goal")) {
+        PF("the aquarium's tank took A16's test pack, or refused it for another reason: %s", why);
+    }
     uint8_t h0 = s_t.habitat_id, p0 = s_t.pack_id;
-    if (tank_set_packs(&s_t, 99, SPECIES_DEFAULT) || tank_set_packs(&s_t, HABITAT_DEFAULT, 99) || s_t.habitat_id != h0 || s_t.pack_id != p0)
-        PF("an unknown habitat or species was taken, or the refusal moved the tank");
-    printf("selftest-packs: %d (habitat, species) pairs of 65536 can be held in the %s, every one fits and is its world's%s\n",
-           held, PT_WORLD_NAME, PT_TERRARIUM ? "; the test pack lives in the desert" : "");
-    /* the rules refuse what they must: one broken copy of the gecko (and the desert) each */
-    species_t b; habitat_t hb; int refused = 0;
-    #define REFUSE_S(stmt, what) do { b = SPECIES_PACK_GECKO; stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
-    #define REFUSE_H(stmt, what) do { hb = HABITAT_PACK_DESERT; stmt; if (habitat_check(&hb, why, sizeof why)) PF("a desert with %s passed its rules", what); refused++; } while (0)
+    if (tank_set_packs(&s_t, 99, SPECIES_DEFAULT, why, sizeof why) || !strstr(why, "no habitat with id 99") || s_t.habitat_id != h0 || s_t.pack_id != p0 ||
+        tank_set_packs(&s_t, HABITAT_DEFAULT, 99, why, sizeof why) || !strstr(why, "no species with id 99") || s_t.habitat_id != h0 || s_t.pack_id != p0)
+        PF("an unknown habitat or species was taken, or the refusal moved the tank or did not say what is unknown (%s)", why);
+    printf("selftest-packs: %d of %d listed (habitat, species) pairs are held in the %s build and the other %d refused by the model (65536 pairs tried: %d taken, each listed and compatible); the unknown ids refused by name%s\n",
+           fit_ours, listed, PT_WORLD_NAME, listed - fit_ours, held, PT_TERRARIUM ? "; the test pack lives in the desert and the warm desert" : "; the test pack is refused by the model");
+    /* the rules refuse what they must: one broken copy of the gecko (and the desert, and the freshwater) each */
+    species_t b; habitat_t hb; int refused = 0, accepted = 0;
+    #define REFUSE_S(stmt, what) do { b = *species_get(SPECIES_GECKO); stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
+    #define REFUSE_SW(stmt, what, word) do { REFUSE_S(stmt, what); if (!strstr(why, word)) PF("a gecko with %s was refused for another reason: %s", what, why); } while (0)
+    #define REFUSE_H(stmt, what) do { hb = *habitat_get(HABITAT_DESERT); stmt; if (habitat_check(&hb, why, sizeof why)) PF("a desert with %s passed its rules", what); refused++; } while (0)
     #define REFUSE_HW(stmt, what, word) do { REFUSE_H(stmt, what); if (!strstr(why, word)) PF("a desert with %s was refused for another reason: %s", what, why); } while (0)
+    #define REFUSE_FW(stmt, what, word) do { hb = *habitat_get(HABITAT_FRESHWATER); stmt; if (habitat_check(&hb, why, sizeof why)) PF("a freshwater with %s passed its rules", what); \
+                                             if (!strstr(why, word)) { PF("a freshwater with %s was refused for another reason: %s", what, why); } refused++; } while (0)
     REFUSE_S(b.t_lo = b.t_hi + 1, "its band out of order");
     REFUSE_S(b.t_hi = b.t_lo + 1.5f, "a comfort band 1.5 C wide");
     REFUSE_S(b.tau_s[2] = 0, "no tau for an adult");
@@ -178,14 +201,54 @@ int selftest_packs(void) {
     REFUSE_S(b.pop_cap = 0, "no room for itself");
     REFUSE_S(b.pop_cap = POP_CAP + 1, "a cap past POP_CAP");
     REFUSE_S(b.n_morphs = 0, "no morph");
-    REFUSE_S(b.goals |= 1u << LZ_CLIMB, "a climb (a goal past the schema's seven)");
+    REFUSE_SW(strcpy(b.goal[b.n_goals++], "climb"), "a climb (a goal no model's list has)", "climb");
     REFUSE_S(b.schedule = SCHED_DUSK, "a dusk schedule (no clock-based day yet)");
     REFUSE_S(b.habitats = 0, "nowhere to live");
+    /* ... how it moves, what it needs and which goals it names (docs/ptpk.md "Capabilities") */
+    REFUSE_SW(b.n_loco = 0, "no way of moving", "ways of moving");
+    REFUSE_SW(b.n_loco = 2; b.loco[1] = b.loco[0], "a mode twice", "twice");
+    REFUSE_SW(b.loco[0].mode = CAP_SLITHER, "a mode no firmware has (SLITHER)", "SLITHER");
+    REFUSE_SW(b.loco[0].mode = CAP_WALK | CAP_SWIM, "two modes in one entry", "not one movement mode");
+    REFUSE_SW(b.loco[0].area = CAP_HIDES, "a fitting for an area", "not one area");
+    REFUSE_SW(b.media_needs |= CAP_WALK, "a movement bit among its media needs", "media_needs");
+    REFUSE_SW(b.media_needs |= 1u << 20, "an unknown bit among its media needs", "media_needs");
+    REFUSE_SW(b.media_wants |= 1u << 20, "a want nobody has", "media_wants");
+    REFUSE_SW(b.media_needs &= ~CAP_HIDES, "no HIDES needed though it sheds", "HIDES");
+    REFUSE_SW(b.media_needs |= CAP_SHORE, "a SHORE without WATER and LAND", "SHORE");
+    REFUSE_SW(b.n_loco = 1; b.loco[0].mode = CAP_SWIM; b.loco[0].area = CAP_WATER, "walk numbers and no walk", "walk numbers");
+    REFUSE_SW(b.diet |= 0x40, "a food nobody has", "diet");
+    REFUSE_SW(strcpy(b.goal[b.n_goals], b.goal[0]); b.n_goals++, "a goal twice", "twice");
+    REFUSE_SW(b.n_goals = 0, "no goal", "goals, not 1");
+    REFUSE_SW(b.n_goals = SPECIES_GOALS_MAX + 1, "nine goals", "goals, not 1");
+    REFUSE_SW(strcpy(b.goal[0], "Hunt"), "a goal in capitals", "not a word");
+    REFUSE_SW(strcpy(b.goal[0], "9lives"), "a goal that starts with a digit", "not a word");
+    REFUSE_SW(memcpy(b.goal[0], "abcdefghijklmnop", GOAL_NAME_MAX), "a goal word of 16 characters", "not a word");
+    b = *species_get(SPECIES_GECKO); b.media_wants |= CAP_PELLET | CAP_SHORE;
+    if (!species_check(&b, why, sizeof why)) PF("a gecko that merely WANTS a food and a shore was refused: %s", why);
+    accepted++;
     REFUSE_H(hb.floor_warm_c = hb.floor_cool_c - 1, "its warm end colder than its cool end");
     REFUSE_H(for (int k = 0; k < hb.n_hides; k++) hb.hides[k].kind = HIDE_WARM, "no humid hide");
     REFUSE_H(hb.hides[1].u = hb.hides[0].u + 0.05f, "two hides on one spot");
     REFUSE_H(hb.bask_c = hb.floor_warm_c - 5, "a lamp that does not warm its spot");
     REFUSE_H(hb.moist_start = 1.5f, "moisture past 1");
+    /* ... what a habitat says it provides must be what it has (habitat.c: BASK and LAMP <=> a lamp's pool, HIDES <=> hides, MEALWORM <=> a dish) */
+    REFUSE_HW(hb.areas = 0, "no areas", "neither WATER nor LAND");
+    REFUSE_HW(hb.areas = CAP_SHORE, "a SHORE alone", "neither WATER nor LAND");
+    REFUSE_HW(hb.areas |= CAP_SHORE, "a SHORE on land with no water", "SHORE");
+    REFUSE_HW(hb.areas |= 1u << 20, "an area nobody has", "more than areas");
+    REFUSE_HW(hb.provides |= CAP_WATER, "an area among its provisions", "more than a lamp");
+    REFUSE_HW(hb.areas &= ~CAP_BASK, "a lamp's pool and no BASK among its areas", "BASK");
+    REFUSE_HW(hb.provides &= ~CAP_LAMP, "a lamp's pool and no LAMP among its provisions", "LAMP");
+    REFUSE_HW(hb.provides &= ~CAP_HIDES, "hides and no HIDES among its provisions", "HIDES");
+    REFUSE_HW(hb.provides &= ~CAP_MEALWORM, "a dish and no MEALWORM among its provisions", "MEALWORM");
+    REFUSE_HW(hb.dish = false, "MEALWORM among its provisions and no dish", "MEALWORM");
+    REFUSE_HW(hb.provides |= CAP_PELLET, "pellets on land only", "need WATER");
+    REFUSE_FW(hb.areas |= CAP_BASK, "BASK among its areas and no lamp's pool", "BASK");
+    REFUSE_FW(hb.provides |= CAP_LAMP, "a LAMP among its provisions and no lamp's pool", "LAMP");
+    REFUSE_FW(hb.provides |= CAP_HIDES, "HIDES among its provisions and no hides", "HIDES");
+    REFUSE_FW(hb.provides |= CAP_MEALWORM, "MEALWORM among its provisions and no dish", "MEALWORM");
+    REFUSE_FW(hb.provides |= CAP_CRICKET, "crickets on water only", "need LAND");
+    REFUSE_FW(hb.areas = CAP_SHORE, "a SHORE alone", "neither WATER nor LAND");
     /* ... and its ground (terrain.h THE RULES, on all four boards): each refused for its own reason */
     REFUSE_HW(hb.ramps[0].u_lo = 0.46f, "a ramp too steep to walk (a step)", "steeper");
     REFUSE_HW(hb.n_ramps = 2, "the high rock without a ramp", "out of reach");
@@ -196,19 +259,28 @@ int selftest_packs(void) {
     REFUSE_HW(hb.ramps[0].u_lo = 1.0f, "a ramp's foot at the glass", "could not reach");
     REFUSE_HW(hb.ramps[1].u_lo = 0.9f, "a ramp ending off its ledge", "off its surfaces");
     REFUSE_HW(hb.rise_c = -1, "air colder up toward the lamp", "cools toward the lamp");
-    b = SPECIES_PACK_GECKO; b.world = WORLD_AQUARIUM;
-    if (habitat_fits(&HABITAT_PACK_DESERT, &b)) PF("a fish of the aquarium fits the desert");
-    printf("selftest-packs: the rules refuse %d broken packs (band, rates, stages, shed cycle, cap, morphs, a climber, a dusk schedule, no home; "
-           "the desert reversed, without a humid hide, hides on one spot, a cold lamp, wet past 1; its ground with a step, a rock out of reach, "
-           "a ledge on the floor, no room under a rock, the basking spot under a rock, a hide under a ramp, a ramp at the glass, a ramp off its "
-           "ledge, the air cooler up), and a pair of two worlds\n", refused);
+    /* ... and a gecko turned into a swimmer lives in no desert: the pair is refused for what the desert has not, by name (packs_compatible) */
+    b = *species_get(SPECIES_GECKO);
+    b.n_loco = 1; b.loco[0].mode = CAP_SWIM; b.loco[0].area = CAP_WATER; b.media_needs = CAP_WATER; b.diet = DIET_PELLET;
+    if (packs_compatible(&b, habitat_get(HABITAT_DESERT), why, sizeof why) || !strstr(why, "SWIM") || !strstr(why, "has none")) PF("a swimming gecko in the desert: %s", why);
+    refused++;
+    printf("selftest-packs: the rules refuse %d broken packs, each for its own word, and accept %d that merely wants (band, rates, stages, shed cycle, cap, morphs, a dusk schedule, no home; "
+           "no way of moving, a mode twice or in a mode no firmware has, a movement bit, an unknown bit or a food among its media needs, no HIDES though it sheds, a SHORE without water and land, "
+           "walk numbers and no walk, a goal no model lists (climb), twice, none, nine, in capitals, a digit first, 16 long; "
+           "the desert reversed, without a humid hide, hides on one spot, a cold lamp, wet past 1; areas and provisions that disagree with the lamp, the hides and the dish "
+           "(no areas, a SHORE alone or on land, an unknown area, BASK / LAMP / HIDES / MEALWORM either way round, pellets on land, crickets on water); "
+           "its ground with a step, a rock out of reach, a ledge on the floor, no room under a rock, the basking spot under a rock, a hide under a ramp, a ramp at the glass, a ramp off its "
+           "ledge, the air cooler up), and a gecko turned swimmer refused in the desert by SWIM\n", refused, accepted);
+    #undef REFUSE_FW
     #undef REFUSE_HW
+    #undef REFUSE_SW
     #undef REFUSE_S
     #undef REFUSE_H
     printf("selftest-packs OK\n");
     return 0;
 }
 
+#if PT_TERRARIUM   /* terrarium only: --selftest-heat / -shed / -mister park lizards in their hides (tank_lizard_enter), compiled into that world's bin alone */
 /* ================================================================ --selftest-heat */
 int selftest_heat(void) {
     s_name = "selftest-heat";
@@ -329,7 +401,7 @@ int selftest_heat(void) {
         if (fabsf(species_heat_of(w, c + 6) - species_heat_of(g, c)) > 1e-4f) PF("at %.2f C the gecko reads %.3f, the test pack at %.2f C %.3f", c, species_heat_of(g, c), c + 6, species_heat_of(w, c + 6));
     /* ... and on the basking spot that overheats the gecko, a test-pack lizard settles where its own band says */
     tank_init(&s_u, 13); tank_new_population(&s_u);
-    if (!tank_set_packs(&s_u, HABITAT_DESERT, SPECIES_TEST_WARM)) PF("the desert refused the test pack");
+    { char why[200] = ""; if (!tank_set_packs(&s_u, HABITAT_DESERT, SPECIES_TEST_WARM, why, sizeof why)) PF("the desert refused the test pack: %s", why); }
     s_u.fish[0].body_c = w->t_cold;
     for (int n = 0; n < (int)(w->tau_s[s_u.fish[0].stage & 3] * 10 / dt); n++) { tank_tick(&s_u, dt, NULL); s_u.fish[0].x = bx; s_u.fish[0].y = by; }
     float hw = s_u.fish[0].heat, hg = species_heat_of(g, bask);
@@ -625,3 +697,5 @@ int selftest_mister(void) {
     printf("selftest-mister OK\n");
     return 0;
 }
+
+#endif   /* PT_TERRARIUM: the heat, shed and mister tests */
