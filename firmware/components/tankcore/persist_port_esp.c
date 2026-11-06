@@ -157,3 +157,48 @@ bool persist_port_forget(void) {                  /* the save on the glass only:
     nvs_close(h);
     return e == ESP_OK || e == ESP_ERR_NVS_NOT_FOUND;
 }
+
+#if PT_CARD
+/* ---- THE PACK STORE's flash (packs/pstore.h, issue #4 phase 4): the 40 KB of the `storage` partition between the NVS rescue
+ * copy (main.c nvs_start: NVS_RESCUE_SIZE 0x6000 bytes at storage + 0) and the shelf's first byte (SHELF_BASE) - PSTORE_SECTORS
+ * sectors of 4 KB, one installed pack to a sector. Nothing here knows what a pack is: the store (common/packs/pstore.c) writes
+ * a sector's file first and its header last, so a power cut leaves a sector that reads as nothing. Only the card-library build
+ * has it (CONFIG_POCKET_TANK_CARD); the shelf's frame and the NVS copy do not move. Offsets are within the store. ---- */
+#include "packs/pstore.h"
+#define PSTORE_BYTES ((size_t)PSTORE_SECTORS * PSTORE_SECTOR_BYTES)
+_Static_assert(PSTORE_BASE >= 0x6000, "the pack store must start past the NVS rescue copy (main.c nvs_start: 0x6000 bytes at the start of storage)");
+_Static_assert(PSTORE_BASE + PSTORE_BYTES <= SHELF_BASE, "the pack store must end before the shelf's first byte (SHELF_BASE)");
+_Static_assert(PSTORE_BASE % 4096 == 0 && PSTORE_SECTOR_BYTES % 4096 == 0, "esp_partition_erase_range wants the flash's 4 KB sectors, aligned");
+/* as shelf_port_read: a destination outside DRAM (the library's block in PSRAM) is read through a small stack bounce - a flash
+   read straight into PSRAM takes a bounce buffer from internal RAM (esp_flash_read), and the library runs on a page's budget */
+bool pstore_port_read(uint32_t off, void *buf, size_t n) {
+    const esp_partition_t *p = shelf_part();
+    if (!p || !buf || off > PSTORE_BYTES || n > PSTORE_BYTES - off) return false;
+    if (n == 0) return true;
+    if (esp_ptr_in_dram(buf)) return esp_partition_read(p, PSTORE_BASE + off, buf, n) == ESP_OK;
+    uint8_t b[SHELF_READ_BOUNCE];
+    for (size_t o = 0; o < n; o += sizeof b) {
+        size_t k = n - o < sizeof b ? n - o : sizeof b;
+        if (esp_partition_read(p, PSTORE_BASE + off + o, b, k) != ESP_OK) return false;
+        memcpy((uint8_t *)buf + o, b, k);
+    }
+    return true;
+}
+/* programs erased flash (bits only fall): the store erases the sector first. false when the flash refused it */
+bool pstore_port_write(uint32_t off, const void *buf, size_t n) {
+    const esp_partition_t *p = shelf_part();
+    if (!p || !buf || off > PSTORE_BYTES || n > PSTORE_BYTES - off) return false;
+    if (n == 0) return true;
+    esp_err_t e = esp_partition_write(p, PSTORE_BASE + off, buf, n);
+    if (e != ESP_OK) ESP_LOGW(TAG, "pack store: write of %u bytes at %u: %s", (unsigned)n, (unsigned)off, esp_err_to_name(e));
+    return e == ESP_OK;
+}
+/* one sector of the store back to 0xFF */
+bool pstore_port_erase(int sector) {
+    const esp_partition_t *p = shelf_part();
+    if (!p || sector < 0 || sector >= PSTORE_SECTORS) return false;
+    esp_err_t e = esp_partition_erase_range(p, PSTORE_BASE + (size_t)sector * PSTORE_SECTOR_BYTES, PSTORE_SECTOR_BYTES);
+    if (e != ESP_OK) ESP_LOGW(TAG, "pack store: erase of sector %d: %s", sector, esp_err_to_name(e));
+    return e == ESP_OK;
+}
+#endif

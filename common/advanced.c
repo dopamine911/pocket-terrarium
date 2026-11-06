@@ -2,6 +2,9 @@
 #include "advanced.h"
 #include "render.h"
 #include "tank.h"
+#if PT_CARD
+#include "packs_page.h"
+#endif
 #include <math.h>
 #include <string.h>
 
@@ -119,13 +122,24 @@ static void go(int pg) { s_pg = pg; s_t = 0; s_down = false; }
 void adv_open(void) { s_pick = s_cell; s_msg = NULL; s_skip = true; go(ADV_PG_MAIN); }
 bool adv_up(void) { return s_pg != ADV_PG_NONE; }
 int  adv_page(void) { return s_pg; }
-void adv_close(void) { s_live = s_saved; s_pg = ADV_PG_NONE; }   /* a sitting cut short keeps the old map */
+void adv_close(void) {
+#if PT_CARD
+    pp_close();
+#endif
+    s_live = s_saved; s_pg = ADV_PG_NONE;                  /* a sitting cut short keeps the old map */
+}
+#if PT_CARD
+void adv_bind_tank(tank_t *t) { pp_bind_tank(t); }
+#endif
 static void touch_page(const char *msg) { s_live = s_saved; s_msg = msg; go(ADV_PG_TOUCH); }
 void adv_tick(float dt) {
     if (s_pg == ADV_PG_NONE) return;
     s_t += dt;
     if (s_pg == ADV_PG_CROSS && s_t > ADV_CROSS_IDLE_S) touch_page("STOPPED - NOTHING CHANGED");
     if (s_pg == ADV_PG_CHECK && s_t > ADV_CHECK_S) touch_page("KEPT THE OLD TOUCH");
+#if PT_CARD
+    if (s_pg == ADV_PG_PACKS) pp_tick(dt);
+#endif
 }
 static int step_pick(int dir) {
     for (int i = 0; i < N_SIZES; i++)
@@ -136,7 +150,7 @@ static int step_pick(int dir) {
         }
     s_pick = ADV_CELL_STOCK; return ADV_ACT_TICK;
 }
-int adv_touch(float x, float y, bool down, int q) {
+static int adv_touch_in(float x, float y, bool down, int q) {
     if (s_pg == ADV_PG_NONE) return ADV_ACT_NONE;
     if (s_skip) { if (!down) s_skip = false; return ADV_ACT_NONE; }   /* the chord's finger: its lift is not a tap */
     if (down && !s_down) { s_down = true; s_dx = x; s_dy = y; return ADV_ACT_NONE; }
@@ -151,6 +165,9 @@ int adv_touch(float x, float y, bool down, int q) {
         if (h == ADV_HIT_CALIBRATE) { touch_page(NULL); return ADV_ACT_TICK; }
         if (h == ADV_HIT_PREV) return step_pick(-1);
         if (h == ADV_HIT_NEXT) return step_pick(+1);
+#if PT_CARD
+        if (h == ADV_HIT_PACKS) { if (!pp_open()) return ADV_ACT_NONE; go(ADV_PG_PACKS); return ADV_ACT_TICK; }
+#endif
         if (h == ADV_HIT_SET && s_pick != s_cell) {
             if (adv_cell_fast(s_pick)) { s_ticked = false; go(ADV_PG_WARN); return ADV_ACT_TICK; }
             s_cell = s_pick; return ADV_ACT_CELL;          /* the same rate or slower: no warning */
@@ -184,8 +201,22 @@ int adv_touch(float x, float y, bool down, int q) {
         if ((s_dx - cx) * (s_dx - cx) + (s_dy - cy) * (s_dy - cy) > ADV_CHECK_HIT_PX * ADV_CHECK_HIT_PX) return ADV_ACT_NONE;   /* a miss: the clock runs on */
         s_saved = s_new; touch_page("NEW TOUCH SAVED");
         return ADV_ACT_FIT; }
+#if PT_CARD
+    case ADV_PG_PACKS: {                                   /* the PACKS page: a finger that stayed where it landed */
+        if (!still) return ADV_ACT_NONE;
+        int r = pp_tap(s_dx, s_dy);
+        if (r == PP_BACK) { pp_close(); go(ADV_PG_MAIN); return ADV_ACT_TICK; }
+        return r == PP_TICK ? ADV_ACT_TICK : ADV_ACT_NONE; }
+#endif
     }
     return ADV_ACT_NONE;
+}
+int adv_touch(float x, float y, bool down, int q) {
+    int r = adv_touch_in(x, y, down, q);
+#if PT_CARD
+    if (r == ADV_ACT_NONE && pp_take_changed()) r = ADV_ACT_PACKS;   /* the page's blocking call finished (adv_tick): the pack set changed */
+#endif
+    return r;
 }
 void adv_render(uint16_t *fb, int stride) {
     switch (s_pg) {
@@ -194,6 +225,9 @@ void adv_render(uint16_t *fb, int stride) {
     case ADV_PG_TOUCH: render_touch_intro(fb, stride, !touch_fit_is_none(&s_saved), s_msg); break;
     case ADV_PG_CROSS: { float x, y; adv_cross_target(s_i, &x, &y); render_touch_cross(fb, stride, s_i, ADV_N_CROSS, (int)x, (int)y); break; }
     case ADV_PG_CHECK: { float x, y; adv_check_target(&x, &y); render_touch_check(fb, stride, (int)x, (int)y, ADV_CHECK_S - s_t, ADV_CHECK_S); break; }
+#if PT_CARD
+    case ADV_PG_PACKS: pp_render(fb, stride); break;
+#endif
     default: break;
     }
 }

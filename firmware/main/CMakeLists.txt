@@ -18,8 +18,15 @@ if(PT_NET)
     list(APPEND SRCS update_mode.c net_port_esp.c link_spike.c link_port_espnow.c link_dev.c)
     list(APPEND REQS esp_wifi esp_netif esp_event esp_http_client esp_https_ota json)
 endif()
-# sd_spike.c (the tank switcher's step 2 test, `sd test`) is left out of 0.3.9.3 (docs/release-0.3.9.3.md D2): it comes
-# back with the packages (step 4) - list it here and restore its three hooks in main.c / director.c
+# THE CARD PORT (issue #4 phase 4, docs/card-library.md): the 1.8's microSD slot as a library of packs. An option no shipped image
+# enables (Kconfig POCKET_TANK_CARD: the 1.8 only, compile-only, UNVERIFIED on a board): with it off this adds nothing - no
+# source, no component. card_port_sh8601.c is the successor of sd_spike.c, the tank switcher's step 2 test (`sd test`), which was
+# left out of 0.3.9.3 (docs/release-0.3.9.3.md D2); sd_spike.c itself stays gone. ESP-IDF 5 has the SDMMC host driver as a
+# component of its own (esp_driver_sdmmc); fatfs, sdmmc and esp_driver_sdspi are in REQS above for every build, as they were.
+if(CONFIG_POCKET_TANK_CARD)
+    list(APPEND SRCS card_port_sh8601.c)
+    list(APPEND REQS esp_driver_sdmmc)
+endif()
 if(CONFIG_POCKET_TANK_DISPLAY_SH8601)
     list(APPEND SRCS display_port_sh8601.c)
 else()
@@ -63,3 +70,8 @@ target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../${PT_TOK_F
 # references it - the release tools read it back from the image - so it is kept by
 # name or --gc-sections drops it (ESP-IDF's "custom structure" recipe, app_image_format)
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u pt_board_marker")
+# the card port (card_port_sh8601.c) is called by the library in the tankcore component, which links BEFORE main's archive: nothing in
+# main references card_slot, so the linker would not pull the object out of libmain.a. Named, as the marker above is.
+if(CONFIG_POCKET_TANK_CARD)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-u card_slot")
+endif()

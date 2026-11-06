@@ -60,6 +60,26 @@ bool habitat_commit(habitat_t *h, bool builtin, uint8_t legacy_id, uint32_t crc,
     #undef REFUSE
 }
 
+#if PT_CARD   /* THE CARD LIBRARY's (docs/card-library.md): without it the pools stay as they were and none of this is compiled */
+bool habitat_room(void) { packs_init(); return s_n < HABITAT_POOL; }
+
+/* a habitat that is not built in, out of the pool (the card library's REMOVE, an UPDATE's old version): the others close up and keep
+   their ids, the generation moves (tank.c tank_terrain lays its ground again) and every species' `habitats` is derived again */
+bool habitat_remove(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) {
+        if (s_pool[i].uid != uid) continue;
+        if (s_pool[i].builtin) return false;
+        for (int k = i + 1; k < s_n; k++) { s_pool[k - 1] = s_pool[k]; s_crc[k - 1] = s_crc[k]; }
+        s_n--; s_gen++;
+        memset(&s_pool[s_n], 0, sizeof s_pool[s_n]); s_crc[s_n] = 0;
+        species_relink();
+        return true;
+    }
+    return false;
+}
+#endif
+
 pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by) {
     packs_init();
     for (int i = 0; i < s_n; i++)

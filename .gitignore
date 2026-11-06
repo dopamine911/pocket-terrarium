@@ -63,3 +63,6 @@ firmware/host_test/decide_host
 # training venv (docs/retrain-lizard.md)
 .venv/
 model/.venv/
+# the simulator without the card library (issue #4 phase 4: make CARD=0, sim/Makefile)
+sim/build*-nocard/
+sim/fishsim*-nocard

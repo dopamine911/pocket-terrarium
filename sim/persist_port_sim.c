@@ -155,3 +155,59 @@ bool shelf_port_frame_set(const char *key, const void *buf, size_t n) {
 }
 bool shelf_port_frame_del(const char *key) { if (!alive()) return false; return remove(frame_path(key)) == 0 || errno == ENOENT; }
 bool persist_port_forget(void) { if (s_blocked || !alive()) return false; return remove(path()) == 0 || errno == ENOENT; }
+
+/* ---- the pack store's flash (packs/pstore.h; PT_CARD): PSTORE_SECTORS sectors of 4 KB in a file, POCKET_TANK_PACKSTORE
+ * (default ~/.cache/pocket-terrarium/packstore.bin), erased = 0xFF like flash. A write can only clear bits (the old bytes AND the
+ * new: a store that wrote without erasing would show it), and it dies with the same "power cut" as the shelf's writes
+ * (shelf_port_sim_cut / _fail: every write and erase after the cut fails). g_sim_pstore_tear makes the failing write TEAR: it
+ * programs (or erases) its first half before it fails, as flash does when the power goes mid-operation. ---- */
+#include "packs/pstore.h"
+#if PT_CARD
+int g_sim_pstore_tear;
+static const char *pstore_path(void) {
+    static char p[512];
+    if (getenv("POCKET_TANK_PACKSTORE")) return getenv("POCKET_TANK_PACKSTORE");
+    snprintf(p, sizeof p, "%s/.cache/pocket-terrarium/packstore.bin", getenv("HOME") ? getenv("HOME") : ".");
+    return p;
+}
+static FILE *pstore_file(void) {
+    FILE *f = fopen(pstore_path(), "r+b");
+    if (!f) {                                      /* a new board: the store erased */
+        ensure_parent_dir(pstore_path());
+        if (!(f = fopen(pstore_path(), "w+b"))) return NULL;
+        static uint8_t ff[PSTORE_SECTOR_BYTES]; memset(ff, 0xff, sizeof ff);
+        for (int k = 0; k < PSTORE_SECTORS; k++) fwrite(ff, 1, sizeof ff, f);
+        fflush(f);
+    }
+    return f;
+}
+bool pstore_port_read(uint32_t off, void *buf, size_t n) {
+    if ((size_t)off + n > (size_t)PSTORE_SECTORS * PSTORE_SECTOR_BYTES) return false;
+    FILE *f = pstore_file(); if (!f) return false;
+    const bool ok = !fseek(f, (long)off, SEEK_SET) && fread(buf, 1, n, f) == n;
+    fclose(f); return ok;
+}
+bool pstore_port_write(uint32_t off, const void *buf, size_t n) {
+    if ((size_t)off + n > (size_t)PSTORE_SECTORS * PSTORE_SECTOR_BYTES) return false;
+    const bool live = alive();
+    const size_t take = live ? n : g_sim_pstore_tear ? n / 2 : 0;          /* a cut write programs half of itself, or none */
+    FILE *f = pstore_file(); if (!f) return false;
+    bool ok = !fseek(f, (long)off, SEEK_SET);
+    uint8_t *old = malloc(take ? take : 1);
+    ok = ok && old && fread(old, 1, take, f) == take;
+    for (size_t i = 0; ok && i < take; i++) old[i] &= ((const uint8_t *)buf)[i];          /* flash programs bits down */
+    ok = ok && !fseek(f, (long)off, SEEK_SET) && fwrite(old, 1, take, f) == take;
+    free(old); fclose(f);
+    return live && ok;
+}
+bool pstore_port_erase(int sector) {
+    if (sector < 0 || sector >= PSTORE_SECTORS) return false;
+    const bool live = alive();
+    const size_t take = live ? PSTORE_SECTOR_BYTES : g_sim_pstore_tear ? PSTORE_SECTOR_BYTES / 2 : 0;
+    FILE *f = pstore_file(); if (!f) return false;
+    static uint8_t ff[PSTORE_SECTOR_BYTES]; memset(ff, 0xff, sizeof ff);
+    const bool ok = !fseek(f, (long)sector * PSTORE_SECTOR_BYTES, SEEK_SET) && fwrite(ff, 1, take, f) == take;
+    fclose(f);
+    return live && ok;
+}
+#endif

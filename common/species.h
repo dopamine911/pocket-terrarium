@@ -192,6 +192,16 @@ bool species_commit(species_t *slot, bool builtin, uint8_t legacy_id, uint32_t c
 pack_seen_t species_seen(uint32_t uid, uint32_t crc, const char **by);
 void species_drop_loaded(void);
 void species_relink(void);                  /* habitat.c: a habitat was added - every species' `habitats` mask again */
+/* THE CARD LIBRARY's (issue #4 phase 4, packs/library.h; docs/card-library.md): species_room - a pool slot is free (a dry check
+ * asks without taking one); species_admit - the rules species_commit runs once the pack has its id (this firmware's movement
+ * modules, the habitats it lives in, species_check), on a species in the CALLER's memory: it derives that copy's `habitats`
+ * and touches no pool; species_remove - a pack that is not built in, out of the pool (a REMOVE, or an UPDATE's old version):
+ * the packs after it close up and every pack keeps its id (a tank's handle stays good), false for a built-in or unknown uid */
+#if PT_CARD
+bool species_room(void);
+bool species_admit(species_t *p, bool builtin, char *why, size_t n);
+bool species_remove(uint32_t uid);
+#endif
 
 /* the model's heat as a float 0..10 (before drive9), relative to the pack's
  * comfort band: 0 at or under t_cold, 0 -> 5 up to t_lo, 5 -> 7 across the

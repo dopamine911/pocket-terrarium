@@ -43,6 +43,13 @@ endif()
 if(PT_NET STREQUAL "1")
     list(APPEND SRCS "${COMMON}/update.c" "${COMMON}/passport.c" "${COMMON}/link.c" "${COMMON}/tank_link.c" "${COMMON}/collection.c" "${COMMON}/gift.c")
 endif()
+# THE CARD LIBRARY (issue #4 phase 4, docs/card-library.md): the card port's shared half (card.c: the name check), the library,
+# the pack store in flash (packs/pstore.h; its flash port is persist_port_esp.c) and the PACKS page under ADVANCED. Only with the
+# Kconfig option POCKET_TANK_CARD (the 1.8 only, default off, compile-only, UNVERIFIED on a board): with it off these sources and
+# the PT_CARD flag below stay out of the build and nothing of them is referenced.
+if(CONFIG_POCKET_TANK_CARD)
+    list(APPEND SRCS "${COMMON}/card.c" "${COMMON}/packs/library.c" "${COMMON}/packs/pstore.c" "${COMMON}/packs_page.c")
+endif()
 idf_component_register(
     SRCS ${SRCS}
     INCLUDE_DIRS "${COMMON}" "."
@@ -71,4 +78,9 @@ if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
     target_compile_definitions(${COMPONENT_LIB} PUBLIC PT_WORLD=1)
 else()
     target_compile_definitions(${COMPONENT_LIB} PUBLIC PT_WORLD=2)
+endif()
+# THE CARD LIBRARY's flag (common/world.h PT_CARD): PUBLIC, like PT_WORLD - main (the card port, its three hooks) and every
+# component that sees advanced.h, packs/ptpk.h or card.h must see the same value (the pack pools and the page change with it)
+if(CONFIG_POCKET_TANK_CARD)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC PT_CARD=1)
 endif()

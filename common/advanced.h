@@ -25,6 +25,10 @@
 #define ADVANCED_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "world.h"
+#if PT_CARD
+#include "tank.h"
+#endif
 
 #define ADV_BOOT_HOLD_S   5.0f        /* the chord: BOOT held this long before the finger lands (also the reset prompt's) */
 #define ADV_CHECK_S       15.0f       /* the check cross: tapped in this long, or the old touch comes back */
@@ -73,7 +77,7 @@ void touch_fit_apply(const touch_fit_t *f, float *x, float *y, int q);   /* q: t
 bool touch_fit_solve(const float *tx, const float *ty, const float *px, const float *py, int n, int q, touch_fit_t *out);
 
 /* ---- the page ---- */
-enum { ADV_PG_NONE = 0, ADV_PG_MAIN, ADV_PG_WARN, ADV_PG_TOUCH, ADV_PG_CROSS, ADV_PG_CHECK };
+enum { ADV_PG_NONE = 0, ADV_PG_MAIN, ADV_PG_WARN, ADV_PG_TOUCH, ADV_PG_CROSS, ADV_PG_CHECK, ADV_PG_PACKS };
 /* the platform's start-up: the saved size (0 or not in the list = the board's own) and the saved map */
 void adv_init(int cell_mah, const touch_fit_t *fit);
 int  adv_cell(void);                      /* the size in use */
@@ -83,6 +87,9 @@ void adv_open(void);                      /* the chord: the page up */
 bool adv_up(void);
 int  adv_page(void);
 void adv_close(void);                     /* the tank goes to sleep, a flow takes the glass: the page goes, the saved map stays */
+#if PT_CARD
+void adv_bind_tank(tank_t *t);            /* the tank the PACKS page may pause (REMOVE of a pack it lives on) and resume - call once, with the platform's tank */
+#endif
 void adv_tick(float dt);
 /* the finger every frame while the page is up: x, y on the picture as shown (through adv_touch_fit),
    turned = the picture is turned over now. Returns an action, one-shot: */
@@ -90,7 +97,9 @@ enum { ADV_ACT_NONE = 0,
        ADV_ACT_BACK,                      /* BACK: the settings page again */
        ADV_ACT_CELL,                      /* a size was SET (adv_cell()): save it, tell the charger */
        ADV_ACT_FIT,                       /* the touch map changed for good (adv_touch_fit()): save it */
-       ADV_ACT_TICK };                    /* a step or a cross taken: the platform's little click, nothing to save */
+       ADV_ACT_TICK,                      /* a step or a cross taken: the platform's little click, nothing to save */
+       ADV_ACT_PACKS };                   /* PT_CARD: the PACKS page changed the pack set (packs_page.h pp_message() says how): log it. One-shot, handed out by the
+                                             next adv_touch after the work - the platforms call it every frame while the page is up */
 int  adv_touch(float x, float y, bool down, int q);
 void adv_render(uint16_t *fb, int stride);
 /* for tests and the director */

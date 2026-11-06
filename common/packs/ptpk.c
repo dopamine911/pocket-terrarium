@@ -10,6 +10,7 @@
 #include "ptpk_tags.h"
 #include "builtin.h"
 #include "caps.h"
+#include "compat.h"                        /* species_moves: the dry check names the modules a species needs and this firmware lacks */
 #include <stdio.h>
 #include <string.h>
 
@@ -493,6 +494,66 @@ packs_result_t packs_add(const uint8_t *blob, size_t n, packs_origin_t origin, p
     say(info, h.kind, p->uid, p->id, p->name);
     return PACKS_ADDED;
 }
+
+#if PT_CARD   /* THE CARD LIBRARY's (docs/card-library.md): without it the pools stay as they were and none of this is compiled */
+/* the dry check (ptpk.h): packs_add's own steps - the header, the dedupe by uid, the records into a species_t / habitat_t /
+   model_manifest_t, the rules - on the caller's scratch instead of a pool slot, so nothing is committed and no id is given. The
+   admit functions are the ones the commits run: one set of refusals */
+packs_dry_t packs_dry_check(const uint8_t *blob, size_t n, packs_scratch_t *scratch, packs_probe_t *probe, char *why, size_t why_n) {
+    packs_init();
+    memset(probe, 0, sizeof *probe);
+    ptpk_header_t h;
+    if (!ptpk_open(blob, n, &h, why, why_n)) return PACKS_DRY_BAD;
+    probe->kind = h.kind; probe->uid = h.uid; probe->crc = h.crc;
+    const char *by = "";
+    pack_seen_t seen = PACK_NEW;
+    if (h.kind == PTPK_KIND_MODEL) {
+        seen = manifest_seen(h.uid, h.crc, &by);
+        const model_manifest_t *m = manifest_by_uid(h.uid);
+        if (m) { probe->held = true; probe->held_builtin = m->builtin; if (seen == PACK_SAME) snprintf(probe->name, sizeof probe->name, "%s", m->name); }
+    } else if (h.kind == PTPK_KIND_SPECIES) {
+        seen = species_seen(h.uid, h.crc, &by);
+        const species_t *s = species_by_uid(h.uid);
+        if (s) { probe->held = true; probe->held_builtin = s->builtin; if (seen == PACK_SAME) snprintf(probe->name, sizeof probe->name, "%s", s->name); }
+    } else {
+        seen = habitat_seen(h.uid, h.crc, &by);
+        const habitat_t *q = habitat_by_uid(h.uid);
+        if (q) { probe->held = true; probe->held_builtin = q->builtin; if (seen == PACK_SAME) snprintf(probe->name, sizeof probe->name, "%s", q->name); }
+    }
+    if (seen == PACK_SAME) return PACKS_DRY_SAME;
+    uint8_t legacy = 0;                                      /* (a file from a card is told apart by uid alone: LEGACY_ID is ignored, as in packs_add) */
+    memset(scratch, 0, sizeof *scratch);
+    bool room;
+    if (h.kind == PTPK_KIND_MODEL) {
+        if (!ptpk_read_manifest(&h, &scratch->m, why, why_n)) return PACKS_DRY_BAD;
+        snprintf(probe->name, sizeof probe->name, "%s", scratch->m.name);
+        if (!manifest_admit(&scratch->m, why, why_n)) return PACKS_DRY_BAD;
+        room = manifest_room();
+    } else if (h.kind == PTPK_KIND_SPECIES) {
+        if (!ptpk_read_species(&h, &scratch->s, &legacy, why, why_n)) return PACKS_DRY_BAD;
+        snprintf(probe->name, sizeof probe->name, "%s", scratch->s.name);
+        probe->no_module = species_moves(&scratch->s) & ~firmware_caps();
+        if (!species_admit(&scratch->s, false, why, why_n)) {
+            if (!probe->no_module && !scratch->s.habitats && scratch->s.n_habitat_uids) probe->want_habitat = scratch->s.habitat_uid[0];
+            return PACKS_DRY_BAD;
+        }
+        room = species_room();
+    } else {
+        if (!ptpk_read_habitat(&h, &scratch->h, &legacy, why, why_n)) return PACKS_DRY_BAD;
+        snprintf(probe->name, sizeof probe->name, "%s", scratch->h.name);
+        scratch->h.id = 3;                                   /* habitat_commit hands a real handle (the lowest free of 3..30) only on a commit; the check wants one in range */
+        if (!habitat_check(&scratch->h, why, why_n)) return PACKS_DRY_BAD;
+        room = habitat_room();
+    }
+    if (seen == PACK_UID_TAKEN) return PACKS_DRY_OTHER;      /* a good pack, another file's uid: an update if the holder came from the card (the library's to say) */
+    if (!room) {
+        probe->no_room = true;
+        if (why && why_n) snprintf(why, why_n, "no room: the %s pool is full", h.kind == PTPK_KIND_MODEL ? "manifest" : h.kind == PTPK_KIND_SPECIES ? "species" : "habitat");
+        return PACKS_DRY_BAD;
+    }
+    return PACKS_DRY_NEW;
+}
+#endif
 
 bool g_packs_ready;
 /* the built-in packs through the one entry (docs/ptpk.md "The loader"): each is encoded from its const definition (builtin.c) into

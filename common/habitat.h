@@ -109,6 +109,11 @@ bool habitat_commit(habitat_t *slot, bool builtin, uint8_t legacy_id, uint32_t c
 pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by);
 void habitat_drop_loaded(void);
 uint32_t habitat_generation(void);             /* counts every habitat added or dropped: what a cache of a habitat's layout must be laid again on (tank.c tank_terrain) */
+/* THE CARD LIBRARY's, as species.h's: habitat_room; habitat_remove (the generation moves and every species' `habitats` is derived again) */
+#if PT_CARD
+bool habitat_room(void);
+bool habitat_remove(uint32_t uid);
+#endif
 /* a habitat's own rules (--selftest-packs). By its AREAS: with land - a terrarium's - an ordered, positive layout, a warm end
  * warmer than its cool end, a lamp that warms its spot, at least one humid hide; without - water's - the floor may be even,
  * and a lamp and hides are its own business (none in freshwater); every one's moisture and humidity in 0..1, its ground well

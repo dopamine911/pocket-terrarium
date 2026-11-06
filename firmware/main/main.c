@@ -59,6 +59,10 @@
 #include "codec_port.h"
 #include "progression.h"
 #include "packs/ptpk.h"      /* packs_init: the built-in packs, encoded and loaded before any task reads one (docs/ptpk.md) */
+#if PT_CARD
+#include "packs/library.h"   /* library_boot: the packs installed from the microSD card, loaded at boot from the flash store (docs/card-library.md) */
+#include "packs_page.h"      /* pp_message: the PACKS page's last result, logged when ADVANCED hands main ADV_ACT_PACKS */
+#endif
 #include "audio_port.h"
 #include "audio.h"
 #include "notice.h"
@@ -695,6 +699,9 @@ static void adv_load(void) {
         nvs_close(h);
     }
     adv_init(mah, &f);
+#if PT_CARD
+    adv_bind_tank(&tank);             /* the PACKS page pauses and resumes the tank whose pack it removes or installs (progression_pack_leaving / _arrived): it is bound to this one (a static: its address is good from the start, its contents are loaded later) */
+#endif
     const touch_fit_t *k = adv_touch_fit();
     ESP_LOGI(TAG, "advanced: battery %d mAh%s, touch %s (x %.3f %+.1f, y %.3f %+.1f)", adv_cell(), adv_cell() == ADV_CELL_STOCK ? " (the board's own)" : "",
              touch_fit_is_none(k) ? "the board's own map" : "THE KEEPER'S MAP", k->ax, k->bx, k->ay, k->by);
@@ -1390,7 +1397,11 @@ static void tank_task(void *arg) {
           if (a == ADV_ACT_CELL) { adv_save(a); battery_port_set_cell(adv_cell()); audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE); }
           else if (a == ADV_ACT_FIT) { adv_save(a); audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE);
               const touch_fit_t *f = adv_touch_fit();
-              ESP_LOGI(TAG, "advanced: touch %s (x %.3f %+.1f, y %.3f %+.1f)", touch_fit_is_none(f) ? "back to the board's own map" : "map kept", f->ax, f->bx, f->ay, f->by); } }
+              ESP_LOGI(TAG, "advanced: touch %s (x %.3f %+.1f, y %.3f %+.1f)", touch_fit_is_none(f) ? "back to the board's own map" : "map kept", f->ax, f->bx, f->ay, f->by); }
+#if PT_CARD
+          else if (a == ADV_ACT_PACKS) { ESP_LOGI(TAG, "packs: %s", pp_message()); audio_port_play(SND_CONFIRM, AUDIO_PITCH_ONE); }   /* the PACKS page (packs_page.h) did something: its words to the log, and the click */
+#endif
+        }
         adv_tick(dt);
 #if PT_NET
         if (touch_port_take_update() == UPD_TAP_CHECK) request_update();   /* the updates page's CHECK: save, restart into update mode */
@@ -1847,6 +1858,9 @@ void device_provision_request(void) {
 
 void app_main(void) {
     packs_init();     /* the species and habitat registry, once, first thing: it encodes each built-in pack from its const struct into a 2 KB buffer on THIS stack (the main task's 16 KB) and loads it - so no small task may be the first to ask (a later call would load it lazily, from that task's stack), and none starts before it (docs/ptpk.md "The loader") */
+#if PT_CARD
+    library_boot();   /* the packs installed from the card, kept in the flash store, loaded through the SAME loader as packs_init's: on THIS stack too (its PTPK_FILE_MAX buffer is this call's, as packs_init's) and before any task starts, so no small task is ever the first to load a pack (docs/card-library.md) */
+#endif
     ESP_LOGI(TAG, "pocket-terrarium (on pocket-tank v%s %s, build %s) for %s boot%s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), PT_BOARD,
              esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 || esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 ? " (woken by button)" : "");
     gpio_config_t btn = { .pin_bit_mask = 1ULL << BTN_SLEEP, .mode = GPIO_MODE_INPUT,
