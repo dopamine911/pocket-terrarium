@@ -1001,7 +1001,7 @@ def write_report(cfg):
     with open(os.path.join(run_dir(name), "report.md"), "w") as f:
         f.write("\n".join(L) + "\n")
     write_json(os.path.join(run_dir(name), "report.json"),
-               {"run": name, "jobs": jobs, "rows": {k: {**r, "values": {str(s): v for s, v in r["values"].items()}}
+               {"run": name, "seeds": list(run["seeds"]), "jobs": jobs, "rows": {k: {**r, "values": {str(s): v for s, v in r["values"].items()}}
                                                      for k, r in rows.items()},
                 "per_seed": {str(s): v for s, v in per_seed.items()}, "selected": chosen, "validation": vres})
     say(f"report: out/harness/{name}/report.md" + (f"; selected seed {chosen}" if chosen is not None else ""))
@@ -1121,6 +1121,15 @@ def selftest():
     off = {"tolerance": 0.03, "rows": {"A2": {"2": [0.95, 0.932]}}}   # 0.918 vs 0.95: 0.032 out
     assert not validate(off, rows, 2)["rows_ok"]
     assert not validate({"rows": {"A9": {"2": [0.9, 0.9]}}}, rows, 2)["ok"]   # a reference row the probe lacks
+    # report.json names the configured seeds, so size_report.py can tell a partial run from a whole one
+    with tempfile.TemporaryDirectory() as tmp:
+        saved_out = globals()["OUT"]
+        globals()["OUT"] = tmp
+        try:
+            write_report({"run": {"name": "r", "model": "m", "dataset": "d", "iters": 1, "batch": 1, "lr": 0.1, "seeds": [5, 7, 9]}})
+            assert read_json(os.path.join(tmp, "r", "report.json"))["seeds"] == [5, 7, 9]
+        finally:
+            globals()["OUT"] = saved_out
     print("selftest OK: config refusals, guard (memory, lab mode, teacher, busy, too small), GTT accounting, "
           "card waves, poll states, train-log parsing, margins, the section-6 smallest margins "
           "(+0.027 / +0.039 / +0.048 -> seed 2), ties, validation")

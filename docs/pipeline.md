@@ -128,6 +128,21 @@ memory bandwidth differs between an x86 core and the ESP32-S3), goal NLL and acc
 seeds pass every probe row, the worst scaled margin and the rows a seed fails. A smaller model
 passes only if every seed passes every row; the table is evidence, not a promotion rule.
 
+The sweep can be interrupted and rerun, and it can fail part-way, so the report says what it holds:
+- `report.json` records the configured seeds (`harness.py report`). The "seeds passing" cell is
+  out of those: a run with a seed not collected reads `1/3 **INCOMPLETE: seeds 2, 3 not collected**`,
+  never `1/1`. A report from before the seed set was recorded (the `l1-focus2` baselines) reads
+  `(seed set not recorded)`, and a report without goal metrics shows `-` for them.
+- The script skips a run only when its report holds every configured seed
+  (`size_report.py --complete RUN`); a report written after a failed job is rerun, and the harness
+  resumes the jobs already done.
+- The pendant projection needs `--reference RUN`, the run whose speed here is scaled to the
+  measured 11.9 tok/s (the script passes `l1-focus2`). Without the baseline's report there is no
+  projection, and a named reference that is missing is an error; another model's speed is never
+  substituted.
+- Exit status: 0 only when every run is complete and the table was written; 1 when a run failed or
+  is incomplete or the table could not be generated (the log says which).
+
 Measured on the pendant (1.75C, 2026-11-06): the 256x4 decision-only model (3.2M, 1.72 MB, seed 2 of
 `size-d256-n4-decision`), flashed as model partition + trailer only (`lz_d256n4`; the app and the
 save untouched), decides in about 1.18 s at 40.6-41.3 tok/s with 84 KB of internal heap free, against
