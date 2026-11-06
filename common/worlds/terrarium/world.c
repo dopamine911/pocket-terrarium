@@ -17,6 +17,8 @@ bool     terrarium_court_ok(const tank_t *t);
 void     terrarium_arrival_place(tank_t *t, int slot);
 void     terrarium_scan_fish(const tank_t *t, const fish_t *f, world_scan_t *out);
 uint32_t terrarium_scan_tank(const tank_t *t);
+void     terrarium_badges_sync(const tank_t *t);
+bool     terrarium_badges_moved(const tank_t *t);
 void     terrarium_restore(tank_t *t, const struct save_s *s);
 bool     terrarium_dish_here(const tank_t *t);
 
@@ -40,6 +42,7 @@ static const world_t TERRARIUM = {
     .nursery_ready = terrarium_nursery_ready, .court_ok = terrarium_court_ok, .arrival_place = terrarium_arrival_place,
     .light_on = terrarium_light_on, .slept = terrarium_slept, .restore = terrarium_restore, .dish_here = terrarium_dish_here,
     .scan_fish = terrarium_scan_fish, .scan_tank = terrarium_scan_tank,
+    .badges_sync = terrarium_badges_sync, .badges_moved = terrarium_badges_moved,
     .ms_silent = TERR_MS_SILENT, .tms_silent = TERR_TMS_SILENT,
     .words = {
         .stage_fry = "A HATCHLING",

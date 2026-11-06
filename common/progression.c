@@ -112,7 +112,6 @@ static struct {
 } s_want;
 static float s_resume_in;
 #define PACKS_RESUME_S 1.0f
-static uint32_t s_ms_last[N_FISH_MAX], s_tms_last;   /* the terrarium's badges last tick: one set in tank.c (a catch, the hand) saves */
 
 static void mark_dirty(void) { if (!s_dirty) { s_dirty = true; s_dirty_since = 0; } }
 bool progression_dirty(void) { return s_dirty; }
@@ -1017,8 +1016,7 @@ void progression_fresh(tank_t *t) {
     s_sale_need = 0;
     s_fry_seed = 0; s_fry_age = 0; s_fry_sold = 0;
     s_clean_run = 0;
-    for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;
-    s_tms_last = t->tank_ms_bits;
+    world_cur()->badges_sync(t);
     s_booted = true;
     mark_dirty();
 }
@@ -1299,8 +1297,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     s_arrival_pending = sv.arrival_pending; s_spawn_in = -1;
     s_sale_need = sv.sale_meals_need > 0 ? sv.sale_meals_need : 0;
     s_fry_seed = sv.fry_seed; s_fry_age = sv.fry_age_min * 60.0f; s_fry_sold = sv.fry_sold & ((1u << FRY_OFFER_N) - 1);
-    for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;   /* (the badges as loaded: none new) */
-    s_tms_last = t->tank_ms_bits;
+    world_cur()->badges_sync(t);                     /* (the badges as loaded: none new) */
     s_prev_night = t->night;
     /* what this load made up (a pre-0.4 tank's secrets and IDs) is saved at
        the next save window (SAVE_MIN_GAP_S), not the heartbeat's 10 min: a
@@ -1587,12 +1584,7 @@ void progression_tick(tank_t *t, float dt) {
         }
         t->spawning = false; t->spawn_danced = 0;
         /* a badge set in tank.c (a catch, a meal from the hand, the hand) saves at the next window, as one set here does */
-        bool moved = t->tank_ms_bits != s_tms_last;
-        for (int i = 0; i < t->n_fish && i < N_FISH_MAX; i++) moved |= t->fish[i].ms_bits != s_ms_last[i];
-        if (moved) {
-            for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;
-            s_tms_last = t->tank_ms_bits; mark_dirty();
-        }
+        if (world_cur()->badges_moved(t)) mark_dirty();
     }
     /* the spawning (progression.h): a staged fry is born on its own, a
      * little after the last gate closed, while the keeper can see it. The

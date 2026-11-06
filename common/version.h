@@ -18,7 +18,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 #include <string.h>
-#include "world.h"   /* PT_TERRARIUM: the model identity is per world */
+#include "world.h"   /* PT_PICK: the model identity below is each world's own constant, this build's picked */
 
 /* main is the 0.4 line (2026-10-05, Strato: "bump main to 0.4.0 dev"): the
  * number sits above every 0.3.x, so the Wi-Fi update never offers a 0.3.x

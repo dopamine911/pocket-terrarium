@@ -37,3 +37,17 @@ void terrarium_scan_fish(const tank_t *t, const fish_t *f, world_scan_t *o) {
 
 /* the tank's creatures earn no badge of their own here */
 uint32_t terrarium_scan_tank(const tank_t *t) { (void)t; return 0; }
+
+/* the badges tank.c sets as they happen (a catch, a meal from the hand, the hand) are saved at the next window, as one set in
+   progression.c is: the badges as last seen, and whether one moved since */
+static uint32_t s_ms_last[N_FISH_MAX], s_tms_last;
+void terrarium_badges_sync(const tank_t *t) {
+    for (int i = 0; i < N_FISH_MAX; i++) s_ms_last[i] = t->fish[i].ms_bits;
+    s_tms_last = t->tank_ms_bits;
+}
+bool terrarium_badges_moved(const tank_t *t) {
+    bool moved = t->tank_ms_bits != s_tms_last;
+    for (int i = 0; i < t->n_fish && i < N_FISH_MAX; i++) moved |= t->fish[i].ms_bits != s_ms_last[i];
+    if (moved) terrarium_badges_sync(t);
+    return moved;
+}

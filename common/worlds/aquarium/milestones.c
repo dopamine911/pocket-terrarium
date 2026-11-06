@@ -50,3 +50,7 @@ uint32_t aquarium_scan_tank(const tank_t *t) {
     if ((t->sd_unlocks & SD_ITEM_CRAB) && t->cr_found > 0) b |= TMS_CRAB_FIND;         /* the crab's first find, taken (0.3.9) */
     return b;
 }
+
+/* nothing watches here: the aquarium's badges are all set in progression_tick, which saves as it sets them */
+void aquarium_badges_sync(const tank_t *t) { (void)t; }
+bool aquarium_badges_moved(const tank_t *t) { (void)t; return false; }

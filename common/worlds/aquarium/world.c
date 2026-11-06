@@ -17,6 +17,8 @@ bool     aquarium_court_ok(const tank_t *t);
 void     aquarium_arrival_place(tank_t *t, int slot);
 void     aquarium_scan_fish(const tank_t *t, const fish_t *f, world_scan_t *out);
 uint32_t aquarium_scan_tank(const tank_t *t);
+void     aquarium_badges_sync(const tank_t *t);
+bool     aquarium_badges_moved(const tank_t *t);
 void     aquarium_restore(tank_t *t, const struct save_s *s);
 bool     aquarium_dish_here(const tank_t *t);
 
@@ -36,6 +38,7 @@ static const world_t AQUARIUM = {
     .nursery_ready = aquarium_nursery_ready, .court_ok = aquarium_court_ok, .arrival_place = aquarium_arrival_place,
     .light_on = aquarium_light_on, .slept = aquarium_slept, .restore = aquarium_restore, .dish_here = aquarium_dish_here,
     .scan_fish = aquarium_scan_fish, .scan_tank = aquarium_scan_tank,
+    .badges_sync = aquarium_badges_sync, .badges_moved = aquarium_badges_moved,
     .ms_silent = AQ_MS_SILENT, .tms_silent = AQ_TMS_SILENT,
     .words = {
         .stage_fry = "A FRY",

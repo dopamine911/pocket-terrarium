@@ -81,6 +81,8 @@ typedef struct world_s {
     /* ---- milestones (progression_tick, notice.c) ---- */
     void      (*scan_fish)(const tank_t *t, const fish_t *f, world_scan_t *out);   /* the badges one animal's tick earns */
     uint32_t  (*scan_tank)(const tank_t *t);         /* the tank's own badges its pieces and creatures earn (TMS_*) */
+    void      (*badges_sync)(const tank_t *t);       /* the badges as they stand now: the baseline a watcher compares with (a load, a fresh tank) */
+    bool      (*badges_moved)(const tank_t *t);      /* a badge set outside progression.c (tank.c: a catch, the hand) since the last call: true once, then synced */
     uint32_t    ms_silent, tms_silent;               /* the bits never announced: they belong to a birth, or are no badge here (notice.c) */
 
     world_words_t words;
