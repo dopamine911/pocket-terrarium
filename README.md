@@ -16,6 +16,13 @@ Differences from upstream:
 pocket-tank is licensed under the PolyForm Noncommercial License 1.0.0
 ([LICENSE](LICENSE), [NOTICE](NOTICE)); so is this port.
 
+## Fork documentation
+
+- [Architecture overview](docs/architecture-overview.md) — modules, worlds,
+  species, habitats, packs and models; diagrams and links to the detailed docs.
+- [Upstream divergence](docs/upstream-divergence.md) — the fork's changes since
+  pocket-tank v0.4.0, their provenance, and comparison with upstream v0.4.1.
+
 ## Run the simulator in Docker (Linux desktop)
 
 Docker builds the simulator with SDL2, pinned LVGL v9.2.2, the trained model and
