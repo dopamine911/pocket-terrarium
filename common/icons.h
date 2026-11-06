@@ -104,7 +104,7 @@ extern const icon_t icon_tool_scissors;
 extern const icon_t icon_tool_sponge;
 
 /* the per-world art: icon_<name>_terr in the terrarium's bin, icon_<name> in the aquarium's. Each bin defines
- * only its own of the pair (icons.c), so name one only through WORLD_ICON (a constant choice, folded away):
+ * only its own of the pair (worlds/<world>/icons.c), so name one only through WORLD_ICON (a constant choice, folded away):
  *   icon_foot_my_tanks icon_foot_sand_dollar icon_bold icon_cautious
  *   icon_curious icon_hunger icon_shy icon_social
  *   icon_solo icon_ms_first_bubbles icon_ms_first_dart icon_ms_first_feeding
