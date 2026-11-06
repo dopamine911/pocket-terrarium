@@ -15,8 +15,8 @@
 #include "setup.h"
 #include "version.h"
 #if PT_TERRARIUM
-#include "render_lizard.h"       /* THE TERRARIUM: the lizards ... */
-#include "render_scene_desert.h" /* ... and the desert */
+#include "bodies/lizard/lizard.h"       /* THE TERRARIUM: the lizards ... */
+#include "worlds/terrarium/scene_desert.h" /* ... and the desert */
 #endif
 #include <stdint.h>
 #include <math.h>

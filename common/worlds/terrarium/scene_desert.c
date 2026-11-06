@@ -26,7 +26,7 @@
  *                       warmer, the cool end bluer;
  *   dark                the lamp out, a moonlit blue over everything;
  * then the night's dim, the vignette and a 4x4 Bayer dither to RGB565, as render.c bake_scene does. */
-#include "render_scene_desert.h"
+#include "worlds/terrarium/scene_desert.h"
 #include "render.h"                 /* FB_SWAP16 */
 #include <math.h>
 #include <string.h>

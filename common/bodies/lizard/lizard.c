@@ -25,9 +25,9 @@
  *
  * Everything is in the frame's pixels through lz_canvas_t: clipped to its window, its mark called per run so
  * render.c can keep its dirty and touched masks. */
-#include "render_lizard.h"
+#include "bodies/lizard/lizard.h"
 #include "render.h"                 /* FB_SWAP16 */
-#include "render_scene_desert.h"    /* scene_light_rgb: the light it stands in, as the scene's */
+#include "worlds/terrarium/scene_desert.h"    /* scene_light_rgb: the light it stands in, as the scene's */
 #include "pt_util.h"
 #include <math.h>
 #include <stdlib.h>
