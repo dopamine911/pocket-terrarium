@@ -8,3 +8,10 @@
 schema = "L1"
 traces = ["out/l1_traces_*.jsonl", "out/l1_focus2_traces.jsonl"]
 sha256 = "5f87b8eb454e1fee7e60a5f3806984a79166ad4ddb5ef6aac794dda485045651"  # out/l1_clean_focus2.jsonl, 50,968 pairs
+
+["fish-v4"]
+# the fish model's schema-4 data (gen_traces.py --schema 4 writes out/fish_v4_traces_*.jsonl; no
+# fish traces existed anywhere when this was written). No sha256 yet: pin it (the folded file's,
+# out/harness/data/fish-v4.jsonl) after the first fold, as l1-focus2 does.
+schema = "4"
+traces = ["out/fish_v4_traces_*.jsonl"]

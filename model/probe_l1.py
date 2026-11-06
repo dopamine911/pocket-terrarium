@@ -37,24 +37,26 @@ BATCH = 256
 
 
 class Student:
-    """train.py's checkpoint as the device runs it: the goal distribution after `<state> ->`"""
+    """train.py's checkpoint as the device runs it: the goal distribution after `<state> ->`.
+    goals/name: the schema's goal words (default the lizard's L1; probe_fish.py passes the fish's)"""
 
-    def __init__(self, ckpt, temp=1.0, device="cpu"):
+    def __init__(self, ckpt, temp=1.0, device="cpu", goals=None, name="L1"):
         import torch
         sys.path.insert(0, os.path.join(HERE, "llama2.c"))
         from model import ModelArgs, Transformer
         self.torch, self.temp = torch, temp
+        self.goals, self.name = list(goals or gt.GOALS_L1), name
         d = torch.load(ckpt, map_location="cpu")
         args = ModelArgs(**d["model_args"])
         if args.vocab_size != tok.VOCAB_SIZE:
-            sys.exit(f"{ckpt}: vocab {args.vocab_size}, the L1 lexicon has {tok.VOCAB_SIZE}: not an L1 checkpoint")
+            sys.exit(f"{ckpt}: vocab {args.vocab_size}, the {name} lexicon has {tok.VOCAB_SIZE}: not a {name} checkpoint")
         self.model = Transformer(args)
         state = {k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k: v for k, v in d["model"].items()}
         self.model.load_state_dict(state, strict=True)
         self.model.to(device).eval()
         self.device = device
         self.max_seq_len = args.max_seq_len
-        self.gid = [tok.encode(g)[0] for g in gt.GOALS_L1]
+        self.gid = [tok.encode(g)[0] for g in self.goals]
         self.info = {"iter": d.get("iter"), "val_loss": d.get("val_loss"), "model_args": d["model_args"]}
 
     def dists(self, lines):
@@ -64,7 +66,7 @@ class Student:
         by_len = {}
         for i, s in enumerate(ids):
             if tok.UNK_ID in s or len(s) > self.max_seq_len:
-                sys.exit(f"not an L1 line the model can read: {lines[i]!r}")
+                sys.exit(f"not a {self.name} line the model can read: {lines[i]!r}")
             by_len.setdefault(len(s), []).append(i)
         out = [None] * len(lines)
         with torch.no_grad():
@@ -75,7 +77,7 @@ class Student:
                     p = torch.softmax(logits[:, self.gid] / self.temp, dim=-1).cpu()        # the goals only, as on the device
                     mass = torch.softmax(logits, dim=-1)[:, self.gid].sum(dim=-1).cpu()  # sanity: ~1 for a trained model
                     for j, i in enumerate(chunk):
-                        out[i] = ({g: float(p[j, n]) for n, g in enumerate(gt.GOALS_L1)}, float(mass[j]))
+                        out[i] = ({g: float(p[j, n]) for n, g in enumerate(self.goals)}, float(mass[j]))
         return out
 
 

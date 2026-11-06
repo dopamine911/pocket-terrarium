@@ -71,3 +71,74 @@ n_heads = 6
 max_seq_len = 64
 # 1.78M parameters
 mem_mib = 2560
+
+# The fish model's sweep (docs/pipeline.md, "Fish size sweep"): the same seven shapes as the L1
+# entries above on schema 4 (the aquarium's fish, POCKET_SCHEMA=4, out/tokenizer.bin, vocabulary
+# 54). "fish-14m" is the shipped fish model's shape and the sweep's reference. Parameter counts
+# are computed with vocab 54 and llama2.c's FFN width, 32 * ceil((8 * dim / 3) / 32) (train.py
+# builds ModelArgs with multiple_of=32): 384 -> 1024, 256 -> 704, 192 -> 512; weights are
+# vocab*dim (the output layer is tied) + n_layers * (4*dim^2 + 3*dim*hidden + 2*dim) + dim.
+# mem_mib is the 14M L1 figure as an upper bound, as for the L1 sweep.
+
+["fish-14m"]
+schema = "4"
+dim = 384
+n_layers = 8
+n_heads = 8
+max_seq_len = 64
+# 14.18M parameters
+mem_mib = 2560
+
+["fish-d384-n4"]
+schema = "4"
+dim = 384
+n_layers = 4
+n_heads = 8
+max_seq_len = 64
+# 7.10M parameters
+mem_mib = 2560
+
+["fish-d256-n8"]
+schema = "4"
+dim = 256
+n_layers = 8
+n_heads = 8
+max_seq_len = 64
+# 6.44M parameters
+mem_mib = 2560
+
+["fish-d256-n6"]
+schema = "4"
+dim = 256
+n_layers = 6
+n_heads = 8
+max_seq_len = 64
+# 4.83M parameters
+mem_mib = 2560
+
+["fish-d256-n4"]
+schema = "4"
+dim = 256
+n_layers = 4
+n_heads = 8
+max_seq_len = 64
+# 3.23M parameters
+mem_mib = 2560
+
+["fish-d192-n6"]
+schema = "4"
+dim = 192
+n_layers = 6
+n_heads = 6
+max_seq_len = 64
+# 2.67M parameters
+mem_mib = 2560
+
+["fish-d192-n4"]
+schema = "4"
+dim = 192
+n_layers = 4
+n_heads = 6
+max_seq_len = 64
+# 1.78M parameters
+mem_mib = 2560

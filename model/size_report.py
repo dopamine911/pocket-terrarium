@@ -22,8 +22,15 @@ import sys
 import harness as h
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATE = ("zone 4 hunger 7 energy 5 stress 2 curiosity 6 heat 3 bold 4 social 2 stage adult trust 6 bored 1 "
-         "shed no prey mid 2 other none warm far 11 shelter near 7 wall clear last explore phase active")
+STATES = {   # a full-length prompt per schema, for timing the q4 runner
+    "L1": ("zone 4 hunger 7 energy 5 stress 2 curiosity 6 heat 3 bold 4 social 2 stage adult trust 6 bored 1 "
+           "shed no prey mid 2 other none warm far 11 shelter near 7 wall clear last explore phase active"),
+    "4": ("zone 2 hunger 7 energy 5 stress 2 curiosity 8 bold 4 social 6 stage adult trust 5 bored 3 food near 12 "
+          "friend mid 3 bubble mid 10 reef far 7 wall clear last explore time day"),
+}
+TOKENIZERS = {"L1": "tokenizer_lizard.bin", "4": "tokenizer.bin"}
+PENDANT_TOKS = {"L1": 11.9}   # the lizard 14M measured on the pendant (PLAN.md P7); the fish 14M is not entered: measure it
+STATE = STATES["L1"]
 
 
 def load(spec):
@@ -83,12 +90,12 @@ def table(rows, ref, pendant):
             "seeds passing all rows | worst scaled margin | rows failed by some seed |")
     out = [head, "|" + "---|" * 10]
     for r in rows:
-        proj = pendant * r["toks"] / ref["toks"] if r["toks"] and ref and ref["toks"] else None
-        out.append(f"| {r['label']} | {r['params_m']:.2f}M | {r['q4_mb']:.2f} | "
-                   f"{r['toks']:.0f} | {proj:.1f} | " if r["toks"] and proj else
-                   f"| {r['label']} | {r['params_m']:.2f}M | {(r['q4_mb'] or 0):.2f} | - | - | ")
-        out[-1] += (f"{r['nll']:.4f} ({r['nll_sd']:.4f}) | {r['acc']:.3f} | {r['passing']}/{r['seeds']} | "
-                    f"{h.fmt(r['worst_margin'], 3, sign=True)} | {', '.join(r['fails']) or '-'} |")
+        proj = pendant * r["toks"] / ref["toks"] if pendant and r["toks"] and ref and ref["toks"] else None
+        out.append(f"| {r['label']} | {r['params_m']:.2f}M | {(r['q4_mb'] or 0):.2f} | "
+                   f"{'-' if r['toks'] is None else format(r['toks'], '.0f')} | "
+                   f"{'-' if proj is None else format(proj, '.1f')} | "
+                   f"{r['nll']:.4f} ({r['nll_sd']:.4f}) | {r['acc']:.3f} | {r['passing']}/{r['seeds']} | "
+                   f"{h.fmt(r['worst_margin'], 3, sign=True)} | {', '.join(r['fails']) or '-'} |")
     return "\n".join(out)
 
 
@@ -105,9 +112,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("specs", nargs="*")
     ap.add_argument("--reference", help="the spec the pendant projection is scaled from (default: the first spec)")
-    ap.add_argument("--pendant-toks", type=float, default=11.9, help="measured pendant speed of the reference (14M)")
+    ap.add_argument("--schema", choices=sorted(STATES), default="L1", help="L1 (the lizard) or 4 (the fish): the timing prompt, tokenizer and pendant default")
+    ap.add_argument("--pendant-toks", type=float, default=None,
+                    help="measured pendant speed of the reference (default: the lizard 14M's 11.9 for L1; none for the fish, so no projection)")
     ap.add_argument("--runner", default=os.path.join(HERE, "out", "runq4"))
-    ap.add_argument("--tokenizer", default=os.path.join(HERE, "out", "tokenizer_lizard.bin"))
+    ap.add_argument("--tokenizer", default=None, help="default: out/tokenizer_lizard.bin (L1) or out/tokenizer.bin (4)")
     ap.add_argument("--markdown", help="also write the table here")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -115,9 +124,13 @@ def main():
         return selftest()
     if not args.specs:
         ap.error("give at least one run")
-    rows = [summarize(*load(s), args.runner, args.tokenizer) for s in args.specs]
+    global STATE
+    STATE = STATES[args.schema]
+    tokenizer = args.tokenizer or os.path.join(HERE, "out", TOKENIZERS[args.schema])
+    pendant = args.pendant_toks if args.pendant_toks is not None else PENDANT_TOKS.get(args.schema)
+    rows = [summarize(*load(s), args.runner, tokenizer) for s in args.specs]
     ref = next((r for r in rows if r["label"] == (args.reference or args.specs[0]).partition("=")[0]), rows[0])
-    text = table(rows, ref, args.pendant_toks)
+    text = table(rows, ref, pendant)
     print(text)
     if args.markdown:
         with open(args.markdown, "w") as fh:

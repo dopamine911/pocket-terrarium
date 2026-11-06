@@ -133,6 +133,61 @@ about 4 s at 11.9 tok/s for the 14M. The projection from the x86 runner (51.6 to
 Sim census A15 (crickets per lit lizard-hour, bar >= 4; one catch is about 0.44) over 30 terrariums:
 the 14M missed 0, 256x4 missed 5 (each at 3.6-4.0), 192x4 missed 2; the means match (about 5.6-5.8).
 
+## Fish size sweep
+
+The same sweep on the fish model (schema 4; issue #14). Nothing here ships a model: the aquarium
+stays on upstream's `model_q4.bin` until someone decides otherwise.
+
+**Data.** The fish traces are not on this workstation, on marvin or zaphod, or in git
+(`model/out/*` is ignored upstream), and the shipped model's `.pt` checkpoint is gone, so the data
+is regenerated: `model/run_fish_data.sh` asks `chat-teacher` (the lab; four workers, key in
+`LAB_API_KEY`) for `gen_traces.py --schema 4` labels, 24,000 pairs by default, then folds them to
+`out/fish_v4_clean.jsonl`. Pin that fold's sha256 under `["fish-v4"]` in `harness/datasets.toml`.
+These are v4-only labels, not upstream's v4m mix (23,366 new + 28,247 v2/v3 pairs re-encoded by
+`convert_to_v4.py`), whose old labels carried the personality cliffs. So `fish-14m` trained here is
+the sweep's reference, not a reproduction of the shipped model; the shipped model enters only as
+an outside reference in the sim census. Run `python3 prompt_check.py --schema 4 --api openai`
+first: on 2026-11-05 `chat-teacher` passed every row except dart | bold 9 (0.05 against 0.10).
+Upstream's tag for the shipped fish model in `common/version.h` reads `v3m`, but its tokenizer is
+byte-identical to a fresh `--schema 4` one (md5 7e4b64d9...), so it is a v4 model.
+
+**Runs.** `harness/models.toml` `fish-14m` (384x8, the reference) and the six sizes of the lizard
+sweep, `harness/runs/fish-*.toml` for every size with the loss on every token and on the decision
+tokens only, three seeds each, probes n=40 on seeds 11 and 23, `model/run_fish_sweep.sh` for the
+lot (14 runs; `SWEEP_MODE=opportunistic` shares the cards, but the R9700 that serves the teacher is
+skipped while `chat-teacher` is loaded). `size_report.py --schema 4` writes
+`out/harness/fish-size-report.md`; it has no pendant projection until the fish 14M is measured on the
+pendant (`--pendant-toks`).
+
+**Rows** (`prompt_check.v4_table`, one table for the teacher and for `model/probe_fish.py`, which scores
+a checkpoint's expected rates on the v4 panel by the device's softmax over the fish's eight goal
+tokens; flee_shadow is in the vocabulary, though no label uses it). Limits are the ones
+`prompt_check.py` has always printed for schema 4, fixed before any run:
+
+| row | limit |
+|---|---|
+| F1 P(follow \| social 9) | >= 0.40 |
+| F2 P(follow \| social 1) | <= 0.05 |
+| F3 P(dart \| bold 9, energetic) | report only (the teacher itself gives 0.05) |
+| F4 P(dart \| bold 1, energetic) | <= 0.03 |
+| F5 P(seek_food \| starving) | >= 0.95 |
+| F6 P(seek_food \| lonely, not hungry) | <= 0.05 |
+| F7 P(bubbles again \| bored 9, last bubbles) | <= 0.15 |
+| F8 P(explore \| bored 9, last bubbles) | >= 0.25 |
+| F9 P(follow again \| bored 9, last follow) | <= 0.15 |
+| F10 P(bubbles kept \| bored 0, last bubbles) | >= 0.40 |
+| F11 P(rest \| night, bored 9, last rest) | >= 0.70 |
+| F12 P(flee \| any v4 case) | <= 0.001 (pass/fail, no margin) |
+| F13 max single goal \| content | < 0.45 |
+
+**Sim census.** `model/fish_census.py` runs the aquarium sim's `--selftest-llm` on any model and
+tokenizer without editing the sim (scratch directories of symlinks; build `sim/fishsim-aquarium`
+first, command in its docstring). `--minutes 0` is a one-simulated-minute smoke; for a comparison use
+real time (`--minutes 5 --repeats 3`). The sim's seed is fixed, so repeats differ by sampling only.
+It prints goal shares, landmark time, crowding, zones per fish-minute, longest stretch, torn
+decisions and survival overrides. There is no rule stub for the fish and no pass bar: a candidate is
+read against the fish model it replaces on the same tanks.
+
 ## Extra tools
 
 - `model/prompt_check.py` — 7-minute teacher/prompt sanity check. **Run this

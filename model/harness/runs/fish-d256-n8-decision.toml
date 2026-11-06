@@ -1,0 +1,23 @@
+# Fish size sweep: 256 wide, 8 deep (6.44M), loss on the decision tokens.
+# Same dataset, seeds, iterations and training settings for every size, so the rows compare with
+# fish-14m-decision. The probes are model/probe_fish.py's (POCKET_SCHEMA=4): n = 40 per panel, which
+# gives 40 states for most cases of prompt_check.panel.
+
+model = "fish-d256-n8"
+dataset = "fish-v4"
+iters = 5000
+batch = 64
+lr = 6e-4
+loss = "decision"
+seeds = [1337, 1, 2]
+mode = "training"
+cpu = false
+export = true
+
+[[probes]]
+n = 40
+seed = 11
+
+[[probes]]
+n = 40
+seed = 23

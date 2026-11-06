@@ -40,6 +40,7 @@ OUT = os.path.join(HERE, "out", "harness")
 POLL_S = 20
 MAX_ATTEMPTS = 2  # the first try and one retry
 SCHEMAS = ("2", "3", "4", "L1")
+PROBES = {"L1": "probe_l1.py", "4": "probe_fish.py"}   # the probe script per schema (v2/v3 have only the text-mode probe_dist.py)
 TIE_FLOOR = 0.005  # smallest margins closer than this to the widest are a tie whatever the probe noise
 
 
@@ -152,6 +153,9 @@ def validate_config(cfg):
         for p in run.get("probes", []):
             if not isinstance(p.get("n"), int) or not isinstance(p.get("seed"), int):
                 errs.append(f"run {n}: each [[probes]] needs integer n and seed")
+        if run.get("probes") and run.get("model") in cfg["models"] and str(cfg["models"][run["model"]]["schema"]) not in PROBES:
+            errs.append(f"run {n}: schema {cfg['models'][run['model']]['schema']} has no probe script (only {', '.join(PROBES)}); "
+                        "give the run no [[probes]]")
         v = run.get("validate")
         if v:
             panels = len(run.get("probes", []))
@@ -740,7 +744,7 @@ def cmd_job(args):
                              "--max-seq-len", str(t["max_seq_len"]), "--loss", t["loss"]])
         for p in spec["probes"] if rc == 0 else []:
             rc = stage(f"probe_p{p['seed']}_n{p['n']}",
-                       ["probe_l1.py", "--ckpt", ckpt, "--n", str(p["n"]), "--seed", str(p["seed"]),
+                       [PROBES[spec["schema"]], "--ckpt", ckpt, "--n", str(p["n"]), "--seed", str(p["seed"]),
                         "--device", spec["device"], "--out", os.path.join(jd, f"probe_p{p['seed']}_n{p['n']}.json")])
             if rc:
                 break
@@ -1113,6 +1117,30 @@ def selftest():
     off = {"tolerance": 0.03, "rows": {"A2": {"2": [0.95, 0.932]}}}   # 0.918 vs 0.95: 0.032 out
     assert not validate(off, rows, 2)["rows_ok"]
     assert not validate({"rows": {"A9": {"2": [0.9, 0.9]}}}, rows, 2)["ok"]   # a reference row the probe lacks
+    # fish (schema 4): the F rows - a report row has no margin, the binding row moves with the seed, and a
+    # schema without a probe script is refused
+    import copy
+    assert PROBES["4"] == "probe_fish.py" and load_config("fish-d256-n4-decision")["run"]["loss"] == "decision"
+    nope = copy.deepcopy(cfg)
+    nope["models"]["l1-14m"]["schema"] = nope["datasets"]["l1-focus2"]["schema"] = "3"
+    try:
+        validate_config(nope)
+        raise AssertionError("accepted probes for a schema with no probe script")
+    except HarnessError as e:
+        assert "no probe script" in str(e), str(e)
+
+    def fish(f1, f4, f13):
+        return {"passed": True, "rows": [
+            {"row": "F1  P(follow | social 9)", "value": f1, "threshold": ">= 0.40"},
+            {"row": "F3  P(dart | bold 9, energetic)", "value": 0.05, "threshold": "-"},
+            {"row": "F4  P(dart | bold 1, energetic)", "value": f4, "threshold": "<= 0.03"},
+            {"row": "F13 max single goal | content (explore)", "value": f13, "threshold": "< 0.45"}]}
+    frows, fper = seed_stats({1: [fish(0.9, 0.01, 0.40), fish(0.88, 0.02, 0.41)],
+                              2: [fish(0.7, 0.0, 0.20), fish(0.65, 0.0, 0.20)]})
+    assert set(frows) == {"F1", "F3", "F4", "F13"} and frows["F3"]["stats"]["min_margin"] is None, set(frows)
+    assert fper[1]["binding_row"] == "F13" and abs(fper[1]["min_margin"] - 0.04 / 0.45) < 1e-9, fper
+    assert fper[2]["binding_row"] == "F1" and abs(fper[2]["min_margin"] - 0.25 / 0.6) < 1e-9, fper
+    assert select_seed(fper, {}) == 2
     print("selftest OK: config refusals, guard (memory, lab mode, teacher, busy, too small), GTT accounting, "
           "card waves, poll states, train-log parsing, margins, the section-6 smallest margins "
           "(+0.027 / +0.039 / +0.048 -> seed 2), ties, validation")

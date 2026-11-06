@@ -297,6 +297,48 @@ def report_l1(results):
             print(f"    {case:11s} {l1_tops(by, case)}")
 
 
+V4_CASE_ORDER = ("social9", "social1", "bold9", "bold1", "content", "lonely", "starving", "trust9", "trust0",
+                 "bored9bub", "bored9fol", "bored0bub", "nightbored")
+
+
+def v4_table(by, flee=True):
+    """THE v4 (FISH) ROWS, for the teacher (main) and the trained student (probe_fish.py) alike.
+    by: case -> [(state, {goal: weight})] - a teacher's answers carry weight 1 on the goal it gave, a
+    student's states its goal distribution - and a row's value is the share of the weight on the row's
+    goal. Returns [(row, value, n, want, ok)], ok None for a report row. F3 (dart | bold 9) is a report
+    row: the lab's chat-teacher itself gives 0.05 on it (2026-11-05 preflight, 450 calls), so a student
+    cannot be held to the 0.10 the Ollama teacher once gave. F12 is the weight on flee_shadow, which no
+    label uses (the teacher: 0 by construction; a student: its leak onto the vocabulary's unused token);
+    flee=False leaves it out."""
+    def rate(case, goal):
+        rows = by.get(case, [])
+        tot = sum(w for _, d in rows for w in d.values())
+        return (sum(d.get(goal, 0.0) for _, d in rows) / tot if tot else float("nan")), len(rows)
+    rows = [
+        ("F1  P(follow | social 9)", *rate("social9", "follow_friend"), ">= 0.40", lambda v: v >= 0.40),
+        ("F2  P(follow | social 1)", *rate("social1", "follow_friend"), "<= 0.05", lambda v: v <= 0.05),
+        ("F3  P(dart | bold 9, energetic)", *rate("bold9", "dart_play"), "-", None),
+        ("F4  P(dart | bold 1, energetic)", *rate("bold1", "dart_play"), "<= 0.03", lambda v: v <= 0.03),
+        ("F5  P(seek_food | starving)", *rate("starving", "seek_food"), ">= 0.95", lambda v: v >= 0.95),
+        ("F6  P(seek_food | lonely, not hungry)", *rate("lonely", "seek_food"), "<= 0.05", lambda v: v <= 0.05),
+        ("F7  P(bubbles again | bored 9, last bubbles)", *rate("bored9bub", "visit_bubbles"), "<= 0.15", lambda v: v <= 0.15),
+        ("F8  P(explore | bored 9, last bubbles)", *rate("bored9bub", "explore"), ">= 0.25", lambda v: v >= 0.25),
+        ("F9  P(follow again | bored 9, last follow)", *rate("bored9fol", "follow_friend"), "<= 0.15", lambda v: v <= 0.15),
+        ("F10 P(bubbles kept | bored 0, last bubbles)", *rate("bored0bub", "visit_bubbles"), ">= 0.40", lambda v: v >= 0.40),
+        ("F11 P(rest | night, bored 9, last rest)", *rate("nightbored", "rest"), ">= 0.70", lambda v: v >= 0.70),
+    ]
+    if flee:
+        tot = sum(w for rs in by.values() for _, d in rs for w in d.values())
+        fl = sum(d.get("flee_shadow", 0.0) for rs in by.values() for _, d in rs)
+        rows.append(("F12 P(flee | any v4 case)", fl / tot if tot else float("nan"), sum(len(rs) for rs in by.values()),
+                     "== 0", lambda v: v <= 0.001))
+    content = l1_mean_dist(by, "content")
+    if content:
+        g, mx = max(content.items(), key=lambda kv: kv[1])
+        rows.append((f"F13 max single goal | content ({g})", mx, len(by["content"]), "< 0.45", lambda v: v < 0.45))
+    return [(name, v, n, want, ok(v) if ok else None) for name, v, n, want, ok in rows if n]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--schema", type=gt.parse_schema, choices=(2, 3, 4, "L1"), default=3)
@@ -374,6 +416,20 @@ def main():
     def top(case):
         d = results.get(case, {}); n = sum(d.values()) or 1
         return ", ".join(f"{g} {c/n:.2f}" for g, c in sorted(d.items(), key=lambda kv: -kv[1])[:3])
+    if args.schema >= 4:    # the fish v4 rows: v4_table, the one table probe_fish.py scores the student with too
+        by = {}
+        for case, st, goal in rows:
+            if goal is not None:
+                by.setdefault(case, []).append((st, {goal: 1.0}))
+        for name, v, n, want, ok in v4_table(by):
+            print(f"  {'rep' if ok is None else 'OK ' if ok else 'BAD'}  {name:46s} = {v:.2f}  (n={n}, want {want})")
+        print(f"       content: [{top('content')}]\n       trust 9: [{top('trust9')}]\n       trust 0: [{top('trust0')}]")
+        print("\n  per case:")
+        for case in V4_CASE_ORDER:
+            if case in results:
+                print(f"    {case:10s} {top(case)}")
+        return
+
 
     checks = [
         ("P(follow | social 9)", *rate("social9", "follow_friend"), ">= 0.40", lambda v: v >= 0.40),
@@ -383,20 +439,10 @@ def main():
         ("P(seek_food | starving)", *rate("starving", "seek_food"), ">= 0.95", lambda v: v >= 0.95),
         ("P(seek_food | lonely, not hungry)", *rate("lonely", "seek_food"), "<= 0.05", lambda v: v <= 0.05),
     ]
-    if args.schema < 4:
-        checks += [
-            ("P(flee | shadow near, calm)", *rate("shadowcalm", "flee_shadow"), ">= 0.80", lambda v: v >= 0.80),
-            ("P(flee | lonely, no shadow)", *rate("lonely", "flee_shadow"), "== 0", lambda v: v <= 0.02),
-        ]
-    else:
-        checks += [
-            ("P(bubbles again | bored 9, last bubbles)", *rate("bored9bub", "visit_bubbles"), "<= 0.15", lambda v: v <= 0.15),
-            ("P(explore | bored 9, last bubbles)", *rate("bored9bub", "explore"), ">= 0.25", lambda v: v >= 0.25),
-            ("P(follow again | bored 9, last follow)", *rate("bored9fol", "follow_friend"), "<= 0.15", lambda v: v <= 0.15),
-            ("P(bubbles kept | bored 0, last bubbles)", *rate("bored0bub", "visit_bubbles"), ">= 0.40", lambda v: v >= 0.40),
-            ("P(rest | night, bored 9, last rest)", *rate("nightbored", "rest"), ">= 0.70", lambda v: v >= 0.70),
-            ("P(flee | any v4 case)", (sum(d.get("flee_shadow", 0) for d in results.values()) / max(1, sum(sum(d.values()) for d in results.values()))), sum(sum(d.values()) for d in results.values()), "== 0", lambda v: v <= 0.001),
-        ]
+    checks += [
+        ("P(flee | shadow near, calm)", *rate("shadowcalm", "flee_shadow"), ">= 0.80", lambda v: v >= 0.80),
+        ("P(flee | lonely, no shadow)", *rate("lonely", "flee_shadow"), "== 0", lambda v: v <= 0.02),
+    ]
     for name, v, n, want, ok in checks:
         print(f"  {'OK ' if ok(v) else 'BAD'}  {name:36s} = {v:.2f}  (n={n}, want {want})")
     # attractor check: no single goal should own the content fish
