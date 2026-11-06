@@ -1,29 +1,77 @@
 /* habitat.c - the habitat registry and its rules (habitat.h) */
 #include "habitat.h"
 #include "terrain.h"
+#include "packs/builtin.h"                 /* PTPK_BUILTIN_HABITATS: how many packs this build ships */
+#include "packs/ptpk.h"                    /* packs_init, PACKS_SPARE */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 const char *const HIDE_KIND_NAMES[HIDE_KINDS] = { "warm", "humid", "cool" };
 
-#if PT_ALL_PACKS
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM, &HABITAT_PACK_FRESHWATER };
-#elif PT_TERRARIUM
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM };
-#else
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_FRESHWATER };
-#endif
-#define N_HABITATS ((int)(sizeof HABITATS / sizeof HABITATS[0]))
+/* THE POOL, as species.c's: this build's built-in habitats and PACKS_SPARE slots for the ones found at run time */
+#define HABITAT_POOL (PTPK_BUILTIN_HABITATS + PACKS_SPARE)
+static habitat_t s_pool[HABITAT_POOL];
+static uint32_t  s_crc[HABITAT_POOL];
+static int       s_n;
+static uint32_t  s_gen;
 
-int habitat_count(void) { return N_HABITATS; }
-const habitat_t *habitat_at(int i) { return i >= 0 && i < N_HABITATS ? HABITATS[i] : NULL; }
+int habitat_count(void) { packs_init(); return s_n; }
+const habitat_t *habitat_at(int i) { packs_init(); return i >= 0 && i < s_n ? &s_pool[i] : NULL; }
 const habitat_t *habitat_get(uint8_t id) {
-    for (int i = 0; i < N_HABITATS; i++) if (HABITATS[i]->id == id) return HABITATS[i];
+    packs_init();
+    for (int i = 0; i < s_n; i++) if (s_pool[i].id == id) return &s_pool[i];
     return NULL;
 }
+const habitat_t *habitat_by_uid(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) if (s_pool[i].uid == uid) return &s_pool[i];
+    return NULL;
+}
+uint32_t habitat_generation(void) { return s_gen; }
 
-bool habitat_fits(const habitat_t *h, const species_t *s) {
-    return h && s && h->id >= 1 && h->id <= 31 && ((s->habitats >> h->id) & 1u) && s->world == h->world;
+habitat_t *habitat_slot(void) {
+    packs_init();
+    if (s_n >= HABITAT_POOL) return NULL;
+    memset(&s_pool[s_n], 0, sizeof s_pool[s_n]);
+    return &s_pool[s_n];
+}
+
+bool habitat_commit(habitat_t *h, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n) {
+    #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
+    if (h != &s_pool[s_n] || s_n >= HABITAT_POOL) REFUSE("not the slot the registry gave out");
+    if (!h->uid) REFUSE("no uid");
+    for (int i = 0; i < s_n; i++) if (s_pool[i].uid == h->uid) REFUSE("uid %08x is %s's already", (unsigned)h->uid, s_pool[i].name);
+    if (builtin) {                                         /* the one-byte id old saves hold: a species' bit (1..31) */
+        if (legacy_id < 1 || legacy_id > 31) REFUSE("a built-in habitat's legacy id %d is outside 1..31", legacy_id);
+        for (int i = 0; i < s_n; i++) if (s_pool[i].id == legacy_id) REFUSE("legacy id %d is %s's already", legacy_id, s_pool[i].name);
+        h->id = legacy_id;
+    } else {                                               /* a handle for this run: the lowest free of 3..30 (31 is the test desert's) */
+        int id = 3;
+        for (; id <= 30; id++) { bool used = false; for (int i = 0; i < s_n; i++) used |= s_pool[i].id == id; if (!used) break; }
+        if (id > 30) REFUSE("no free id");
+        h->id = (uint8_t)id;
+    }
+    h->builtin = builtin;
+    if (!habitat_check(h, why, n)) return false;
+    s_crc[s_n] = crc; s_n++; s_gen++;
+    species_relink();                                      /* a species may have been waiting for it */
+    return true;
+    #undef REFUSE
+}
+
+pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by) {
+    packs_init();
+    for (int i = 0; i < s_n; i++)
+        if (s_pool[i].uid == uid) { if (by) *by = s_pool[i].name; return s_crc[i] == crc ? PACK_SAME : PACK_UID_TAKEN; }
+    return PACK_NEW;
+}
+
+void habitat_drop_loaded(void) {
+    int k = 0;
+    for (int i = 0; i < s_n; i++) if (s_pool[i].builtin) { if (k != i) { s_pool[k] = s_pool[i]; s_crc[k] = s_crc[i]; } k++; }
+    s_n = k; s_gen++;
+    species_relink();                                      /* ... and a species that lived in one that is gone loses its bit */
 }
 
 /* two hides this far apart along the floor: two HIDE_R (tank.h) on the narrowest floor, the watch's ~280 px */
@@ -38,11 +86,15 @@ static bool on_surface(const habitat_t *h, int s, float u) {
 
 bool habitat_check(const habitat_t *h, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
-    if (!h->name || !h->name[0]) REFUSE("no name");
+    if (!h->name[0]) REFUSE("no name");
     if (h->id < 1 || h->id > 31) REFUSE("id %d is outside 1..31 (species_t.habitats has a bit per id)", h->id);
-    if (h->world != WORLD_AQUARIUM && h->world != WORLD_TERRARIUM) REFUSE("world %d is no world", (int)h->world);
-    const bool terr = h->world == WORLD_TERRARIUM;           /* a terrarium's thermoregulation needs a gradient, a lamp and the hides */
-    if (terr ? !(h->floor_warm_c > h->floor_cool_c) : !(h->floor_warm_c >= h->floor_cool_c))
+    /* what it provides (AREAS, PROVIDES): somewhere to be, of kinds that exist (the fields it says it has are held to below) */
+    if (!(h->areas & (CAP_WATER | CAP_LAND))) REFUSE("it has neither WATER nor LAND among its areas (%08x)", (unsigned)h->areas);
+    if (h->areas & ~CAPS_AREAS) REFUSE("areas %08x lists more than areas", (unsigned)h->areas);
+    if (h->provides & ~CAPS_PROVIDED) REFUSE("provides %08x lists more than a lamp, hides and foods", (unsigned)h->provides);
+    if ((h->areas & CAP_SHORE) && (h->areas & (CAP_WATER | CAP_LAND)) != (CAP_WATER | CAP_LAND)) REFUSE("a SHORE is where WATER meets LAND, and it has not both");
+    const bool land = (h->areas & CAP_LAND) != 0;            /* land's thermoregulation needs a gradient, a lamp and the hides (the terrarium's) */
+    if (land ? !(h->floor_warm_c > h->floor_cool_c) : !(h->floor_warm_c >= h->floor_cool_c))
         REFUSE("the floor's warm end (%.1f C) is not warmer than its cool end (%.1f C)", h->floor_warm_c, h->floor_cool_c);
     if (!(h->night_drop_c >= 0)) REFUSE("the night warms the floor (drop %.1f C)", h->night_drop_c);
     if (!(h->rise_c >= 0)) REFUSE("the air cools toward the lamp (rise %.1f C)", h->rise_c);
@@ -65,9 +117,17 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
     }
     if (h->bask_surf > h->n_rocks || !on_surface(h, h->bask_surf, h->bask_u))
         REFUSE("the basking spot at %.2f is off its surface (%d)", h->bask_u, h->bask_surf);
-    const bool lamp = terr || h->bask_r_px != 0;            /* a lamp: the terrarium's always, an aquarium's if it has one */
+    const bool lamp = land || h->bask_r_px != 0;            /* a lamp: land's always, a water habitat's if it has one */
     if (lamp && !(h->bask_r_px > 0)) REFUSE("the lamp's pool has no size (%.0f px)", h->bask_r_px);
-    if (h->n_hides < (terr ? 1 : 0) || h->n_hides > HABITAT_HIDES_MAX) REFUSE("%d hides, not %d..%d", h->n_hides, terr ? 1 : 0, HABITAT_HIDES_MAX);
+    if (h->n_hides < (land ? 1 : 0) || h->n_hides > HABITAT_HIDES_MAX) REFUSE("%d hides, not %d..%d", h->n_hides, land ? 1 : 0, HABITAT_HIDES_MAX);
+    /* what it says it provides is what it has (docs/ptpk.md "Capabilities"): a basking spot and a lamp where the lamp has a pool, hides
+       where there are hides, mealworms where there is a dish; its crickets and mealworms need land, its pellets water */
+    if (((h->areas & CAP_BASK) != 0) != lamp) REFUSE("BASK %s its areas, and its lamp's pool is %.0f px", (h->areas & CAP_BASK) ? "is among" : "is not among", h->bask_r_px);
+    if (((h->provides & CAP_LAMP) != 0) != lamp) REFUSE("LAMP %s what it provides, and its lamp's pool is %.0f px", (h->provides & CAP_LAMP) ? "is among" : "is not among", h->bask_r_px);
+    if (((h->provides & CAP_HIDES) != 0) != (h->n_hides > 0)) REFUSE("HIDES %s what it provides, and it has %d hides", (h->provides & CAP_HIDES) ? "is among" : "is not among", h->n_hides);
+    if (((h->provides & CAP_MEALWORM) != 0) != h->dish) REFUSE("MEALWORM %s what it provides, and it has %s dish", (h->provides & CAP_MEALWORM) ? "is among" : "is not among", h->dish ? "a" : "no");
+    if ((h->provides & (CAP_CRICKET | CAP_MEALWORM)) && !land) REFUSE("crickets and mealworms need LAND");
+    if ((h->provides & CAP_PELLET) && !(h->areas & CAP_WATER)) REFUSE("pellets need WATER");
     int humid = 0;
     for (int k = 0; k < h->n_hides; k++) {
         const hide_t *d = &h->hides[k];
@@ -80,7 +140,7 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
         }
         humid += d->kind == HIDE_HUMID;
     }
-    if (terr && !humid) REFUSE("no humid hide: a lizard needs one to shed (docs/shed.md)");
+    if (land && !humid) REFUSE("no humid hide: a lizard needs one to shed (docs/shed.md)");
     if (humid) {                                             /* (a habitat without a humid hide has no moisture to keep) */
         if (!(h->moist_start >= 0 && h->moist_start <= 1)) REFUSE("a new humid hide's moisture %.2f is outside 0..1", h->moist_start);
         if (!(h->moist_dry_per_s > 0)) REFUSE("a humid hide never dries (%g a second)", h->moist_dry_per_s);

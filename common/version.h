@@ -18,7 +18,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 #include <string.h>
-#include "world.h"   /* PT_TERRARIUM: the model identity is per world */
+#include "world.h"   /* PT_PICK: the model identity below is each world's own constant, this build's picked */
 
 /* main is the 0.4 line (2026-10-05, Strato: "bump main to 0.4.0 dev"): the
  * number sits above every 0.3.x, so the Wi-Fi update never offers a 0.3.x
@@ -55,15 +55,9 @@
 #define PT_MODEL_TAG_TERRARIUM    "lizard_v1"   /* docs/retrain-lizard.md: the focused repair's seed 2 */
 #define PT_MODEL_LEN_TERRARIUM    7558660u
 #define PT_MODEL_SHA256_TERRARIUM "d86e2f6194a2c5aa302b46502a2e20d57e06ba465d2d9f77dd85c40f9643d017"
-#if PT_TERRARIUM
-#define PT_MODEL_TAG     PT_MODEL_TAG_TERRARIUM
-#define PT_MODEL_LEN     PT_MODEL_LEN_TERRARIUM
-#define PT_MODEL_SHA256  PT_MODEL_SHA256_TERRARIUM
-#else
-#define PT_MODEL_TAG     PT_MODEL_TAG_AQUARIUM
-#define PT_MODEL_LEN     PT_MODEL_LEN_AQUARIUM
-#define PT_MODEL_SHA256  PT_MODEL_SHA256_AQUARIUM
-#endif
+#define PT_MODEL_TAG     PT_PICK(PT_MODEL_TAG_)       /* this build's world's (world.h PT_PICK) */
+#define PT_MODEL_LEN     PT_PICK(PT_MODEL_LEN_)
+#define PT_MODEL_SHA256  PT_PICK(PT_MODEL_SHA256_)
 
 /* the board this build is for (2026-10-02: 0.3.0 ships three - docs/BOARDS.md).
  * One source tree, one release number, but an image per board: a tank fetches

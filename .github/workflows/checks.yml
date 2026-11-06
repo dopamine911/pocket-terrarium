@@ -8,9 +8,24 @@ on:
 permissions:
   contents: read
 
+# a newer run on the same branch or PR makes the older one pointless
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  host-tests:
+  # The simulator's selftests, one job per board and world (docs/BOARDS.md; sim/Makefile WORLD): they run side by side instead of
+  # one after the other (`make check-all` is the same set, for a developer's machine). Each job builds its own bin and runs
+  # `check` and `check-net`; none shares a build directory.
+  sim:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        world: [terrarium, aquarium]
+        board: [rect, round, watch, square]
+    name: sim ${{ matrix.world }} ${{ matrix.board }}
     steps:
       - uses: actions/checkout@v4
       - name: Install simulator dependencies
@@ -20,11 +35,32 @@ jobs:
           git clone --depth 1 --branch v9.2.2 https://github.com/lvgl/lvgl.git sim/lvgl
       - name: Build and test the simulator
         run: |
-          # all four boards' worlds (docs/BOARDS.md): the rectangle, the bowl, the watch, the square - each in both bins,
-          # the terrarium's and the aquarium's (sim/Makefile WORLD, docs/habitat-pack.md "Worlds")
+          case "${{ matrix.board }}" in
+            rect) flags= ;; round) flags=ROUND=1 ;; watch) flags=WATCH=1 ;; square) flags=SQUARE=1 ;;
+          esac
           # the dev repo does not track model/out; the public one does (the LLM selftest needs it)
-          if [ -f model/out/model_q4.bin ]; then make -C sim -j"$(nproc)" check-all
-          else echo "no model in this checkout: the LLM selftest is skipped"; make -C sim -j"$(nproc)" NOMODEL=1 check-all; fi
+          [ -f model/out/model_q4.bin ] || { echo "no model in this checkout: the LLM selftest is skipped"; flags="$flags NOMODEL=1"; }
+          make -C sim -j"$(nproc)" WORLD=${{ matrix.world }} $flags check check-net
+
+  # what a release image carries (sim/release_check.c: one world's packs, its own capabilities): the common sources only
+  release-packs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install simulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+          git clone --depth 1 --branch v9.2.2 https://github.com/lvgl/lvgl.git sim/lvgl
+      - name: Check the release images' packs
+        run: make -C sim -j"$(nproc)" check-release
+
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
       - name: Test the audio mixer
         working-directory: firmware/host_test
         run: |

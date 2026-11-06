@@ -58,8 +58,10 @@ bool net_port_set_manifest_url(const char *url);
 #endif
 
 static const char *TAG = "director";
+#if !PT_TERRARIUM                                       /* aquarium only: pkcheck's scratch (the grass loop is the aquarium scene's) */
 static void *pk_alloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }   /* (pkcheck's scratch frame) */
 static void pk_free(void *p) { heap_caps_free(p); }
+#endif
 
 /* the real tank's save, parked while a staged tank (fresh / stages) lives in
  * its place: NVS blob "bk" beside progression's "save" in namespace "tank".
@@ -250,6 +252,7 @@ static void show_state(const tank_t *t) {
         ESP_LOGI(TAG, "locked in place:%s%s%s%s%s%s", t->sd_locked & SD_ITEM_PLANT ? " plant" : "", t->sd_locked & SD_ITEM_CASTLE ? " castle" : "",
                  t->sd_locked & SD_ITEM_CORAL ? " coral" : "", t->sd_locked & SD_ITEM_CLUSTER ? " cluster" : "", t->sd_locked & SD_ITEM_PUMPKIN ? " pumpkin" : "",
                  t->sd_locked & SD_ITEM_VOLCANO ? " volcano" : "");
+#if !PT_TERRARIUM                                       /* aquarium only: the urchin and the seahorse */
     if (t->sd_unlocks & SD_ITEM_URCHIN)                 /* where it is, what it is after */
         ESP_LOGI(TAG, "urchin at x %.0f | %s | appetite %.3f | %.0f cm grazed so far (keeps the grass over %.2f)", t->urchin_x,
                  tank_urchin_chewing(t) ? "chewing" : t->urchin_frond >= 0 ? "off to the tall grass" : t->urchin_rest > 0 ? "resting" : "ambling",
@@ -258,6 +261,7 @@ static void show_state(const tank_t *t) {
         ESP_LOGI(TAG, "seahorse at %.0f,%.0f | %s | %.2f days with you, %d hitches, +%.2f trust passed on | %d pellets snapped (%d paid; next pays in %.0f s)", t->sh_x, t->sh_y,
                  t->sh_hitched ? "on the finger" : t->sh_mode == SH_HITCH ? "swimming to the finger" : t->sh_mode == SH_PERCH ? tank_seahorse_holding(t) : "adrift",
                  tank_seahorse_days(t), (int)t->sh_hitches, t->sh_trust_passed, (int)t->sh_eaten, (int)t->sd_snacks_paid, t->sh_snack_cool > 0 ? t->sh_snack_cool : 0);
+#endif
     if (t->sd_unlocks & SD_ITEM_SNAIL) {                /* where it is, what it is after */
         int c = t->snail_cell, cells = 0; for (int i = 0; i < ALGAE_CELLS; i++) cells += t->algae[i] > 0;
         ESP_LOGI(TAG, "snail at %.0f,%.0f heading %.0f deg | %s cell %d at %d,%d (film %d) | %d cells on the glass | %d grazed so far", t->snail_x, t->snail_y,
@@ -423,6 +427,7 @@ static void run(tank_t *t, char *line) {
             t->cr_gdepth = t->cr_gdepth_want = t->snail_gdepth = t->snail_gdepth_want = t->urchin_gdepth = t->urchin_gdepth_want = d;
             ESP_LOGI(TAG, "depth: every critter %s the grass", argv[2]);
         }
+#if !PT_TERRARIUM                                       /* aquarium only: the grass loop's check and the swim depth's switch */
     } else if (!strcmp(c, "pkcheck")) {                      /* pkcheck [item]: does the grass loop hold grass over a piece's body? (8 = the pumpkin) */
         int item = argc > 1 ? atoi(argv[1]) : 8, b = 0, f = 0;
         int worst = render_debug_piece_grass(item, &b, &f, pk_alloc, pk_free);
@@ -430,6 +435,7 @@ static void run(tank_t *t, char *line) {
     } else if (!strcmp(c, "depthoff")) {                     /* depthoff on|off: SWIM DEPTH off (every animal in front, as before 0.3.9.4) - the A/B */
         render_depth_off(argc > 1 && !strcmp(argv[1], "on"));
         ESP_LOGI(TAG, "depthoff: swim depth %s", argc > 1 && !strcmp(argv[1], "on") ? "OFF - every animal in front, as before" : "on");
+#endif
     } else if (!strcmp(c, "pdepth")) {                       /* SWIM DEPTH phase 2: `pdepth <i> front|behind [x]` - against the pieces, now (staging);
                                                                  x: put it there, at the pieces' middle height */
         if (!t || argc < 3) return;
@@ -438,6 +444,7 @@ static void run(tank_t *t, char *line) {
         fish_t *f = &t->fish[i]; f->pdepth = f->pdepth_want = !strcmp(argv[2], "behind") ? FISH_DEPTH_BEHIND : FISH_DEPTH_FRONT;
         if (argc >= 4) { f->x = (float)atof(argv[3]); f->y = TANK_BOT - 70; f->speed = f->target_speed = 0; }
         ESP_LOGI(TAG, "pdepth: %d %s %s the pieces at %.0f,%.0f", i, f->name, f->pdepth ? "behind" : "in front of", f->x, f->y);
+#if !PT_TERRARIUM                                       /* aquarium only: the pieces' tests (their covers, the pop, the hold, the castle's keep) */
     } else if (!strcmp(c, "poptest")) {                      /* poptest <i> [old|new] [castle|coral|cluster|pumpkin|volcano]: the pop (0.3.9.7, #help
                                                                  "poof disappear") - fish i on the piece (the volcano by default), in sight of it (in front
                                                                  of the grass; behind the pieces for one BEHIND, in front for one IN FRONT), wanting behind
@@ -518,6 +525,7 @@ static void run(tank_t *t, char *line) {
         f->gdepth = f->gdepth_want = f->gdepth_rest = d; f->pdepth = f->pdepth_want = FISH_DEPTH_FRONT;
         ESP_LOGI(TAG, "keeptest: %d %s on the castle's rear tower (castle %s) at %.0f,%.0f, %s the grass, the %s castle", i, f->name, z == DECOR_Z_FRONT ? "IN FRONT" : "BEHIND",
                  f->x, f->y, argv[2], argc >= 4 && !strcmp(argv[3], "old") ? "OLD (0.3.9.6)" : "new");
+#endif
     } else if (!strcmp(c, "touchlock")) { device_touch_lock(argc > 1 ? !strcmp(argv[1], "on") : -1);   /* THE TOUCH LOCK, as MY TANKS's padlock */
     }
 #if PT_NET
@@ -656,6 +664,7 @@ static void run(tank_t *t, char *line) {
         else if (progression_buy(t, item)) ESP_LOGI(TAG, "%s unlocked, %d sand dollars left%s", progression_item(item)->name, (int)t->sd_balance,
                                                     tank_decor_placeable(item) ? " (`place` opens the placement page)" : "");
         else ESP_LOGW(TAG, "%s refused: owned, not sold by this build, or %d < %d", progression_item(item)->name, (int)t->sd_balance, progression_item(item)->price);
+#if !PT_TERRARIUM                                       /* aquarium only: the strawberry crab */
     } else if (!strcmp(c, "crab")) {                 /* crab [x <px> | roost [castle|volcano] | tap | scare]: the strawberry crab (0.3.9) - set it down, send it to roost now, poke it, scare it */
         static const char *const M[] = { "resting", "walking", "digging", "heading for a shelter", "roosting", "going for food", "eating", "climbing" };   /* (climbing + cr_nibble: nibbling the rock) */
         if (!(t->sd_unlocks & SD_ITEM_CRAB) || t->cr_x < 0) ESP_LOGW(TAG, "no crab in the tank (`buy crab`)");
@@ -676,6 +685,7 @@ static void run(tank_t *t, char *line) {
             if (tank_decor_in(t, 2)) ESP_LOGI(TAG, "crab: the castle's arch is at x %.0f", tank_decor_x(t, 2));
             if (tank_decor_in(t, 9)) ESP_LOGI(TAG, "crab: the volcano's cave is at x %.0f", tank_decor_x(t, 9));
         }
+#endif
     } else if (!strcmp(c, "order")) {                 /* order [plant|castle|coral|cluster|pumpkin forward|back]: the pieces' stack, back to front; a step moves one */
         if (argc > 2) {
             int item = !strcmp(argv[1], "plant") ? 0 : !strcmp(argv[1], "castle") ? 2 : !strcmp(argv[1], "coral") ? 3 : !strcmp(argv[1], "cluster") ? 4 : !strcmp(argv[1], "pumpkin") ? 8 : !strcmp(argv[1], "volcano") ? 9 : -1;
@@ -705,6 +715,7 @@ static void run(tank_t *t, char *line) {
             if ((y & 7) == 7) { vTaskDelay(1); device_wdt_feed(); }   /* ~70 ms a row: a tall box never trips the watchdog */
         }
         printf("shot end\n");
+#if !PT_TERRARIUM                                       /* aquarium only: the grass loop's check, the rim, the pumpkin, the seahorse's hold and post */
     } else if (!strcmp(c, "glcheck")) {               /* glcheck: every baked moment of the grass loop against its neighbours - a pixel that differs from BOTH
                                                          while they agree with each other is a flicker (the 0.3.9.6 soak: "dark vertical lines up the fronds") */
         const int nf = render_grass_loop_n();
@@ -772,6 +783,7 @@ static void run(tank_t *t, char *line) {
         if (old) t->sh_front = t->sh_front_want = false;
         t->sh_stay = 120;
         ESP_LOGI(TAG, "postshot: the seahorse on the castle's rear tower at %.0f,%.0f over the volcano, lane %s, the %s drawing", t->sh_x, t->sh_y, t->sh_front ? "FRONT" : "BACK", old ? "OLD" : "new");
+#endif
     } else if (!strcmp(c, "seahorse") && argc > 1) {  /* seahorse on|off: drawn or not (it still lives; not saved) - the frame-rate A/B */
         t->sh_hidden = !strcmp(argv[1], "off");
         ESP_LOGI(TAG, "seahorse %s (the display line every 10 s has the fps and the render ms)", t->sh_hidden ? "HIDDEN - not drawn" : "drawn");
@@ -852,12 +864,14 @@ static void run(tank_t *t, char *line) {
             ESP_LOGI(TAG, "rail %s %s: %s", argv[2], argv[1], battery_port_set_rail(argv[2], !strcmp(argv[1], "on")) ? "ok" : "REFUSED");
         else if (argc > 1 && !strcmp(argv[1], "trim")) battery_port_trim_rails();
         else battery_port_dump();
+#if !PT_TERRARIUM                                       /* aquarium only: the grass cache and the grass loop */
     } else if (!strcmp(c, "grasscache")) {           /* grasscache [0|1] [ms]: the back grass from a cached scene, rebuilt every ms (2026-10-24, not saved) */
         if (argc > 1) render_set_grass_cache_on(atoi(argv[1]) != 0, argc > 2 ? atoi(argv[2]) : 0);
         ESP_LOGI(TAG, "grasscache: %s, every %d ms", render_grass_cache_on() ? "ON" : "off", render_grass_cache_ms());
     } else if (!strcmp(c, "grassloop")) {            /* grassloop [on|off]: the back grass from the loop (0.3.9.3, render.c THE GRASS LOOP; not saved) */
         if (argc > 1) render_grass_loop_on(!strcmp(argv[1], "on"));
         ESP_LOGI(TAG, "grassloop: %s", render_grass_loop_is_on() ? "ON" : "off");
+#endif
     } else if (!strcmp(c, "wdt")) {                  /* wdt [hang]: THE WATCHDOG (0.4) - the longest the tank task went unfed; `wdt hang` hangs it (the chip restarts) */
         device_wdt(argc > 1 && !strcmp(argv[1], "hang"));
     } else if (!strcmp(c, "bakecap")) {              /* bakecap [MS]: the grass bake's share of core 1 within one decision (0 = none; not saved) */
@@ -872,6 +886,7 @@ static void run(tank_t *t, char *line) {
             while (nheld < want && nheld < 48 && (held[nheld] = heap_caps_malloc(256 * 1024, MALLOC_CAP_SPIRAM))) nheld++;
         }
         ESP_LOGI(TAG, "psramhold: %d KB held, %u KB free", nheld * 256, (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+#if !PT_TERRARIUM                                       /* aquarium only: the grass's thinning, step and bench */
     } else if (!strcmp(c, "vegthin")) {              /* vegthin 0|1: a COST PROBE - every third grass frond not drawn (the tank still has it) */
         extern int g_veg_thin; if (argc > 1) g_veg_thin = atoi(argv[1]);
         ESP_LOGI(TAG, "vegthin: %d", g_veg_thin);
@@ -884,6 +899,7 @@ static void run(tank_t *t, char *line) {
         for (int b = 0; b < tank_veg_beds(t); b++) { int64_t fu, du[3]; int sp; render_veg_bench(t, buf, b, esp_timer_get_time, &fu, du, &sp);
             ESP_LOGI(TAG, "vegbench: bed %d: %d spans: full %.2f us/span | no stores %.2f | no stores, no vignette %.2f | no span_final at all %.2f", b, sp, sp ? fu / (float)sp : 0, sp ? du[0] / (float)sp : 0, sp ? du[1] / (float)sp : 0, sp ? du[2] / (float)sp : 0); }
         free(buf);
+#endif
     } else if (!strcmp(c, "membench")) {             /* membench: what a store costs in PSRAM vs internal RAM (2026-10-23: is the grass pixel-bound?) */
         uint16_t *ps = heap_caps_malloc(512 * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT), *in = heap_caps_malloc(8 * 1024, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);   /* (internal RAM is tight: 8 KB) */
         if (!ps || !in) { ESP_LOGW(TAG, "membench: no RAM"); free(ps); free(in); return; }

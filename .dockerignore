@@ -5,6 +5,10 @@
 !sim/*.c
 !sim/*.h
 !sim/Makefile
+!tools/
+!tools/ptpk_emit.c
+!packs/
+!packs/*.ptpk
 !model/
 !model/out/
 !model/out/model_q4.bin
