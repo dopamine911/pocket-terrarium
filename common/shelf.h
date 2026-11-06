@@ -56,9 +56,11 @@
 
 /* a tank's name until the keeper gives it one, per world (P5): the tank on the glass at the first boot with shelves, and
    a new or nameless one's (the lowest n no tank wears). The terrarium's are its habitat's - a plate holds seven letters a
-   line, so DESERT, not TERRARIUM */
-#define SHELF_NAME_FIRST WORLD_STR("MY TANK", "MY DESERT")
-#define SHELF_NAME_NTH   WORLD_STR("TANK %u", "DESERT %u")
+   line, so DESERT, not TERRARIUM. The words are the world's (world_ops.h words.shelf_*, common/worlds/<world>/world.c) */
+const char *shelf_name_first(void);   /* "MY TANK" / "MY DESERT" */
+const char *shelf_name_nth(void);     /* the format, "TANK %u" / "DESERT %u" */
+#define SHELF_NAME_FIRST shelf_name_first()
+#define SHELF_NAME_NTH   shelf_name_nth()
 
 #define SHELF_SLOT_SIZE   (24 * 1024)
 #define SHELF_SAVE_OFF    256                     /* the save, in the header's sector */

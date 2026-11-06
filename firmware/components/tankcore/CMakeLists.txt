@@ -10,7 +10,7 @@ set(COMMON ${CMAKE_CURRENT_LIST_DIR}/../../../common)
 file(STRINGS "${COMMON}/version.h" PT_NET_LINE REGEX "^#define[ \t]+PT_NET[ \t]+[01]")
 string(REGEX REPLACE "^#define[ \t]+PT_NET[ \t]+([01]).*$" "\\1" PT_NET "${PT_NET_LINE}")
 set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
-         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c"
+         "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c"
          "${COMMON}/species.c" "${COMMON}/habitat.c" "${COMMON}/terrain.c"
          "${COMMON}/packs/ptpk.c" "${COMMON}/packs/ptpk_write.c" "${COMMON}/packs/builtin.c"
          "${COMMON}/packs/caps.c" "${COMMON}/packs/manifest.c" "${COMMON}/packs/models.c" "${COMMON}/packs/compat.c"
