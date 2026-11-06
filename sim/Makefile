@@ -85,6 +85,10 @@ ifeq ($(WORLD),terrarium)
 APP_SRCS  += ../common/render_lizard.c ../common/render_scene_desert.c sheet_lizard.c   # this world's lizard/desert art; --lizard-sheet (P3a)
 APP_SRCS  += shot_terrarium.c   # the terrarium as render_tank draws it: --terr-shot, --terr-bench (P3b)
 endif
+# THE MODULES (issue #4 phase 3): this world's mechanics (common/worlds/<world>/, critters/ below it), its body type's art
+# (common/bodies/<body>/) and the movement modules (common/locomotion/) are found by directory, so a new file needs no list
+BODY      := $(if $(filter terrarium,$(WORLD)),lizard,fish)
+APP_SRCS  += $(sort $(wildcard ../common/worlds/$(WORLD)/*.c ../common/worlds/$(WORLD)/*/*.c ../common/bodies/$(BODY)/*.c ../common/locomotion/*.c))
 APP_SRCS  += sim_tmp.c          # the run's own scratch directory: no selftest names a fixed /tmp path (P2c)
 LVGL_SRCS := $(shell find lvgl/src -name '*.c')
 OBJS      := $(patsubst %.c,$(BUILD)/%.o,$(filter-out ../common/%,$(APP_SRCS)) $(LVGL_SRCS)) $(patsubst ../common/%.c,$(BUILD)/common/%.o,$(filter ../common/%,$(APP_SRCS)))
