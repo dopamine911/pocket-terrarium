@@ -11,11 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool tank_in_damp_hide(const tank_t *t, int i) {
+bool terr_in_damp_hide(const tank_t *t, int i) {
     int k = t->fish[i].hide;                                  /* in one (THE WALK: it went in), not passing its footprint */
     return k >= 0 && k < tank_habitat(t)->n_hides && tank_habitat(t)->hides[k].kind == HIDE_HUMID && t->moist[k] >= SHED_DAMP;
 }
-bool tank_shed_growth(tank_t *t, int i) {
+bool terr_shed_growth(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     if (!tank_species(t)->sheds) return false;        /* (a pack that does not shed: progression puts the age's stage on at once) */
     if (f->shed == SHED_CLEAN) return false;          /* a shed just off: progression starts the next once it is finished */
@@ -56,7 +56,7 @@ static void shed_step(const species_t *p, fish_t *f, float dt, float damp_until)
         }
     }
 }
-void tank_shed_clock(tank_t *t, float dt) {
+void terr_shed_clock(tank_t *t, float dt) {
     const species_t *p = tank_species(t);
     if (dt <= 0 || !p->sheds) return;                 /* (the aquarium's fish do not shed, and its water keeps no hide damp) */
     const habitat_t *h = tank_habitat(t);
@@ -74,10 +74,10 @@ void tank_shed_clock(tank_t *t, float dt) {
         shed_step(p, f, dt, k >= 0 && k < h->n_hides ? damp_until[k] : -1);
     }
 }
-void tank_mist_pass(tank_t *t, int k) {
+void terr_mist_pass(tank_t *t, int k) {
     if (k >= 0 && k < HABITAT_HIDES_MAX && tank_species(t)->sheds) t->moist[k] = fminf(1.0f, t->moist[k] + MIST_PASS);
 }
-bool tank_mist_soak(tank_t *t, int i) {
+bool terr_mist_soak(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     f->stress = clampf(f->stress + 1.0f, 0, 10);     /* the spray: they dislike it, soaked or not */
     if (f->shed != SHED_STUCK) return false;

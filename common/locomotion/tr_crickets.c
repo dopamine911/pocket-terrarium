@@ -30,8 +30,7 @@ bool tank_cricket_about(const cricket_t *c) { return c->state == CK_SIT || c->st
 int tank_crickets_about(const tank_t *t) { int n = 0; for (int i = 0; i < MAX_CRICKETS; i++) n += tank_cricket_about(&t->cricket[i]); return n; }
 bool tank_dish_here(const tank_t *t) { return tank_habitat(t)->dish; }
 void tank_dish_point(const tank_t *t, float *x, float *y) { *x = tank_floor_x(tank_habitat(t)->dish_u); *y = PLACE_Y + TERRAIN_FEET_DY; }
-void tank_clear_food(tank_t *t) {
-    for (int i = 0; i < MAX_FOOD; i++) t->food[i].alive = false;
+static void crickets_clear(tank_t *t) {
     for (int i = 0; i < MAX_CRICKETS; i++) t->cricket[i].state = CK_NONE;
     for (int i = 0; i < N_FISH_SLOTS; i++) { t->fish[i].prey = -1; t->fish[i].seen_surf = -1; }   /* (no prey, nor a memory of one) */
 }
@@ -61,16 +60,8 @@ bool prey_spot(const tank_t *t, int i, int *surf, float *x, float *y) {
     if (i == PREY_DISH && t->dish_worms > 0 && tank_dish_here(t)) { *surf = 0; tank_dish_point(t, x, y); return true; }
     return false;
 }
-bool tank_food_sight(const tank_t *t, int idx, float *x, float *y, float *dist) {
+static bool crickets_sight(const tank_t *t, int idx, float *x, float *y, float *dist) {
     const fish_t *f = &t->fish[idx];
-    if (!PT_TERRARIUM) {                                            /* the aquarium: the nearest pellet, as ever */
-        float d; const int i = tank_nearest_food(t, f, &d);
-        if (i < 0) return false;
-        if (x) *x = t->food[i].x;
-        if (y) *y = t->food[i].y;
-        if (dist) *dist = d;
-        return true;
-    }
     const terrain_t *tr = tank_terrain(t);
     const int from = f->surf >= 0 && f->surf < tr->n_paths ? f->surf : 0;
     float bd = 1e9f, bx = 0, by = 0; bool got = false;
@@ -86,9 +77,8 @@ bool tank_food_sight(const tank_t *t, int idx, float *x, float *y, float *dist) 
     if (dist) *dist = bd;
     return true;
 }
-int tank_food_count(const tank_t *t) {
+static int crickets_count(const tank_t *t) {
     int n = 0;
-    if (!PT_TERRARIUM) { for (int i = 0; i < MAX_FOOD; i++) n += t->food[i].alive; return n; }
     for (int i = 0; i < MAX_CRICKETS; i++) n += t->cricket[i].state != CK_NONE;
     return n + (t->dish_worms > 0 && tank_dish_here(t));
 }
@@ -104,9 +94,9 @@ static int ck_top_under(const terrain_t *tr, float x, float y, int skip, float *
     if (best >= 0) *gy = by;
     return best;
 }
-int ck_free(const tank_t *t) { for (int i = 0; i < MAX_CRICKETS; i++) if (t->cricket[i].state == CK_NONE) return i; return -1; }
-float ck_drop_x(const tank_t *t, float x) { float x0, x1; ck_span(&tank_terrain(t)->path[0], &x0, &x1); return clampf(x, x0, x1); }   /* (over the floor's span) */
-void ck_drop_at(tank_t *t, int i, float x, float y, bool from_player) {
+static int ck_free(const tank_t *t) { for (int i = 0; i < MAX_CRICKETS; i++) if (t->cricket[i].state == CK_NONE) return i; return -1; }
+static float ck_drop_x(const tank_t *t, float x) { float x0, x1; ck_span(&tank_terrain(t)->path[0], &x0, &x1); return clampf(x, x0, x1); }   /* (over the floor's span) */
+static void ck_drop_at(tank_t *t, int i, float x, float y, bool from_player) {
     t->cricket[i] = (cricket_t){ .x = x, .y = y, .surf = -1, .state = CK_FALL, .facing = (int8_t)(i & 1 ? 1 : -1), .from_player = from_player };
     t->ck_dropped++;
 }
@@ -184,7 +174,7 @@ static int ck_threat(const tank_t *t, const cricket_t *c, float *from_x, float *
     return best;
 }
 /* the rap: the crickets about within r of (x, y) fly from it; one in cover stays put, wide awake */
-void ck_scare(tank_t *t, float x, float y, float r) {
+static void ck_scare(tank_t *t, float x, float y, float r) {
     for (int i = 0; i < MAX_CRICKETS; i++) {
         cricket_t *c = &t->cricket[i];
         if (c->state == CK_NONE || c->state == CK_FALL || tank_dist(c->x, c->y, x, y) > r) continue;
@@ -192,7 +182,7 @@ void ck_scare(tank_t *t, float x, float y, float r) {
     }
 }
 /* a frame of the crickets; returns the live ones (any state) */
-int ck_tick(tank_t *t, float dt) {
+static int ck_tick(tank_t *t, float dt) {
     const terrain_t *tr = tank_terrain(t);
     int live = 0;
     for (int i = 0; i < MAX_CRICKETS; i++) {
@@ -256,3 +246,44 @@ int ck_tick(tank_t *t, float dt) {
     }
     return live;
 }
+
+/* ---- THE CRICKETS as a food module (mechanics.h): what tank.c's feed, trickle, tick, night and sight were for the terrarium ---- */
+/* the keeper's gesture: n crickets from the hand at x - or, over the dish, the dish filled (THE CRICKETS, tank.h) */
+static void crickets_feed(tank_t *t, float x, int n) {
+    float dx = 0, dy;
+    if (tank_dish_here(t)) tank_dish_point(t, &dx, &dy);
+    if (tank_dish_here(t) && fabsf(x - dx) <= DISH_FEED_PX) {
+        if (t->dish_worms < DISH_WORMS) { t->dish_worms = DISH_WORMS; t->dish_farm = false; tank_emit(TEV_FEED, -1); }   /* (the keeper's dish now: P5) */
+    } else {
+        int dropped = 0;
+        for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {   /* (the draws a pellet's were: its jitter, its height) */
+            const float cx = ck_drop_x(t, x + tank_randf(t, -14, 14));
+            ck_drop_at(t, i, cx, tank_glass_top(cx) + tank_randf(t, 6, 18), true);
+            dropped++;
+        }
+        if (dropped) tank_emit(TEV_FEED, -1);
+    }
+    t->feed_spot_x = t->feed_spot_x < 0 ? x : t->feed_spot_x + (x - t->feed_spot_x) * 0.3f;
+    t->feed_open = true;                     /* a meal once a lizard eats from it */
+}
+/* AUTO CRICKETS (tank.h THE CRICKETS): the tank's own, at a random x (a pellet's draws) */
+static void crickets_scatter(tank_t *t, int n) {
+    for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {
+        const float x = ck_drop_x(t, tank_randf(t, TANK_FX0 + 25, TANK_FX1 - 25));
+        ck_drop_at(t, i, x, tank_glass_top(x) + tank_randf(t, 6, 20), false);
+    }
+}
+/* a night: the crickets live out their time (a night: gone); the dish's worms stay */
+static void crickets_sleep(tank_t *t, float seconds) {
+    for (int i = 0; i < MAX_CRICKETS; i++) {
+        cricket_t *c = &t->cricket[i];
+        if (c->state != CK_NONE && (c->age += seconds) > CK_LIFE_S) { c->state = CK_NONE; t->ck_lost++; }
+    }
+}
+/* (P2b: nobody feeds lizards after lights-out - settle or sleep; P2c: AUTO CRICKETS, in the active phase only) */
+static bool crickets_trickle_hold(const tank_t *t) { return tank_activity_phase(t) != PHASE_ACTIVE; }
+const food_ops_t food_crickets = {
+    .name = "crickets", .diet = DIET_CRICKET | DIET_MEALWORM,
+    .feed = crickets_feed, .scatter = crickets_scatter, .tick = ck_tick, .sleep = crickets_sleep, .sight = crickets_sight,
+    .count = crickets_count, .clear = crickets_clear, .trickle_hold = crickets_trickle_hold, .scare = ck_scare,
+};

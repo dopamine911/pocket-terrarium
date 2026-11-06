@@ -1,5 +1,5 @@
-/* aq_swim.c - the aquarium's swim: a fish's goal -> target, its steering, the doors, its meals (update_fish)
- * (issue #4 phase 3: moved out of tank.c verbatim; see tank.h for the rules it plays by) */
+/* aq_swim.c - the aquarium's swim, a movement module (locomotion.h loco_swim): a fish's goal -> target, its steering, its depth,
+ * the doors, its meals (update_fish). Moved out of tank.c (issue #4 phase 3) with its bodies unchanged; see tank.h for the rules */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"
@@ -11,6 +11,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* round the finger, not under it (0.3.9.3, Metalus on the pendant: "the touch and hold hides all my fish
+ * under my finger"; Strato: not a defined point either - "swimming in a bit of a circular pattern around ...
+ * with a bit of a buffer ... with the ability to cross over to the other side", never "consistently group to
+ * the top of the finger"). The fish that come in swim a loose ring round the fingertip as one company: the
+ * ring drifts one way, then back after a while; each fish keeps a little behind the one before (close enough
+ * to stay nose to tail - the social warmth, SOCIAL_HOLD_GAIN), wanders in and out of its own radius, and now
+ * and then one crosses to the far side and comes back. Clamped to the glass by a wall or the sand. */
+#define HOLD_RING_R       64.0f  /* px from the touch point: the fingertip (~30) + a buffer + half a fish */
+#define HOLD_RING_WOBBLE  10.0f  /* ... in and out of it, each fish its own */
+#define HOLD_RING_GAP     0.62f  /* rad between a fish and its partner (~45 px: a body apart, past the separation's push, still company) */
+#define HOLD_GATHERED_PX  100.0f  /* a fish this close to a drawing finger has come to it (social warmth, 2026-10-29;
+                                     0.3.9.3: the ring's outer reach, 1.2 x (R + wobble) to the side; was 45 under the fingertip) */
+#define HOLD_APPROACH_FROM 140.0f /* a hold-approach must START at least this far out - past the ring:
+                                 * a fish already at the finger earns nothing (0.3.9.3: was 60 / 30, under the fingertip) */
+#define HOLD_APPROACH_AT   HOLD_GATHERED_PX   /* ... and come in this close: onto the ring */
+#define VEG_SLOW            0.60f     /* cruise speed factor inside a canopy */
 /* a random point of open water: y in [y0, y1], x at least mx off the side glass at that height */
 static void rand_water(tank_t *t, float mx, float y0, float y1, float *x, float *y) {
 #if defined(TANK_ROUND) || defined(TANK_CORNER_R)
@@ -298,7 +314,7 @@ static void hold_ring_point(const tank_t *t, float ph, float r, float *x, float 
     tank_glass_clamp(x, y, 22);
 }
 
-void update_fish(tank_t *t, int idx, float dt) {
+static void update_fish(tank_t *t, int idx, float dt) {
     fish_t *f = &t->fish[idx];
     /* the lizard's body heat follows where it is (tank.h THE HEAT FIELD), at its pack's pace for its stage */
     body_follow(t, f, tank_env_c(t, f->x, f->y), dt);
@@ -775,3 +791,32 @@ void update_fish(tank_t *t, int idx, float dt) {
     fish_beat(f, dt);
     eat_nearby_food(t, f);
 }
+
+/* ---- THE SWIM as a movement module (locomotion.h): what tank.c asks of an animal that swims ---- */
+/* the finger itself: a swimmer goes to it (the ring round it, hold_ring_point) */
+static void swim_hand_point(const tank_t *t, float *x, float *y) { *x = t->hold_x; *y = t->hold_y; }
+/* it has come to a settled hold: within the ring's outer reach of the finger (hold_time, not hold_active: the tick consumes the
+   flag, and the time drops to 0 the frame the finger lifts) */
+static bool swim_at_finger(const tank_t *t, int i) {
+    float hx, hy; tank_hand_point(t, &hx, &hy);
+    return t->hold_time >= HOLD_ATTRACT_S
+        && tank_dist(t->fish[i].x, t->fish[i].y, hx, hy) < HOLD_GATHERED_PX;
+}
+/* a hold-approach = a fish that was out in the tank when the settled hold began its draw and then came all the way in (tank.c touch_tick) */
+static void swim_hold_credit(tank_t *t, int i, float d, bool draw_begins) {
+    fish_t *f = &t->fish[i];
+    if (draw_begins) f->hold_far = d >= HOLD_APPROACH_FROM;
+    if (f->hold_far && d < HOLD_APPROACH_AT) hold_approach(t, i);
+}
+/* a fish: its middle, as ever */
+static float swim_tap_d2(const tank_t *t, int i, float x, float y, float px, float py) { return (px - x) * (px - x) + (py - y) * (py - y); }
+/* SWIM DEPTH: how it goes about its new goal (a lizard walks the floor's lanes) */
+static void swim_goal_set(tank_t *t, fish_t *f, goal_id_t g) {
+    f->gdepth_want = depth_pick(t, f, g);
+    f->pdepth_want = pdepth_pick(t, f, g);
+}
+const loco_ops_t loco_swim = {
+    .name = "swim", .mode = CAP_SWIM,
+    .update = update_fish, .hand_point = swim_hand_point, .at_finger = swim_at_finger, .hold_credit = swim_hold_credit,
+    .tap_d2 = swim_tap_d2, .goal_set = swim_goal_set,
+};

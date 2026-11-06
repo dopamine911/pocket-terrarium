@@ -47,17 +47,16 @@ static void walk_ground(const tank_t *t, fish_t *f) {         /* onto its path w
     walk_face(f, f->facing ? f->facing : cosf(f->heading) < 0 ? -1 : 1);
     if (f->turn_s <= 0) f->yaw = f->facing;
 }
-void walk_floor(const tank_t *t, fish_t *f) {          /* onto the floor where it is across: a lizard made, bought, hatched */
+static void walk_floor(const tank_t *t, fish_t *f) {          /* onto the floor where it is across: a lizard made, bought, hatched */
     f->surf = 0; f->slope = 0;
     if (!(f->y >= PLACE_Y + LZ_LANE_BACK && f->y <= PLACE_Y + LZ_LANE_FRONT)) f->y = PLACE_Y;
     walk_ground(t, f);
 }
 
-/* THE HAND's place (tank.h tank_hand_point): in the terrarium the keeper's hand rests on the ground - the point of the
-   ground's walking lines nearest the finger (a rock beside it, the sand under it), its path returned; -1 in the aquarium */
+/* THE HAND's place (tank.h tank_hand_point): the keeper's hand rests on the ground - the point of the ground's walking
+   lines nearest the finger (a rock beside it, the sand under it), its path returned */
 static int hand_ground(const tank_t *t, float *x, float *y) {
     *x = t->hold_x; *y = t->hold_y;
-    if (!PT_TERRARIUM) return -1;
     const terrain_t *tr = tank_terrain(t);
     int gs = 0; float bd = 1e30f;
     for (int s = 0; s < tr->n_paths; s++) {
@@ -67,7 +66,7 @@ static int hand_ground(const tank_t *t, float *x, float *y) {
     }
     return gs;
 }
-void tank_hand_point(const tank_t *t, float *x, float *y) { hand_ground(t, x, y); }
+static void walk_hand_point(const tank_t *t, float *x, float *y) { hand_ground(t, x, y); }
 
 /* ================================================================ THE WALK (pocket-terrarium P2b, P2c; tank.h has the
  * rules): the terrarium's lizards, on the ground (tank_terrain). Each frame a lizard's goal becomes a PLAN - a point of
@@ -140,7 +139,7 @@ void tank_lizard_leave(tank_t *t, int i) { if (i >= 0 && i < N_FISH_SLOTS && t->
 
 /* THE RAP (tank.h THE WALK): lizard i dashes for the hide nearest by its route - it stays in the one it is in - and stays
    LZ_SPOOK_S; a strike under way is off */
-void lizard_spook(tank_t *t, int i) {
+static void lizard_spook(tank_t *t, int i) {
     fish_t *f = &t->fish[i];
     const terrain_t *tr = tank_terrain(t);
     const habitat_t *h = tank_habitat(t);
@@ -153,16 +152,16 @@ void lizard_spook(tank_t *t, int i) {
     if (f->pose == LZ_POSE_STALK || f->pose == LZ_POSE_LUNGE) { f->strike_s = 0; f->pose = LZ_POSE_STAND; }
 }
 /* THE HAND (tank.h THE WALK): a settled hold draws a lizard - trusting, not too hungry, awake, not overheating, not frightened */
-bool hand_draws(const tank_t *t, const fish_t *f) {
+static bool hand_draws(const tank_t *t, const fish_t *f) {
     return t->hold_time >= HOLD_ATTRACT_S && f->trust >= 4.0f && f->hunger < HOLD_HUNGER_VETO
         && tank_activity_phase(t) == PHASE_ACTIVE && f->heat < HEAT_HOT && f->spook_s <= 0;
 }
 /* ... to the hand's place on the ground (tank_hand_point: up a rock if that is nearest the finger), beside it: the first one
    LZ_HAND_GAP to its left, the next to its right, then further out - a side its ground has no room for skipped - facing it,
    flicking its tongue */
-int lizard_hand_target(const tank_t *t, int idx, float *target_x, float *hand_x) {
+static int lizard_hand_target(const tank_t *t, int idx, float *target_x, float *hand_x) {
     const fish_t *f = &t->fish[idx];
-    float gx, gy; int gs = hand_ground(t, &gx, &gy); if (gs < 0) gs = 0;   /* (-1: not a terrarium's - the walk is only ever one's) */
+    float gx, gy; const int gs = hand_ground(t, &gx, &gy);
     float x0, x1; walk_span(t, f, &tank_terrain(t)->path[gs], gs == 0 && f->surf == 0 ? f->y - PLACE_Y : 0, &x0, &x1);
     int rank = 0;
     for (int i = 0; i < idx; i++) rank += tank_swims(t, i) && hand_draws(t, &t->fish[i]);
@@ -350,7 +349,7 @@ static void lizard_plan(tank_t *t, int idx, walk_plan_t *w) {
 
 /* ---- (P3b DRAW-ONLY: THE LOOK ends) ---- */
 
-void update_lizard(tank_t *t, int idx, float dt) {
+static void update_lizard(tank_t *t, int idx, float dt) {
     fish_t *f = &t->fish[idx];
     const species_t *p = tank_species(t);
     const terrain_t *tr = tank_terrain(t);
@@ -534,3 +533,35 @@ void update_lizard(tank_t *t, int idx, float dt) {
     fish_beat(f, dt);
     lizard_look(t, f, dt);                                    /* P3b DRAW-ONLY: the phase, the blink, the tongue, the fat (THE LOOK) */
 }
+
+/* ---- THE WALK as a movement module (locomotion.h): what tank.c asks of an animal that walks ---- */
+/* it has come to the keeper's resting hand: awake, trusting, out of its hide, standing at its own slot beside it on that ground
+   (not merely near it through a rock) */
+static bool walk_at_finger(const tank_t *t, int i) {
+    const fish_t *f = &t->fish[i];
+    if (!tank_swims(t, i) || !hand_draws(t, f) || f->hide >= 0) return false;
+    float x; const int surf = lizard_hand_target(t, i, &x, NULL);
+    return f->surf == surf && fabsf(f->x - x) <= LZ_ARRIVE_PX;
+}
+/* a tap at (px, py) on a lizard as if its middle were at (x, y): its body's line nose to tail tip, as drawn */
+static float walk_tap_d2(const tank_t *t, int i, float x, float y, float px, float py) {
+    const fish_t *f = &t->fish[i];
+    const float half = tank_lizard_half_len(t, f), ux = cosf(f->slope), uy = -(f->facing < 0 ? -1.0f : 1.0f) * sinf(f->slope);
+    const float u = clampf((px - x) * ux + (py - y) * uy, -half, half), qx = x + ux * u - px, qy = y + uy * u - py;
+    return qx * qx + qy * qy;
+}
+/* a lizard is asked again as its heat crosses a band (cold, cool, comfortable, warm, hot), a shed comes or goes, the light's phase
+   turns (P2b: the L1 line's heat, shed and phase) */
+static uint32_t walk_signature(const tank_t *t, int idx) {
+    const fish_t *f = &t->fish[idx];
+    const int hb = f->heat < 3 ? 0 : f->heat < 5 ? 1 : f->heat < 7 ? 2 : f->heat < HEAT_HOT ? 3 : 4;
+    const int sh = f->shed == SHED_SOON ? 1 : f->shed == SHED_SHEDDING || f->shed == SHED_STUCK ? 2 : 0;
+    return (uint32_t)hb << 16 | (uint32_t)sh << 19 | (uint32_t)tank_activity_phase(t) << 21;
+}
+/* (no hold_credit: a lizard earns the hold-approach badge by really walking under the hand's draw - update_lizard - and no goal
+   set: it walks the floor's lanes, no depths) */
+const loco_ops_t loco_walk = {
+    .name = "walk", .mode = CAP_WALK,
+    .update = update_lizard, .seat = walk_floor, .hand_point = walk_hand_point, .at_finger = walk_at_finger,
+    .tap_d2 = walk_tap_d2, .spook = lizard_spook, .signature = walk_signature,
+};

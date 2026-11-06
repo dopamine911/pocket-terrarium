@@ -1,11 +1,19 @@
-/* tank.c — reflex layer. See tank.h. Faithful port of the browser prototype's
+/* tank.c — reflex layer: the engine. See tank.h. Faithful port of the browser prototype's
  * updateFish/targetForGoal/wall handling, with prototype px values scaled by
- * ~0.55 for the 448-wide tank. */
+ * ~0.55 for the 448-wide tank.
+ *
+ * THE ENGINE NAMES NO WORLD (issue #4 phase 3). What depends on HOW an animal moves - the swim, the walk - it calls through
+ * the movement module of the animal's species (locomotion.h tank_loco); what depends on what the species eats - pellets,
+ * crickets - through its food module (mechanics.h tank_food); and what a world adds to the tank - the aquarium's snail, urchin,
+ * crab, seahorse and shrimp, the terrarium's shed and decorations - through the world modules (mechanics.h mech_at), at the
+ * fixed points below. Their code is common/worlds/<world>/; which of them a build has is common/locomotion/modules.c, the one
+ * place. What stays here is what every tank has, whatever lives in it: the events, the random stream, the glass, the roster
+ * and the genes, making and removing animals, the touch / feed / light / orientation machinery, the packs' places and heat,
+ * the upkeep (the grass beds, the film on the glass and the keeper's wipe and scissors) and the decor machinery (the pieces:
+ * tank_t holds their state for both worlds), the night's sleep and the tick. tank_priv.h is what these files share. */
 #include "tank.h"
 #include "tank_events.h"
 #include "tank_priv.h"
-#include "worlds/aquarium/aquarium_priv.h"      /* (phase 3, step 1: the modules split out of this file; step 2 calls them through their ops tables) */
-#include "worlds/terrarium/terrarium_priv.h"
 #include "pt_util.h"
 #include "packs/compat.h"                 /* packs_compatible: tank_set_packs */
 #include <math.h>
@@ -395,7 +403,7 @@ void tank_make_fish(tank_t *t, int slot, int preset, float sociable, float bold,
     f->door_sent = false; f->deported = false; f->bolt_home = false;   /* (2026-11-02: a slot a fish was GIVEN out of kept its door_sent - the next
                                                                          fish made there hovered at every open door and never asked to cross) */
     tank_lizard_fresh(t, f);
-    if (PT_TERRARIUM) walk_floor(t, f);               /* a lizard is made on the floor (the draws above as ever: a seeded run stays itself) */
+    tank_seat(t, slot, f);                            /* on its ground where it stands: a lizard is made on the floor (the draws above as ever: a seeded run stays itself) */
 }
 /* a lizard new to this tank (made here, or in from next door): comfortable in its species' band, a fresh shed clock
    for its stage (docs/shed.md) - never 0 C (a visitor is built from its passport, which carries neither) - and out of
@@ -427,7 +435,7 @@ void tank_set_bubble_x(tank_t *t, float x) {
 static void place_near_reef(tank_t *t, fish_t *f) {
     f->x = t->reef_x + tank_randf(t, -10, 30); f->y = t->reef_y - 30 + tank_randf(t, -10, 10);
     f->heading = tank_randf(t, -0.6f, 0.6f); tank_fish_face(f);
-    if (PT_TERRARIUM) walk_floor(t, f);               /* a hatchling: on the sand under that spot */
+    tank_seat(t, (int)(f - t->fish), f);              /* a hatchling: on the sand under that spot */
 }
 
 void tank_new_population(tank_t *t) {
@@ -537,7 +545,7 @@ int tank_add_bought_fry(tank_t *t, uint32_t body, uint32_t accent) {
     f->parent_a = f->parent_b = -1;
     f->x = TANK_W * 0.5f + tank_randf(t, -30, 30); f->y = tank_glass_top(f->x) + 30;
     f->heading = tank_randf(t, 1.2f, 1.9f); tank_fish_face(f);   /* heading down into the water */
-    if (PT_TERRARIUM) walk_floor(t, f);               /* a lizard from the shop: set down on the floor */
+    tank_seat(t, slot, f);                            /* a lizard from the shop: set down on the floor */
     f->hunger = 4; f->trust = 4;
     t->n_fish++;
     return slot;
@@ -660,39 +668,16 @@ void tank_init(tank_t *t, uint32_t seed) {
 }
 
 #define STARTLE_COOLDOWN 6.0f   /* calm seconds before the spook wears off */
-
 #define SPAWN_NEAR_PX   20.0f   /* past the courtship loop's reach: a parent this close is circling in the fronds */
-
 #define HOLD_RING_W       0.07f  /* rad/s the places drift (~4 px/s: a fish shifts its spot now and then, not a lap) */
 
-#define HOLD_GATHERED_PX  100.0f  /* a fish this close to a drawing finger has come to it (social warmth, 2026-10-29;
-                                   0.3.9.3: the ring's outer reach, 1.2 x (R + wobble) to the side; was 45 under the fingertip) */
-#define HOLD_APPROACH_FROM 140.0f /* a hold-approach must START at least this far out - past the ring:
-                                 * a fish already at the finger earns nothing (0.3.9.3: was 60 / 30, under the fingertip) */
-#define HOLD_APPROACH_AT   HOLD_GATHERED_PX   /* ... and come in this close: onto the ring */
-#define TRUST_PER_S        0.012f /* trust a fish earns a second under a resting finger (0.3.6: was 0.02;
-                                   * Strato: "a bit slower" so the seahorse's double is worth having) */
-#define SEAHORSE_TRUST_X   2.0f   /* ... times this while the seahorse hangs on the finger */
-
-bool tank_at_finger(const tank_t *t, int i) {   /* (hold_time, not hold_active: the tick consumes the
-                                                   flag, and the time drops to 0 the frame the finger lifts) */
-    if (PT_TERRARIUM) {
-        const fish_t *f = &t->fish[i];
-        if (!tank_swims(t, i) || !hand_draws(t, f) || f->hide >= 0) return false;
-        float x; const int surf = lizard_hand_target(t, i, &x, NULL);
-        return f->surf == surf && fabsf(f->x - x) <= LZ_ARRIVE_PX;
-    }
-    float hx, hy; tank_hand_point(t, &hx, &hy);
-    return t->hold_time >= HOLD_ATTRACT_S
-        && tank_dist(t->fish[i].x, t->fish[i].y, hx, hy) < HOLD_GATHERED_PX;
-}
-float tank_tap_d2(const tank_t *t, int i, float x, float y, float px, float py) {
-    if (!PT_TERRARIUM) return (px - x) * (px - x) + (py - y) * (py - y);   /* a fish: its middle, as ever */
-    const fish_t *f = &t->fish[i];                                      /* a lizard: the nearest point of its body's line */
-    const float half = tank_lizard_half_len(t, f), ux = cosf(f->slope), uy = -(f->facing < 0 ? -1.0f : 1.0f) * sinf(f->slope);
-    const float u = clampf((px - x) * ux + (py - y) * uy, -half, half), qx = x + ux * u - px, qy = y + uy * u - py;
-    return qx * qx + qy * qy;
-}
+/* THE HAND and the taps, whatever the movement: where the keeper's resting finger is for the tank's animals, whether animal i
+   has come to it (hold_time, not hold_active: the tick consumes the flag, and the time drops to 0 the frame the finger
+   lifts), and how far a tap is from its body - each is the movement module's (locomotion.h): a swimmer goes to the finger and
+   is a point, a walker's hand rests on the ground and it is a body's line */
+void tank_hand_point(const tank_t *t, float *x, float *y) { tank_loco(t, 0)->hand_point(t, x, y); }
+bool tank_at_finger(const tank_t *t, int i) { return tank_loco(t, i)->at_finger(t, i); }
+float tank_tap_d2(const tank_t *t, int i, float x, float y, float px, float py) { return tank_loco(t, i)->tap_d2(t, i, x, y, px, py); }
 
 /* ---- hunger economy (2026-09-01) ----
  * The prototype's per-second metabolism (0.15 + 0.12*bold: fed to starving
@@ -1179,12 +1164,23 @@ static void cluster_grow(tank_t *t, float seconds) {
 }
 void     tank_coral_set_rgb(tank_t *t, uint32_t rgb) { t->coral_rgb = rgb & 0xffffff; }
 
-int tank_deco_index(int item) { return PT_TERRARIUM && item >= TERR_DECO_ITEM0 && item < TERR_DECO_ITEM0 + TERR_DECO_N ? item - TERR_DECO_ITEM0 : -1; }
+/* THE DECORATIONS a world sells besides the pieces below (the terrarium's saguaro, skull, driftwood and pot): which of them an item
+   is, and where each may stand, is the world module's (mechanics.h mech_ops_t deco*) - the machinery here is the pieces' and theirs
+   alike. No module of this build has the item: it is none of them (index -1, and a piece the build never sells) */
+static const mech_ops_t *deco_owner(int item) {
+    for (int k = 0; k < mech_n(); k++) if (mech_at(k)->deco && mech_at(k)->deco(item)) return mech_at(k);
+    return NULL;
+}
+static const deco_info_t *deco_of(int item) { const mech_ops_t *m = deco_owner(item); return m ? m->deco(item) : NULL; }
+int tank_deco_index(int item) { const deco_info_t *d = deco_of(item); return d ? d->index : -1; }
+bool tank_deco_clear(const tank_t *t, int item, float x) { const mech_ops_t *m = deco_owner(item); return m ? m->deco_clear(t, item, x) : true; }
+float tank_deco_slide(const tank_t *t, int item, float x) { const mech_ops_t *m = deco_owner(item); return m ? m->deco_slide(t, item, x) : x; }
+float tank_deco_home(const tank_t *t, int item) { const mech_ops_t *m = deco_owner(item); return m ? m->deco_home(t, item) : 0; }
 
 /* the decor's spot and layer (see tank.h): item 0 is the plant, item 2 the castle, item 3 the coral, item 4 the cluster, item 8 the pumpkin, item 9 the volcano */
 bool  tank_decor_placeable(int item) { return item == 0 || item == 2 || item == 3 || item == 4 || item == 8 || item == 9 || tank_deco_index(item) >= 0; }
-float tank_decor_half_w(int item) { return item == 0 ? PLANT_HALF_W : item == 2 ? CASTLE_HALF_W : item == 3 ? CORAL_HALF_W : item == 4 ? CLUSTER_HALF_W : item == 8 ? PUMPKIN_HALF_W : item == 9 ? VOLCANO_HALF_W
-                                        : tank_deco_index(item) >= 0 ? DECO_HW[tank_deco_index(item)] : 0; }
+float tank_decor_half_w(int item) { const deco_info_t *d; return item == 0 ? PLANT_HALF_W : item == 2 ? CASTLE_HALF_W : item == 3 ? CORAL_HALF_W : item == 4 ? CLUSTER_HALF_W : item == 8 ? PUMPKIN_HALF_W : item == 9 ? VOLCANO_HALF_W
+                                        : (d = deco_of(item)) ? d->half_w : 0; }
 /* every piece BEHIND or IN FRONT - the plant too since 0.3.9.3 (Strato: "we can let the weaving go ... either grass is
    in front or behind"): its AMONG, the fronds woven with the fish, is gone; a saved AMONG loads BEHIND */
 /* ... except the sword plant since 0.4 (Strato 11-02, on the watch: BEHIND THE SEAGRASS never drew behind it - the plant
@@ -1198,9 +1194,9 @@ int   tank_decor_z_index(int item, int z) { return item != 0 && tank_deco_index(
    back the edits the decoration LOCK just quieted, "to support something no one has asked for"); the sword plant is a piece */
 int   tank_bed_z(const tank_t *t, int b) { return b == 3 && t->plant_z == DECOR_Z_FRONT ? DECOR_Z_FRONT : DECOR_Z_BACK; }
 float tank_decor_x(const tank_t *t, int item) {
-    { const int d = tank_deco_index(item);                     /* a decoration: its saved spot, or its own; either slid clear (a save
+    { const deco_info_t *d = deco_of(item);                    /* a decoration: its saved spot, or its own; either slid clear (a save
                                                                   from another glass keeps the rule too) */
-      if (d >= 0) return tank_deco_slide(t, item, t->deco_x[d] ? t->deco_x[d] * 2.0f : tank_floor_x(DECO_U[d])); }
+      if (d) return tank_deco_slide(t, item, t->deco_x[d->index] ? t->deco_x[d->index] * 2.0f : tank_floor_x(d->u)); }
     if (item == 2) return t->castle_x > 0 ? t->castle_x : CASTLE_X_DEFAULT;
     if (item == 3) return t->coral_x > 0 ? t->coral_x : CORAL_X_DEFAULT;
     if (item == 4) return t->cluster_x > 0 ? t->cluster_x : CLUSTER_X_DEFAULT;
@@ -1211,28 +1207,19 @@ float tank_decor_x(const tank_t *t, int item) {
 }
 int tank_decor_z(const tank_t *t, int item) { return item == 0 ? t->plant_z : item == 2 ? t->castle_z : item == 3 ? t->coral_z : item == 4 ? t->cluster_z : item == 8 ? t->pumpkin_z : item == 9 ? t->volcano_z
                                                      : tank_deco_index(item) >= 0 ? DECOR_Z_BACK : DECOR_Z_MIDDLE; }
-float tank_decor_fy(const tank_t *t, int item) { return tank_deco_index(item) >= 0 ? TERR_DECO_FY : (float)DECOR_FY(tank_decor_z(t, item)); }   /* the floor line it stands on: by its depth (0.3.9) */
-float tank_decor_height(int item) { return item == 2 ? 146 : item == 3 ? 92 : item == 4 ? 120 : item == 8 ? 82 : item == 9 ? 200
-                                           : tank_deco_index(item) >= 0 ? DECO_H[tank_deco_index(item)] : 0; }   /* its highest pixel over that line */
+float tank_decor_fy(const tank_t *t, int item) { const deco_info_t *d = deco_of(item); return d ? d->fy : (float)DECOR_FY(tank_decor_z(t, item)); }   /* the floor line it stands on: by its depth (0.3.9) */
+float tank_decor_height(int item) { const deco_info_t *d; return item == 2 ? 146 : item == 3 ? 92 : item == 4 ? 120 : item == 8 ? 82 : item == 9 ? 200
+                                           : (d = deco_of(item)) ? d->height : 0; }   /* its highest pixel over that line */
 static float decor_top(const tank_t *t, int item) {         /* the piece's highest pixel */
     if (item == 0) { float top; tank_veg_bed(t, 3, NULL, NULL, &top, NULL); return top; }
     return tank_decor_fy(t, item) - tank_decor_height(item);
 }
 int tank_decor_hit(const tank_t *t, float x, float y) {
-    static const int8_t DRAW[TERR_DECO_N] = TERR_DECO_DRAW;
-    for (int k = TERR_DECO_N - 1; PT_TERRARIUM && k >= 0; k--) {    /* a decoration (the last drawn first): its own box, above its feet - the
-                                                                       hand on the sand under it stays the hand, and so does a hold on a
-                                                                       lizard in front of it (the hand hold is the trust's, P2c) */
-        const int d = DRAW[k], item = TERR_DECO_ITEM0 + d;
-        if (!tank_decor_in(t, item) || tank_decor_locked(t, item)) continue;
-        const float cx = tank_decor_x(t, item), half = DECO_HW[d] + 6;
-        if (x >= cx - half && x <= cx + half && y >= TERR_DECO_FY - DECO_H[d] - 6 && y <= TERR_DECO_FY - 2) {
-            for (int i = 0; i < t->n_fish; i++)
-                if (tank_swims(t, i) && tank_tap_d2(t, i, t->fish[i].x, t->fish[i].y, x, y) < 16.0f * 16.0f) return -1;
-            return item;
-        }
+    for (int k = 0; k < mech_n(); k++) {                        /* a world with decorations owns the answer for the habitats it serves: its decoration under the finger, or none - the hand,
+                                                                   never an invisible piece of another world's from old bits / default spots */
+        const mech_ops_t *m = mech_at(k); int item;
+        if (m->deco_hit && mech_serves(m, t) && m->deco_hit(t, x, y, &item)) return item;
     }
-    if (PT_TERRARIUM) return -1;                                /* no desert hit: the hand, never an invisible aquarium piece from old bits/default spots */
     static const int order[6] = { 3, 0, 8, 2, 4, 9 };         /* the coral, the plant, the pumpkin, the castle, the cluster, the volcano */
     for (int k = 0; k < 6; k++) {
         int item = order[k];
@@ -1275,8 +1262,9 @@ static const uint32_t DECOR_SLOT_BIT[DECOR_SLOTS] = { SD_ITEM_CASTLE, SD_ITEM_CO
 int  tank_decor_slot(int item) { for (int s = 0; s < DECOR_SLOTS; s++) if (DECOR_SLOT_ITEM[s] == item) return s; return -1; }
 int  tank_decor_slot_item(int slot) { return slot >= 0 && slot < DECOR_SLOTS ? DECOR_SLOT_ITEM[slot] : -1; }
 static uint32_t decor_bit(int item) {                           /* a piece's sd_unlocks bit: its slot's, or a decoration's */
-    const int s = tank_decor_slot(item), d = tank_deco_index(item);
-    return s >= 0 ? DECOR_SLOT_BIT[s] : d >= 0 ? DECO_BIT[d] : 0;
+    const int s = tank_decor_slot(item);
+    const deco_info_t *d = deco_of(item);
+    return s >= 0 ? DECOR_SLOT_BIT[s] : d ? d->bit : 0;
 }
 bool tank_decor_owned(const tank_t *t, int item) { const uint32_t b = decor_bit(item); return b && (t->sd_unlocks & b); }
 bool tank_decor_in(const tank_t *t, int item)    { const uint32_t b = decor_bit(item); return b && (t->sd_unlocks & b) && !(t->sd_shelved & b); }
@@ -1442,40 +1430,12 @@ void tank_set_tool(tank_t *t, int tool) {
 void tank_lock_tools(tank_t *t, bool lock) { t->tools_locked = lock; }
 bool tank_stroking(const tank_t *t) { return t->drag_has_prev && t->drag_dist >= WIPE_ENGAGE_PX; }
 
+/* the keeper's feed gesture: what the hand drops and where is the species' food (mechanics.h food_ops_t feed) - pellets that sink
+   and rest, crickets that fall and hop - and a meal opens when somebody eats from it */
 void tank_feed(tank_t *t, float x, int n) {
     if (t->packs_missing) return;
     tank_handled(t);
-    if (PT_TERRARIUM) {                          /* THE CRICKETS (tank.h): n from the hand at x - or, over the dish, the dish filled */
-        float dx = 0, dy;
-        if (tank_dish_here(t)) tank_dish_point(t, &dx, &dy);
-        if (tank_dish_here(t) && fabsf(x - dx) <= DISH_FEED_PX) {
-            if (t->dish_worms < DISH_WORMS) { t->dish_worms = DISH_WORMS; t->dish_farm = false; tank_emit(TEV_FEED, -1); }   /* (the keeper's dish now: P5) */
-        } else {
-            int dropped = 0;
-            for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {   /* (the draws a pellet's were: its jitter, its height) */
-                const float cx = ck_drop_x(t, x + tank_randf(t, -14, 14));
-                ck_drop_at(t, i, cx, tank_glass_top(cx) + tank_randf(t, 6, 18), true);
-                dropped++;
-            }
-            if (dropped) tank_emit(TEV_FEED, -1);
-        }
-        t->feed_spot_x = t->feed_spot_x < 0 ? x : t->feed_spot_x + (x - t->feed_spot_x) * 0.3f;
-        t->feed_open = true;                     /* a meal once a lizard eats from it */
-        return;
-    }
-    x = clampf(x, TANK_FX0 + 25, TANK_FX1 - 25);
-    int dropped = 0;
-    for (int i = 0; i < MAX_FOOD && n > 0; i++) {
-        if (t->food[i].alive) continue;
-        t->food[i].alive = true; t->food[i].from_player = true;
-        t->food[i].x = clampf(x + tank_randf(t, -14, 14), TANK_FX0 + 20, TANK_FX1 - 20);
-        t->food[i].y = tank_glass_top(t->food[i].x) + tank_randf(t, 6, 18);
-        t->food[i].age = 0; t->food[i].floor_s = 0; t->food[i].nibbled = 0;
-        n--; dropped++;
-    }
-    if (dropped) tank_emit(TEV_FEED, -1);        /* the plink is for pellets, not for the tap (a full tank drops none) */
-    t->feed_spot_x = t->feed_spot_x < 0 ? x : t->feed_spot_x + (x - t->feed_spot_x) * 0.3f;
-    t->feed_open = true;                         /* a meal once somebody eats from it */
+    tank_food(t)->feed(t, x, n);
 }
 
 /* the triple tap: fish near it bolt (stress, a little trust lost) and the
@@ -1489,6 +1449,13 @@ static void spook_visitors(tank_t *t, float x, float y) {
             f->homeward = f->bolt_home = true; f->hesitate = 0;
         }
 }
+/* what a rap scatters besides the animals: the food about (crickets fly), the visitors (home), the world's creatures (shrimp) */
+static void scatter_about(tank_t *t, float x, float y) {
+    const food_ops_t *fo = tank_food(t);
+    if (fo->scare) fo->scare(t, x, y, STARTLE_RADIUS);
+    spook_visitors(t, x, y);
+    for (int k = 0; k < mech_n(); k++) if (mech_at(k)->scare) mech_at(k)->scare(t, x, y, STARTLE_RADIUS);
+}
 void tank_startle(tank_t *t, float x, float y) {
     tank_emit(TEV_SPOOK, -1);
     t->startled = true; t->startle_x = x; t->startle_y = y; t->startle_cooldown = STARTLE_COOLDOWN;
@@ -1499,12 +1466,11 @@ void tank_startle(tank_t *t, float x, float y) {
             f->stress = fminf(10, f->stress + 2.5f);
             f->trust = fmaxf(0, f->trust - 0.4f);
         }
-        if (PT_TERRARIUM && tank_dist(f->x, f->y, x, y) < STARTLE_RADIUS * 1.6f) lizard_spook(t, i);   /* THE RAP: a dash for cover */
+        const loco_ops_t *lo = tank_loco(t, i);
+        if (lo->spook && tank_dist(f->x, f->y, x, y) < STARTLE_RADIUS * 1.6f) lo->spook(t, i);   /* THE RAP: a dash for cover (the walk's) */
     }
-    if (PT_TERRARIUM) ck_scare(t, x, y, STARTLE_RADIUS);
-    spook_visitors(t, x, y);
-    shrimp_scatter(t, x, y, STARTLE_RADIUS);
-    tank_crab_scare(t, x);                       /* the crab feels the knock anywhere on the glass: it runs for cover (0.3.9) */
+    scatter_about(t, x, y);
+    for (int k = 0; k < mech_n(); k++) if (mech_at(k)->knock) mech_at(k)->knock(t, x);   /* the crab feels the knock anywhere on the glass: it runs for cover (0.3.9) */
 }
 
 void tank_touch_tap(tank_t *t, float x, float y) {
@@ -1519,11 +1485,10 @@ void tank_touch_tap(tank_t *t, float x, float y) {
         t->startle_x = x; t->startle_y = y; t->startle_cooldown = STARTLE_COOLDOWN;
         for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) {
             t->fish[i].stress = fminf(10, t->fish[i].stress + 0.6f);
-            if (PT_TERRARIUM && tank_dist(t->fish[i].x, t->fish[i].y, x, y) < STARTLE_RADIUS * 1.6f) lizard_spook(t, i);   /* (kept in its cover) */
+            const loco_ops_t *lo = tank_loco(t, i);
+            if (lo->spook && tank_dist(t->fish[i].x, t->fish[i].y, x, y) < STARTLE_RADIUS * 1.6f) lo->spook(t, i);   /* (kept in its cover) */
         }
-        if (PT_TERRARIUM) ck_scare(t, x, y, STARTLE_RADIUS);
-        spook_visitors(t, x, y);
-        shrimp_scatter(t, x, y, STARTLE_RADIUS);
+        scatter_about(t, x, y);
     } else if (t->tap_count >= 3) tank_startle(t, x, y);   /* aggressive: engage */
 }
 
@@ -1535,7 +1500,6 @@ void hold_approach(tank_t *t, int i) {
 /* per-frame bookkeeping for the touch state machine */
 static void touch_tick(tank_t *t, float dt) {
     t->tap_burst_t += dt;
-    t->shrimp_tap_t += dt;
     /* two taps then a pause: the light (MANUAL, the default; in settings'
        AUTO the idle rule owns it - 2026-09-15: the old always-on override
        rode in the save and froze a tank in permanent day) */
@@ -1564,6 +1528,8 @@ static void touch_tick(tank_t *t, float dt) {
             if ((t->hold_turn_s -= dt) <= 0) { t->hold_dir = (int8_t)-t->hold_dir; t->hold_turn_s = tank_randf(t, 12, 26); }   /* a while one way, then back */
         }
         float hx, hy; tank_hand_point(t, &hx, &hy);    /* (the finger; a terrarium's hand on the ground nearest it: THE HAND) */
+        float trust_x = 1.0f;                          /* a helper hitched to the finger (the seahorse) earns it faster: the world modules say how much */
+        for (int k = 0; k < mech_n(); k++) if (mech_at(k)->trust_x) trust_x *= mech_at(k)->trust_x(t);
         for (int i = 0; i < t->n_fish; i++) {
             fish_t *f = &t->fish[i];
             if (f->away) continue;
@@ -1572,10 +1538,10 @@ static void touch_tick(tank_t *t, float dt) {
                 /* 0.3.6: the base rate is slower than it was (0.02/s, 2026-09-04
                  * .. 0.3.5) and a hitched seahorse doubles it - "twice as fast"
                  * on its shop row. What it adds over the base is its tally. */
-                float rate = TRUST_PER_S * (t->sh_hitched ? SEAHORSE_TRUST_X : 1.0f);
+                float rate = TRUST_PER_S * trust_x;
                 float was_t = f->trust;
                 f->trust = fminf(10, f->trust + dt * rate);
-                if (t->sh_hitched) t->sh_trust_passed += fmaxf(0, (f->trust - was_t) - fminf(10 - was_t, dt * TRUST_PER_S));
+                for (int k = 0; k < mech_n(); k++) if (mech_at(k)->trust_credit) mech_at(k)->trust_credit(t, was_t, f->trust, dt);
             }
             /* a hold-approach = a fish that was out in the tank when the
              * settled hold began its draw and then came all the way in.
@@ -1585,11 +1551,10 @@ static void touch_tick(tank_t *t, float dt) {
              * hold and were never credited), and only for a fish that
              * actually travelled (same day: a fish already sitting under the
              * finger used to be credited at 1.5 s without moving). The
-             * tank's hold_approaches counter still counts the hold once. */
-            if (!PT_TERRARIUM) {
-                if (draw_begins) f->hold_far = d >= HOLD_APPROACH_FROM;
-                if (f->hold_far && d < HOLD_APPROACH_AT) hold_approach(t, i);
-            }   /* a lizard: its actual hand-directed walk and arrival below, not the aquarium ring's distances */
+             * tank's hold_approaches counter still counts the hold once.
+             * A lizard's is its actual hand-directed walk and arrival (its movement's update), not the aquarium ring's distances */
+            const loco_ops_t *lo = tank_loco(t, i);
+            if (lo->hold_credit) lo->hold_credit(t, i, d, draw_begins);
         }
     } else {
         t->hold_time = 0; t->hold_approached = false;
@@ -1706,23 +1671,20 @@ void tank_light_choice_set(tank_t *t, int choice) {
     t->light_manual_off = false;
 }
 
-void tank_scatter_food(tank_t *t, int n) {
-    if (PT_TERRARIUM) {                          /* AUTO CRICKETS (tank.h THE CRICKETS): the tank's own, at a random x (a pellet's draws) */
-        for (int i = ck_free(t); i >= 0 && n > 0; i = ck_free(t), n--) {
-            const float x = ck_drop_x(t, tank_randf(t, TANK_FX0 + 25, TANK_FX1 - 25));
-            ck_drop_at(t, i, x, tank_glass_top(x) + tank_randf(t, 6, 20), false);
-        }
-        return;
-    }
-    for (int i = 0; i < MAX_FOOD && n > 0; i++) {
-        if (t->food[i].alive) continue;
-        t->food[i].alive = true; t->food[i].from_player = false;
-        t->food[i].x = tank_randf(t, TANK_FX0 + 25, TANK_FX1 - 25);
-        t->food[i].y = tank_glass_top(t->food[i].x) + tank_randf(t, 6, 20);
-        t->food[i].age = 0; t->food[i].floor_s = 0; t->food[i].nibbled = 0;
-        n--;
-    }
-}
+/* THE FOOD of the tank, whatever it is (mechanics.h food_ops_t): the tank's own trickle, what an animal sees of it, how much of it
+   there is and the clean slate - each kind this build has answers for itself, and the tank asks the one its species eats */
+void tank_scatter_food(tank_t *t, int n) { tank_food(t)->scatter(t, n); }
+bool tank_food_sight(const tank_t *t, int idx, float *x, float *y, float *dist) { return tank_food(t)->sight(t, idx, x, y, dist); }
+int tank_food_count(const tank_t *t) { return tank_food(t)->count(t); }
+void tank_clear_food(tank_t *t) { for (int k = 0; k < food_n(); k++) food_at(k)->clear(t); }
+
+/* THE SHED and the mister (tank.h docs/shed.md): the world modules that have a shed answer; a tank with none sheds nothing (a fish
+   does not): no growth shed, no damp hide, no mist */
+void tank_shed_clock(tank_t *t, float dt) { for (int k = 0; k < mech_n(); k++) if (mech_at(k)->shed_clock) mech_at(k)->shed_clock(t, dt); }
+bool tank_shed_growth(tank_t *t, int i) { for (int k = 0; k < mech_n(); k++) if (mech_at(k)->shed_growth) return mech_at(k)->shed_growth(t, i); return false; }
+bool tank_in_damp_hide(const tank_t *t, int i) { for (int k = 0; k < mech_n(); k++) if (mech_at(k)->in_damp_hide) return mech_at(k)->in_damp_hide(t, i); return false; }
+void tank_mist_pass(tank_t *t, int k) { for (int m = 0; m < mech_n(); m++) if (mech_at(m)->mist_pass) mech_at(m)->mist_pass(t, k); }
+bool tank_mist_soak(tank_t *t, int i) { for (int k = 0; k < mech_n(); k++) if (mech_at(k)->mist_soak) return mech_at(k)->mist_soak(t, i); return false; }
 
 /* ---- the packs' world (pocket-terrarium P2a: tank.h "the packs' world") ---- */
 const species_t *tank_species(const tank_t *t) {
@@ -1844,21 +1806,10 @@ void tank_tick_sleep(tank_t *t, float seconds) {
     }
     t->light_s += seconds;                              /* (the phase: the light as it was, for that much longer) */
     t->idle_s = 0;                                      /* the wake press is handling: lights up */
-    for (int i = 0; i < MAX_FOOD; i++)                  /* overnight pellets go stale */
-        if (t->food[i].alive && (t->food[i].age += seconds) > 45) t->food[i].alive = false;
-    for (int i = 0; i < MAX_CRICKETS; i++) {            /* ... and the crickets live out their time (a night: gone); the dish's worms stay */
-        cricket_t *c = &t->cricket[i];
-        if (c->state != CK_NONE && (c->age += seconds) > CK_LIFE_S) { c->state = CK_NONE; t->ck_lost++; }
-    }
+    tank_food(t)->sleep(t, seconds);                    /* overnight pellets go stale ... and the crickets live out their time (a night: gone); the dish's worms stay */
     coral_grow(t, seconds);
     cluster_grow(t, seconds);
-    shrimp_sleep(t, seconds);
-    if (t->sd_unlocks & SD_ITEM_SEAHORSE) { t->sh_s += seconds; t->sh_snack_cool = fmaxf(0, t->sh_snack_cool - seconds); }   /* days with the keeper run through the night */
-    if (t->sd_unlocks & SD_ITEM_CRAB) t->cr_full = fmaxf(0, t->cr_full - seconds);   /* hungry again by the morning */
-    if (t->sd_unlocks & SD_ITEM_CRAB) {                 /* the crab's next find: its wait runs asleep too; one held up when the tank slept is due again at the wake */
-        if (t->cr_find > 0) { t->cr_find = 0; t->cr_find_cool = 0; }
-        else t->cr_find_cool = fmaxf(0, t->cr_find_cool - seconds);
-    }
+    for (int k = 0; k < mech_n(); k++) if (mech_at(k)->sleep) mech_at(k)->sleep(t, seconds);   /* the world's creatures' night: the shrimp, the seahorse's days with the keeper, the crab's finds */
     /* the garden grows fastest in a dark, untended tank: waking to a taller
      * canopy and film on the glass is the morning chore. The night is lived
      * a SLEEP_SLICE_S at a time - the grass and the film grow, then the
@@ -1878,8 +1829,7 @@ void tank_tick_sleep(tank_t *t, float seconds) {
         int steps = (int)(t->algae_acc / ALGAE_STEP_SLEEP_S);
         t->algae_acc -= steps * ALGAE_STEP_SLEEP_S;
         tank_grow_algae(t, steps);
-        snail_sleep(t, dt);
-        urchin_sleep(t, dt);
+        for (int k = 0; k < mech_n(); k++) if (mech_at(k)->sleep_slice) mech_at(k)->sleep_slice(t, dt);   /* the snail and the urchin eat into what grew */
     }
 }
 
@@ -1915,12 +1865,8 @@ static uint32_t state_signature(const tank_t *t, int idx) {
                  | (uint32_t)food << 6
                  | (uint32_t)t->night << 10 | (uint32_t)band3(f->curiosity) << 11
                  | (uint32_t)band3(f->bored) << 13;      /* a fish going stale is asked again (2026-09-14) */
-    if (PT_TERRARIUM) {   /* a lizard is asked again as its heat crosses a band (cold, cool, comfortable, warm, hot), a shed
-                             comes or goes, the light's phase turns (P2b: the L1 line's heat, shed and phase) */
-        const int hb = f->heat < 3 ? 0 : f->heat < 5 ? 1 : f->heat < 7 ? 2 : f->heat < HEAT_HOT ? 3 : 4;
-        const int sh = f->shed == SHED_SOON ? 1 : f->shed == SHED_SHEDDING || f->shed == SHED_STUCK ? 2 : 0;
-        sig |= (uint32_t)hb << 16 | (uint32_t)sh << 19 | (uint32_t)tank_activity_phase(t) << 21;
-    }
+    const loco_ops_t *lo = tank_loco(t, idx);   /* what its movement adds: a lizard is asked again as its heat crosses a band, a shed comes or goes, the light's phase turns */
+    if (lo->signature) sig |= lo->signature(t, idx);
     return sig;
 }
 
@@ -1942,20 +1888,8 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
 
     touch_tick(t, dt);
 
-    /* food sinks, settles, decays */
-    int live_food = 0;
-    for (int i = 0; i < MAX_FOOD; i++) {
-        food_t *p = &t->food[i];
-        if (!p->alive) continue;
-        live_food++;
-        p->age += dt;
-        if (p->y < FOOD_FLOOR_Y) {
-            p->y += FOOD_SINK_PX_S * dt;
-            p->x += sinf(p->age * 1.5f) * dt * 2;
-        } else p->floor_s += dt;                        /* resting on the floor (FOOD_FLOOR_S) */
-        if (p->floor_s > 0 ? p->floor_s > FOOD_FLOOR_S : p->age > FOOD_LIFE_S) p->alive = false;
-    }
-    if (PT_TERRARIUM) live_food += ck_tick(t, dt);           /* THE CRICKETS: they fall, sit, hop, fly, hide (tank.h) */
+    /* food sinks, settles, decays (the pellets); falls, sits, hops, flies, hides (THE CRICKETS, tank.h) - the species' food module */
+    int live_food = tank_food(t)->tick(t, dt);
     /* the tank's own trickle keeps fish alive when nobody is home (never
      * ruined by absence); the keeper's pellets are what progression counts.
      * Hunger-gated (see the hunger economy notes above): a pellet only when
@@ -1970,8 +1904,9 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
     for (int i = 0; i < N_FISH_SLOTS; i++)
         if (tank_swims(t, i) && t->fish[i].hunger > hungriest) hungriest = t->fish[i].hunger;
     bool hold = (t->ravenous && !t->ravenous_fed) || t->trickle_off || t->autofeed_off;   /* (AUTO FEED off: the keeper's alone, 0.3.2) */
-    if (PT_TERRARIUM && tank_activity_phase(t) != PHASE_ACTIVE) hold = true;   /* (P2b: nobody feeds lizards after lights-out - settle or sleep;
-                                                                                 P2c: AUTO CRICKETS, in the active phase only. The aquarium's as ever) */
+    const food_ops_t *fo = tank_food(t);
+    if (fo->trickle_hold && fo->trickle_hold(t)) hold = true;   /* (P2b: nobody feeds lizards after lights-out - settle or sleep;
+                                                                   P2c: AUTO CRICKETS, in the active phase only. The aquarium's as ever) */
     if (!hold && live_food < 2 && hungriest >= TRICKLE_HUNGER &&
         tank_randf(t, 0, 1) < TRICKLE_RATE * dt)
         tank_scatter_food(t, 1);
@@ -1987,16 +1922,7 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
         t->algae_acc = 0;                                   /* one step per 4 min, never a backlog */
         tank_grow_algae(t, 1);
     }
-    snail_tick(t, dt);
-    urchin_tick(t, dt);
-    crab_tick(t, dt);
-    seahorse_tick(t, dt);
-    shrimp_tick(t, dt);
-    {   /* SWIM DEPTH phase 3c: the floor critters take up their depth against the grass clear of every bed (as the lanes: never a pop) */
-        if (t->snail_gdepth != t->snail_gdepth_want && box_clear_beds(t, t->snail_x - 22, t->snail_x + 22, TANK_H)) t->snail_gdepth = t->snail_gdepth_want;
-        if (t->urchin_gdepth != t->urchin_gdepth_want && box_clear_beds(t, t->urchin_x - 20, t->urchin_x + 20, TANK_H)) t->urchin_gdepth = t->urchin_gdepth_want;
-        if (t->cr_gdepth != t->cr_gdepth_want && box_clear_beds(t, t->cr_x - 26, t->cr_x + 26, TANK_H)) t->cr_gdepth = t->cr_gdepth_want;
-    }
+    for (int k = 0; k < mech_n(); k++) if (mech_at(k)->tick) mech_at(k)->tick(t, dt);   /* the world's creatures: the aquarium's snail, urchin, crab, seahorse and shrimp, each its frame */
 
     /* bubbles rise */
     for (int i = 0; i < MAX_BUBBLE; i++) {
@@ -2046,10 +1972,8 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
                 if (f->door == DOOR_HEADING || f->door == DOOR_ASKED) f->door = DOOR_NONE;   /* the model changed its mind: no visit (one already passing goes on) */
                 f->goal = g;
                 f->goal_age = 0;
-                if (!PT_TERRARIUM) {                           /* SWIM DEPTH: how it goes about it (a lizard walks the floor's lanes) */
-                    f->gdepth_want = depth_pick(t, f, g.id);
-                    f->pdepth_want = pdepth_pick(t, f, g.id);
-                }
+                { const loco_ops_t *lo = tank_loco(t, i);
+                  if (lo->goal_set) lo->goal_set(t, f, g.id); }   /* how it goes about it: a swimmer's depths (a lizard walks the floor's lanes) */
                 /* visible deliberation, scaled by how torn the advisor was */
                 bool calm = g.id != GOAL_FLEE_SHADOW && g.urgency < 8 && g.confidence < 0.6f;
                 f->hesitate = calm ? (0.6f - g.confidence) * 2.5f : 0;
@@ -2077,8 +2001,8 @@ void tank_tick(tank_t *t, float dt, advisor_fn advise) {
         if (f->goal.id == GOAL_W_FOOD || f->hunger < 8.0f) f->starve_flagged = false;
     }
 
-    /* the bodies: the aquarium's fish swim, the terrarium's lizards walk (world.h; both kept, each world uses its own) */
-    for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) { if (PT_TERRARIUM) update_lizard(t, i, dt); else update_fish(t, i, dt); }
+    /* the bodies: each animal moves the way its species does (locomotion.h: the aquarium's fish swim, the terrarium's lizards walk) */
+    for (int i = 0; i < N_FISH_SLOTS; i++) if (tank_swims(t, i)) tank_loco(t, i)->update(t, i, dt);
     for (int k = 0; k < N_VISIT_MAX; k++) if (t->vis_used[k]) t->vis_age[k] += dt;   /* a visitor grows here as it would at home */
 
     /* consume the hold AFTER the fish have seen it (the platform re-asserts
