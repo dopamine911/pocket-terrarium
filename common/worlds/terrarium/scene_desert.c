@@ -1,4 +1,4 @@
-/* render_scene_desert.c - the desert terrarium's static scene (pocket-terrarium P3a, P2c): render_scene_desert.h.
+/* scene_desert.c - the desert terrarium's static scene (pocket-terrarium P3a, P2c; common/worlds/terrarium since issue #4 phase 3): scene_desert.h.
  *
  * Painted row by row into the frame (the scene cache's bake: once per light switch or moisture step). What varies
  * along a column (the strata's sway, the sand's back edge, the wall's streaks) and along a row (the glass, the

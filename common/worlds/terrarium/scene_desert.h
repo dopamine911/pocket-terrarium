@@ -1,4 +1,4 @@
-/* render_scene_desert.h - the desert terrarium's static scene (pocket-terrarium P3a, P2c), for the scene cache.
+/* scene_desert.h - the desert terrarium's static scene (pocket-terrarium P3a, P2c; common/worlds/terrarium since issue #4 phase 3), for the scene cache.
  *
  * The back wall (layered sandstone), the sand, the warm end's warmth and the cool end's cool, the habitat's GROUND
  * (terrain.h: its rocks - sandstone terraces standing on the sand, or shelves on the back wall - and the flagstone ramps
@@ -7,7 +7,7 @@
  * door, the cool cave) - all where the engine has them on whichever glass (terrain_lay on a glass given at run time, so
  * one build draws all four glasses for the sheets; glass_here is this build's).
  *
- * render_tank (render.c THE TERRARIUM, P3b) bakes it into the scene cache - one per light, lit and dark, so the light's
+ * render_tank (scene.c, P3b) bakes it into the scene cache - one per light, lit and dark, so the light's
  * switch is a swap - in slices over frames (scene_desert_begin + scene_desert_rows), and a humid hide's moisture step
  * repaints only its box (scene_desert_moist_box). It paints the whole frame (black outside the glass) with the night's dim
  * and an optional vignette LUT (render.c's g_vig), ordered-dithered to RGB565 in the frame's byte order like render.c
@@ -26,7 +26,7 @@
 #include "habitat.h"
 #include "terrain.h"
 
-/* THE LIGHT on a thing in the scene (render_lizard's palette through lz_canvas_t's glow and moon; the scene's own pixels
+/* THE LIGHT on a thing in the scene (lizard.h's palette through lz_canvas_t's glow and moon; the scene's own pixels
  * the same): lit, the lamp's pool's gain g at it (scene_desert_lamp_at) warms it r x (1 + g), g x (1 + 0.8 g),
  * b x (1 + 0.42 g) - and where that passes white, the three scaled down together (scene_glow_fit: the hue kept, so a
  * yellow gecko or a tan rock in the pool stays warm, never bleached to lemon, and a shadow over it darkens to brown); dark,
@@ -105,7 +105,7 @@ void  scene_desert_peek_at(const scene_desert_t *d, int k, float half_len, float
 enum { SCENE_HIDE_NONE, SCENE_HIDE_FRONT, SCENE_HIDE_DOOR };
 int   scene_desert_hide_part(const scene_desert_t *d, int k, float x, float y);
 void  scene_desert_hide_box(const scene_desert_t *d, int k, int *x0, int *y0, int *x1, int *y1);
-/* hide k's front stands IN FRONT of a lizard at its door at (x, y) (render.c's cover, as it goes in, comes out or looks
+/* hide k's front stands IN FRONT of a lizard at its door at (x, y) (scene.c's cover, as it goes in, comes out or looks
    out): a pixel of the front on the closed side of the door's edge at that row - the door's outline there (the cave's
    arch, the box's round hole), its widest on a row the outline does not reach; the front on the open side and the door's
    dark stand behind it */

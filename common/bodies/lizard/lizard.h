@@ -1,4 +1,4 @@
-/* render_lizard.h - the lizard body plan's renderer (pocket-terrarium P3a): draw_lizard.
+/* lizard.h - the lizard body plan's renderer (pocket-terrarium P3a; common/bodies/lizard since issue #4 phase 3): draw_lizard.
  *
  * One renderer for every PLAN_LIZARD pack (species.h): the pack's lizard_geom_t sets the body (its length, the
  * head's width, the limbs, the eye, how much the tail shows the fat reserve), its morph the colours and its
@@ -8,12 +8,12 @@
  * draw-only fields (fish_t lz_*, tank.c THE LOOK). Seen from the side, a little from above: the feet on the near side
  * stand a little lower than the far ones.
  *
- * render_tank draws every lizard with it in the terrarium (render.c THE TERRARIUM, P3b), over the desert scene
- * (render_scene_desert.h). `fishsim --lizard-sheet <prefix>` (sim/sheet_lizard.c) draws every morph, stage, pose, the
+ * render_tank draws every lizard with it in the terrarium (worlds/terrarium/scene.c, P3b), over the desert scene
+ * (worlds/terrarium/scene_desert.h). `fishsim --lizard-sheet <prefix>` (sim/sheet_lizard.c) draws every morph, stage, pose, the
  * walk, the sheds and the scene on all four glasses, and measures the cost.
  *
  * Cost: the body (head, trunk, tail) is a grid of tones built only for a pose not drawn lately and blitted
- * every frame (render.c's crab, cr_build); the legs, the eyes, the tongue and the mouth are drawn live over it.
+ * every frame (worlds/aquarium/scene.c's crab, cr_build); the legs, the eyes, the tongue and the mouth are drawn live over it.
  * So a walking lizard is one cached body however long it walks; a turn builds a body per step of its yaw, a ramp one
  * per step of its pitch. */
 #ifndef RENDER_LIZARD_H
@@ -25,7 +25,7 @@
 
 /* where it draws: a frame (or the scene cache) in the frame's byte order (render.h FB_SWAP16), the window of the
  * frame it covers (render.c ctx_t's ox, oy, w, h: everything outside is clipped) and the night's dim (render_tank:
- * 0.45 dark, 1 lit). The light it stands in, as the scene's (render_scene_desert.h scene_light_rgb): glow, the lamp's
+ * 0.45 dark, 1 lit). The light it stands in, as the scene's (worlds/terrarium/scene_desert.h scene_light_rgb): glow, the lamp's
  * pool's gain at it (0 none), moon, the lamp out (moonlit). mark, when set, is called for every run of pixels written
  * (frame coordinates, x0..x1 inclusive) - render.c's dirty / touched masks and the drawn box; NULL = nothing marked.
  * cover, when set, is what stands IN FRONT of it (a hide's front, as it goes in, comes out or looks out): one bit a pixel,
@@ -101,7 +101,7 @@ void draw_lizard(const lz_canvas_t *cv, const lizard_look_t *look, const lizard_
 bool lizard_last_box(int *x0, int *y0, int *x1, int *y1);
 /* how far a lizard standing side-on at scale reaches from its middle (draw_lizard's x): back to its tail's tip, ahead to
  * its snout's with the tongue all the way out - every pixel it draws, in x, lies in x - back .. x + ahead (the pages fit
- * a portrait by it: render.c lizard_still) */
+ * a portrait by it: bodies/lizard/body.c lizard_still) */
 void lizard_reach(const lizard_geom_t *g, float scale, float *back, float *ahead);
 
 /* MEMORY: the cached bodies and the build's scratch live in one block the platform hands over (the firmware: PSRAM,
@@ -111,7 +111,7 @@ void   lizard_set_scratch(void *buf);
 /* THE FRAME'S BUILDS: a new body (a pose, a step of a turn) costs a build, ~6x a cached draw. Called once a frame,
  * at most `builds` of them are made that frame; a lizard over the budget is drawn with its last body a frame more
  * (its legs, eyes and tongue live as ever). Negative (the default): no limit. Returns what was left of the budget it
- * replaces (render.c keeps a tank tick's remainder: the same tick drawn twice builds no more and falls back alike) */
+ * replaces (worlds/terrarium/scene.c keeps a tank tick's remainder: the same tick drawn twice builds no more and falls back alike) */
 int    lizard_frame(int builds);
 /* (tests, the bench) off: a build every draw; how many builds so far; how many bodies were cut to the grid's size
  * (0 at every size the packs use: the sheet checks) */

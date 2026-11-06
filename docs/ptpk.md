@@ -117,7 +117,7 @@ progression clock), pixels at the 1.8's scale. Per-stage arrays are hatchling, j
 | 0x0108 | `DIET` | yes | `u8` bits: 1 cricket, 2 mealworm, 4 greens, 8 pellet | `diet` (any other bit: refused) |
 | 0x0109 | `BODY` | yes | `u8 plan` (0 lizard, 1 fish), `f32 length_px, head_w, limb_len, tail_fat, eye_r`, `u8 eyelids` | `plan`, `geom` (a fish pack's geometry is 0) |
 | 0x010a | `MORPHS` | no | `u8 n` (1..6), `n x (str name, u32 body, u32 accent)`; colours 0xRRGGBB | `morphs[]`, `n_morphs` (inline, no pointers) |
-| 0x010b | `PATTERNS` | no | `u8 n` = 4, `4 x str` | `pattern[s]` for each stage: the pattern's name (`BANDED`, `SPOTTED` ... render_lizard.c reads the name) |
+| 0x010b | `PATTERNS` | no | `u8 n` = 4, `4 x str` | `pattern[s]` for each stage: the pattern's name (`BANDED`, `SPOTTED` ... common/bodies/lizard/lizard.c reads the name) |
 | 0x010c | `GOALS` | yes | `u8 n` (1..8), `n x str` goal name: 1..15 bytes of `[a-z][a-z0-9_]*`, none twice | `goal[]`, `n_goals`: the **names** of the goals its reflex performs. Resolved by `species_check` against the manifests, not at read time |
 | 0x0110 | `LOCOMOTION` | yes | `u8 n` (1..3), `n x (u8 mode, u8 area, f32 px_s[4], f32 bout_s[2], f32 pause_s[2], f32 turn_s)`: 1 + 38 n bytes | `loco[]`, `n_loco`; the WALK entry's numbers fill `walk_px_s`, `bout_s`, `pause_s`, `turn_s` |
 | 0x0111 | `MEDIA_NEEDS` | yes | `u32 needs`, `u32 wants` (8 bytes) | `media_needs`, `media_wants` |

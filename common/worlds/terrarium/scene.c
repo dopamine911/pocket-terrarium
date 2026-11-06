@@ -15,8 +15,8 @@
 #include <stdlib.h>
 
 /* ==== THE TERRARIUM (pocket-terrarium P3b): render_tank in the terrarium's bin ====
- * The scene is the desert (render_scene_desert.h) on the habitat's ground (terrain.h), baked into the scene cache; over
- * it each frame the mealworm dish, the crickets and the lizards (draw_lizard, render_lizard.h, from the engine's state),
+ * The scene is the desert (scene_desert.h) on the habitat's ground (terrain.h), baked into the scene cache; over
+ * it each frame the mealworm dish, the crickets and the lizards (draw_lizard, bodies/lizard/lizard.h, from the engine's state),
  * back to front by where their feet stand on the glass - lower is nearer - then the mister's spray, the vignette
  * re-applied on what was drawn, the film on the glass and the snail on it. The cards, the pages, the tool chip are the
  * platform's, drawn after render_tank as in the aquarium.
@@ -274,7 +274,7 @@ static bool ts_lizard(ctx_t *c, const tank_t *t, int i, const habitat_t *h, bool
     box->x0 = (short)x0; box->y0 = (short)y0; box->x1 = (short)x1; box->y1 = (short)y1;
     return true;
 }
-/* the light a thing stands in, as the scene's (render_scene_desert.h scene_light_rgb): the lamp's pool at its feet x
+/* the light a thing stands in, as the scene's (scene_desert.h scene_light_rgb): the lamp's pool at its feet x
    TS_GLOW_K by day, the moon at night */
 static inline uint32_t ts_lit(uint32_t rgb, float glow, bool moon) { return glow > 0 || moon ? scene_light_rgb(rgb, glow, moon) : rgb; }
 static float ts_glow_at(const habitat_t *h, bool lit, float x, float y) { return lit ? TS_GLOW_K * scene_desert_lamp_at(&g_ts_d, h, x, y) : 0; }
@@ -441,7 +441,7 @@ void terrarium_render(const tank_t *t, uint16_t *fb, int stride) {
         while (b > 0 && at[b - 1] > y) { who[b] = who[b - 1]; at[b] = at[b - 1]; b--; }
         who[b] = w; at[b] = y;
     }
-    lizard_frame(tick ? 1 : g_ts_left);                                /* a body built a tank tick at most (render_lizard.h); the same tick drawn
+    lizard_frame(tick ? 1 : g_ts_left);                                /* a body built a tank tick at most (bodies/lizard/lizard.h); the same tick drawn
                                                                           again builds no more, so its lizards fall back alike */
     for (int q = 0; q < n && nr < TS_RECTS; q++) {
         if (who[q] & 0x400) { ts_deco(&c, t, who[q] & 0xff, h, lit, &rects[nr]); nr++; PROF_ADD(3, p0); }

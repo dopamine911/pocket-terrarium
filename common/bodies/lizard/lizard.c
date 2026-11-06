@@ -1,4 +1,4 @@
-/* render_lizard.c - the lizard body plan (pocket-terrarium P3a): draw_lizard and the pose cache behind it.
+/* lizard.c - the lizard body plan (pocket-terrarium P3a; common/bodies/lizard since issue #4 phase 3): draw_lizard and the pose cache behind it.
  *
  * THE BODY is a SPINE CHAIN: LZ_N nodes from the snout to the tail tip, each with a half height and a half width,
  * measured in fractions of the pack's length (geom.length_px x the scale): a broad head (geom.head_w), a short
@@ -9,7 +9,7 @@
  * first and the tail a beat behind: the turn on the spot swings it through head-on. Seen from the side and a
  * little from above, a point's screen y is its height up plus LZ_TILT of its depth toward the glass.
  *
- * Drawn the crab's way (render.c cr_build): every cell of the body's grid is COMPUTED from the chain at its centre
+ * Drawn the crab's way (worlds/aquarium/scene.c cr_build): every cell of the body's grid is COMPUTED from the chain at its centre
  * (no smoothing: crisp pixel art) - the nearest segment's place along the body and round it pick the tone: the
  * light from above in three steps, the belly, the markings (a hatchling's bands, an adult's spots, both laid on
  * the body's own surface so they bend with it), the lips' line, the nostril, the ear, the shed's loose skin and
