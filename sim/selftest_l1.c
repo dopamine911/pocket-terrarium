@@ -15,6 +15,8 @@
 #include "tank.h"
 #include "advisor_core.h"
 
+#if PT_TERRARIUM   /* terrarium only: the L1 encoder is the lizard advisor's (schema L1) and its live step stages a lizard (tank_lizard_enter); in that world's bin alone */
+
 #define L1F(...) do { printf("FAIL: selftest-l1-encode: "); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 
 /* ---- the JSON reader: one value (a fixture line) into a node pool ---- */
@@ -333,3 +335,5 @@ int selftest_l1_encode(void) {
     printf("selftest-l1-encode: live line: %s\n", line);
     return 0;
 }
+
+#endif   /* PT_TERRARIUM */

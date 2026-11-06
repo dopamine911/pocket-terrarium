@@ -33,6 +33,7 @@
 static const char *s_name = "";
 #define PF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 
+#if PT_TERRARIUM   /* terrarium only: the state and helpers of the heat, shed and mister tests below (parked lizards, tank_lizard_enter) */
 static tank_t s_t, s_u;                      /* (tank_t is big: never on the stack) */
 static bool  s_parked[N_FISH_MAX];
 static float s_px[N_FISH_MAX], s_py[N_FISH_MAX];
@@ -81,6 +82,9 @@ static int hide_of_kind(const tank_t *t, hide_kind_t kind) {
     return -1;
 }
 static const char *SHED_WORD[SHED_STATES] = { "normal", "soon", "shedding", "stuck", "clean" };
+#else
+static tank_t s_t;                           /* (the aquarium's bin runs only the packs test: no s_u, no parked lizards) */
+#endif
 
 /* ================================================================ --selftest-packs */
 int selftest_packs(void) {
@@ -276,6 +280,7 @@ int selftest_packs(void) {
     return 0;
 }
 
+#if PT_TERRARIUM   /* terrarium only: --selftest-heat / -shed / -mister park lizards in their hides (tank_lizard_enter), compiled into that world's bin alone */
 /* ================================================================ --selftest-heat */
 int selftest_heat(void) {
     s_name = "selftest-heat";
@@ -692,3 +697,5 @@ int selftest_mister(void) {
     printf("selftest-mister OK\n");
     return 0;
 }
+
+#endif   /* PT_TERRARIUM: the heat, shed and mister tests */

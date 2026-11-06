@@ -1295,14 +1295,22 @@ static int t_unmet(void) {
     }
     /* paused: no time passes, nothing is asked, nothing grows, the hand does nothing, a night is not lived */
     looks(was);
+#if PT_TERRARIUM   /* the crickets are the terrarium module's (tank_crickets_about): counted only where it is compiled */
     const double clock0 = s_t.clock; const int food0 = tank_food_count(&s_t), crickets0 = tank_crickets_about(&s_t), fed0 = s_t.player_feedings;
+#else
+    const double clock0 = s_t.clock; const int food0 = tank_food_count(&s_t), fed0 = s_t.player_feedings;
+#endif
     for (int n = 0; n < 4000; n++) { tank_tick(&s_t, 1.0f / 30, NULL); progression_tick(&s_t, 1.0f / 30); }
     tank_touch_tap(&s_t, TANK_W / 2, 10); tank_feed(&s_t, TANK_W / 2, 3); tank_touch_hold(&s_t, 100, 100); tank_touch_drag(&s_t, 120, 120);
     tank_tick(&s_t, 1.0f / 30, NULL);
     tank_tick_sleep(&s_t, 7200); progression_slept(&s_t, 7200);
     looks(now);
     if (memcmp(was, now, sizeof(look_t) * (size_t)s_t.n_fish) != 0) PF("a paused tank's animals moved, aged or changed");
+#if PT_TERRARIUM
     if (s_t.clock != clock0 || tank_food_count(&s_t) != food0 || tank_crickets_about(&s_t) != crickets0 || s_t.player_feedings != fed0) PF("a paused tank's clock or food moved (clock %.2f -> %.2f)", clock0, s_t.clock);
+#else
+    if (s_t.clock != clock0 || tank_food_count(&s_t) != food0 || s_t.player_feedings != fed0) PF("a paused tank's clock or food moved (clock %.2f -> %.2f)", clock0, s_t.clock);
+#endif
     if (!s_t.packs_missing || strcmp(progression_packs_need(&s_t), "SWIM") != 0) PF("the tank stopped waiting for SWIM, or its need changed to \"%s\" over 133 s", progression_packs_need(&s_t));
     /* it says so: PACK NEEDS SWIM, up until a tap, and again after a while */
     notice_sync(&s_t);

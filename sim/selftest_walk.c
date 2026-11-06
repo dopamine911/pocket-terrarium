@@ -59,6 +59,8 @@
 #include "sim_tmp.h"
 #include "notice.h"
 
+#if PT_TERRARIUM   /* terrarium only: this whole file is the terrarium's tests (tank_lizard_*, tank_cricket_*, tank_dish_*), compiled into that world's bin alone */
+
 static const char *s_name = "";
 #define WF(...) do { printf("FAIL: %s: ", s_name); printf(__VA_ARGS__); printf("\n"); return 1; } while (0)
 static tank_t s_t;                           /* (tank_t is big: never on the stack) */
@@ -1803,3 +1805,5 @@ int census_llm(const char *model_path, const char *tok_path, int pack, int habit
     memset(&s_llm, 0, sizeof s_llm); s_llm.fish = -1;
     return terrarium_census(advisor_llm_paced, (uint8_t)habitat, (uint8_t)pack, true);
 }
+
+#endif   /* PT_TERRARIUM */
