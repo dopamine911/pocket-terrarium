@@ -11,6 +11,7 @@ resulting system fits together, including the diagrams, see the
 |---|---|---|
 | Shared upstream base | [mediacutlet/pocket-tank v0.4.0](https://github.com/mediacutlet/pocket-tank/commit/bb49048b8f393cc63e060657076bba747973b4e2), `bb49048b8f393cc63e060657076bba747973b4e2` | Released 2026-11-03; common ancestry, not a fork-original contribution |
 | Fork snapshot described here | [dopamine911/pocket-terrarium](https://github.com/dopamine911/pocket-terrarium/commit/fe3ec7665e2bf02199d31ba26165429b4616d779), `fe3ec7665e2bf02199d31ba26165429b4616d779` | `main` after PR #12, 2026-11-06; the endpoint of the inventory below |
+| After the snapshot | [PR #16](https://github.com/dopamine911/pocket-terrarium/pull/16), `50bf878` | The card library (issue #4 phase 4). Not in the inventory or its counts below; [what changed](#after-the-snapshot-the-card-library-pr-16) |
 | Later upstream comparison | [pocket-tank v0.4.1](https://github.com/mediacutlet/pocket-tank/commit/952ef4d4eadeaa1ef455292e1516376cd8365eb9), `952ef4d4eadeaa1ef455292e1516376cd8365eb9` | A separate release commit on top of the shared base, not merged into this fork snapshot |
 
 The review uses the **full commit DAG**, `bb49048..fe3ec76`, including merged
@@ -309,7 +310,7 @@ feature:
 | World meaning | The earlier hard world gate is removed. `WORLDS` is an offer/menu filter; the build is a preset for modules, model and defaults. A file can be well formed yet an incompatible tank pair |
 | Persistent packs | Saves append species/habitat UIDs and names, prefer UIDs on load and retain legacy IDs for built-ins. The runtime-assigned ID of an external file is not treated as durable identity |
 | Missing/unmet pair | The tank pauses with PACK MISSING or PACK NEEDS, retains the saved pair and per-animal tail, and resumes when the pair can run. Defaults may stand in **for drawing**, not overwrite the desired saved identity. Notices and resume checks are implemented |
-| Host library | The simulator scans `POCKET_PACKS_DIR` (default `../packs`), manifests/habitats before species, and rescans while a tank waits. This is a host folder loader, not an implemented device microSD library |
+| Host library | The simulator scans `POCKET_PACKS_DIR` (default `../packs`), manifests/habitats before species, and rescans while a tank waits. At the snapshot this is a host folder loader, not a device microSD library; PR #16 adds one afterwards ([below](#after-the-snapshot-the-card-library-pr-16)) |
 
 The simulator's `PT_ALL_PACKS=1` inventory contains both worlds' and test-only
 packs, 12 spare species/habitat slots each and four spare manifest slots.
@@ -318,7 +319,7 @@ non-test pack of each kind for its world. A new external pack therefore cannot
 be added to that release configuration even if its semantics fit. The final
 `release_check.c` expects a `no room` refusal for additional packs; older prose
 in `ptpk.md` describing a foreign habitat/manifest loading in a release image
-predates that final pool change.
+predates that final pool change. *After the snapshot*, PR #16 makes the slots a build choice: with `PT_CARD` (1.8 firmware, Kconfig option, default off) there are 2 species, 2 habitats and 1 manifest spare; every shipped configuration keeps zero and `release_check.c` still compiles card-off.
 
 The save remains **PTK2**, deliberately preserving the upstream layout and
 fixtures rather than introducing the initially proposed new save magic. The
@@ -336,6 +337,32 @@ Sources: [ptpk.md](ptpk.md), [common/packs/](../common/packs/),
 [save_layout.h](../common/save_layout.h),
 [progression.c](../common/progression.c),
 [release_check.c](../sim/release_check.c).
+
+## After the snapshot: the card library (PR #16)
+
+Everything above is pinned at `fe3ec76`. [PR #16](https://github.com/dopamine911/pocket-terrarium/pull/16) (`50bf878`, issue #4
+phase 4) landed afterwards and is **not** in the changed-file inventory or its counts. It is fork-original. It does edit the
+ADVANCED page (`advanced.c`, `render.c`, upstream-derived), but only under `PT_CARD`: with it 0, the shipped
+configuration, that page is drawn and answers as before.
+
+| Layer | What it adds |
+|---|---|
+| Card port | `common/card.h` (a visit: open, list, read, close; `card_name_ok` lets only plain `*.ptpk` names through), the simulator's folder card (`sim/card_port_sim.c`, `POCKET_CARD_DIR`) and the 1.8's TF driver (`firmware/main/card_port_sh8601.c`) |
+| Library | `common/packs/library.c`: scan with a verdict per file (INSTALLABLE / INSTALLED / UPDATE / BUILT IN / NO MODULE / REFUSED), install, update, remove, boot-time load; built on a new `packs_dry_check` and the `species_admit` / `manifest_admit` / `*_room` / `*_remove` pieces of the pools |
+| Pack store | `common/packs/pstore.c`: ten self-describing 4 KB sectors in the `storage` partition's unused `0x6000`-`0x10000` (flash port in `persist_port_esp.c`, guarded by `_Static_assert`s against the NVS rescue copy and the shelf). Deliberately not NVS: its budget is the tank save's room |
+| Tank | `progression_pack_leaving` / `_arrived`: removing the pack a tank lives on pauses it as PACK MISSING, and it resumes when the pack is back |
+| UI | `common/packs_page.c`, the PACKS page under ADVANCED, written once for the four glasses; ADVANCED gains a `PACKS` button only on a board with a card slot |
+| Gate | `PT_CARD` in `common/world.h` (default 0). The simulator builds it by default (`make CARD=0` for the shipped configuration); firmware takes Kconfig `CONFIG_POCKET_TANK_CARD`, default off, offered for the 1.8 only |
+| Tests and CI | `--selftest-library`, `--selftest-packs-page` (shared selftests: they run in every board/world leg), a `sim-nocard` CI job |
+| Docs | [card-library.md](card-library.md), [board-amoled-1.8-card.md](board-amoled-1.8-card.md) |
+
+**Measured** (`idf.py size`, ESP-IDF 5.5.2): with the option **off**, `.bss` is byte-identical to `fe3ec76` in all four shipped
+configurations (1.8 and 1.75C, both worlds) and the image is 52-72 bytes larger (not chased). With it **on** (1.8 only): `.bss`
++2,928 B and image +79 KB (terrarium) / +81 KB (aquarium), compile and link only.
+
+**Not verified:** the 1.8 card driver, its pins and the pack store's flash region have never run on a board. Two defects found by the
+new tests were fixed in the same PR: the dry check gave a scratch habitat no id (so a habitat on a card was always refused), and
+the card-only pool code was compiled into card-off builds (an `-Werror=array-bounds` failure at one pool slot).
 
 ## Engine, world, body, setup, render and icon refactors
 
@@ -465,7 +492,7 @@ Sources: [version.h](../common/version.h),
 | 1.75C rev1.1 detection/suspend fix | The ES7210 probe accepts address straps **0x40–0x43**, records the actual responding address, reports the bus if no board signature matches, and passes that address to microphone-ADC suspend. The tested pendant answered at **0x42**; the old fixed 0x40 probe failed its board signature and left its panel dark |
 | Correct first model batch | `q4_model_reserve_batch` and the L1 initialization reserve **45 tokens before discretionary boot allocations**, rather than allocate 44 then grow to 63. The model allocator cannot free the first set on growth. The reservation is attempted at load; allocation failure still follows the existing inference allocation path |
 | Renderer/world allocation separation | Terrarium PSRAM goes to its second light-state scene and lizard-body scratch, instead of the aquarium grass-loop/decor/depth caches. Unused world and network sources/state are omitted/fenced; the terrarium milestone watcher is world-owned rather than aquarium `.bss` |
-| Pack pool RAM | `eb75fb5` changes firmware spare species/habitat slots 2→0 and spare manifests 1→0 until the card library exists, removing roughly **2.2 KB of `.bss`**. Host validation retains its larger pools; this is not an SD loading feature |
+| Pack pool RAM | `eb75fb5` changes firmware spare species/habitat slots 2→0 and spare manifests 1→0 until the card library exists, removing roughly **2.2 KB of `.bss`**. Host validation retains its larger pools; this is not an SD loading feature. PR #16 later restores those slots, plus the library's tables, **only** when `PT_CARD` is on (+2,928 B `.bss`) |
 | Boot stack discipline | `packs_init()` runs first in `app_main`, so the bounded built-in pack encoding buffer uses the main task's stack, not an accidentally first-calling smaller task |
 
 The [round-board notes](board-amoled-1.75c.md) and [PLAN P7](../PLAN.md)
@@ -587,7 +614,7 @@ Sources: [sim/Makefile](../sim/Makefile),
 | Pack-driven daytime active/settle/sleep phase | Dusk/night schedules: named in the schema, but `species_check` explicitly refuses schedules other than `SCHED_DAY`; “a later schedule needs no retrain” is design intent, not current support |
 | Walking ramps/rocks, hunts/dish/sheds/mister, cosmetic desert pieces | The early plan's latrine/spot-cleaning loop, isopod cleanup crew, greens feeding or a separate living potted-plant husbandry system |
 | Earned hatchling and inherited birth/setup/genetics machinery | Eggs as a full laying/incubation/courtship simulation; the NEW EGG artwork/words alone do not implement one |
-| Binary pack parser, authoring CLI and host folder scan | Device SD-card library/catalog/selection/download flow; firmware has no spare pack slots yet |
+| Binary pack parser, authoring CLI and host folder scan | Device SD-card catalog/selection/download flow; shipped firmware has no spare pack slots. *(After the snapshot: PR #16's card library is simulator-proven; its 1.8 driver is compile-only, unverified and off by default.)* |
 | Capability and goal-manifest checks, one selected world/model | Runtime world/model switching in one image, mixed species per animal, slither/turtle mechanics, a general executable plugin ABI; model-manifest INPUTS remains reserved |
 | Documented model acceptance and one flashed/measured pendant | A new hardware acceptance run on every board, resolved 1.8 frame budget or completed terrarium QEMU boot |
 | Offline build and protocol regression bins | Enabled production Wi-Fi/OTA/Improv/visits/gifts/passports/visitor collection |
@@ -705,6 +732,7 @@ changes rather than assigning a new feature to every integration merge.
 | Render/core/world/body/text extraction | [42614a1](https://github.com/dopamine911/pocket-terrarium/commit/42614a1), [cb34980](https://github.com/dopamine911/pocket-terrarium/commit/cb34980), [ba9226e](https://github.com/dopamine911/pocket-terrarium/commit/ba9226e), [31d84e7](https://github.com/dopamine911/pocket-terrarium/commit/31d84e7), [a1068d0](https://github.com/dopamine911/pocket-terrarium/commit/a1068d0), [3a1813f](https://github.com/dopamine911/pocket-terrarium/commit/3a1813f) |
 | World/progression/setup/save ownership | [537b0b3](https://github.com/dopamine911/pocket-terrarium/commit/537b0b3), [75e8672](https://github.com/dopamine911/pocket-terrarium/commit/75e8672), [d00fb4c](https://github.com/dopamine911/pocket-terrarium/commit/d00fb4c), [05d5008](https://github.com/dopamine911/pocket-terrarium/commit/05d5008) |
 | Integration fences and module docs | `732204f`, `178c1cd`, `60b9f6c`, `4219932` merge the module slices; [feddaf1](https://github.com/dopamine911/pocket-terrarium/commit/feddaf1), [e72bdd3](https://github.com/dopamine911/pocket-terrarium/commit/e72bdd3), [3d676e8](https://github.com/dopamine911/pocket-terrarium/commit/3d676e8), [a68735a](https://github.com/dopamine911/pocket-terrarium/commit/a68735a) finish fences/docs |
+| Card library *(after the snapshot)* | [PR #16](https://github.com/dopamine911/pocket-terrarium/pull/16) / `50bf878` |
 | Aquarium round flash, pool RAM and CI | [650e699](https://github.com/dopamine911/pocket-terrarium/commit/650e699), [eb75fb5](https://github.com/dopamine911/pocket-terrarium/commit/eb75fb5), [84c1f23](https://github.com/dopamine911/pocket-terrarium/commit/84c1f23); integrated by `32ff432` and [PR #12](https://github.com/dopamine911/pocket-terrarium/pull/12) / `fe3ec76` |
 
 ## Complete changed-file inventory

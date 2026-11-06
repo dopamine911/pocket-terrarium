@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Implemented-state snapshot:** fork `main` at `fe3ec76`, reviewed 2026-11-06. This page describes the code at that snapshot, not a promise that every proposal in the older design documents has shipped. For its relationship to pocket-tank, see [Upstream divergence](upstream-divergence.md).
+**Implemented-state snapshot:** fork `main` at `fe3ec76`, reviewed 2026-11-06. This page describes the code at that snapshot, not a promise that every proposal in the older design documents has shipped. The one change since, the **card library** ([PR #16](https://github.com/dopamine911/pocket-terrarium/pull/16), issue #4 phase 4), is described where it applies and marked *after the snapshot*; the pinned commit and its counts are unchanged. For its relationship to pocket-tank, see [Upstream divergence](upstream-divergence.md).
 
 ## The short version
 
@@ -97,7 +97,7 @@ Examples at this snapshot:
 - **Fish:** needs `SWIM`, `WATER`, `PELLET`; lists freshwater. The aquarium firmware and freshwater provide those, and its model manifest declares the eight fish goals.
 - **Cross-world data in the simulator:** a gecko/desert pair can be present in an aquarium process, but the active fish manifest lacks `hunt`, so the pair cannot run. A release aquarium build also lacks walking; advertising or loading metadata is not installing that implementation.
 
-The optional **`WORLDS` mask is a filter, not this compatibility gate**. `packs_offered` combines the world filter, test-only exclusion and pair compatibility for offerings. Generic card-library/pack-selection menus are not yet implemented; having the predicate does not mean such a library UI exists.
+The optional **`WORLDS` mask is a filter, not this compatibility gate**. `packs_offered` combines the world filter, test-only exclusion and pair compatibility for offerings. A generic pack-*selection* menu (choosing a species or habitat from what is loaded) is not implemented; having the predicate does not mean one exists. *After the snapshot:* the card library's PACKS page (see [PTPK lifecycle](#ptpk-lifecycle-and-saved-identity)) installs and removes packs from a card; it does not select them.
 
 ### Why another species need not mean another model
 
@@ -120,6 +120,7 @@ There are two implemented origins:
 
 - **Built-ins:** C `const` definitions in [`species/`](../common/species/), [`habitat/`](../common/habitat/) and [`packs/models.c`](../common/packs/models.c) are the source of truth. At boot the encoder serializes them and the same `packs_add` loader validates them. The firmware ships those structs and encoder, not a second embedded set of `.ptpk` bytes.
 - **Simulator folder:** [`sim/packs_dir.c`](../sim/packs_dir.c) scans `POCKET_PACKS_DIR` (default `../packs` when running from `sim/`). Manifests and habitats are offered before species. [`tools/ptpk_emit.c`](../tools/ptpk_emit.c) emits checked-in built-in files into [`packs/`](../packs/); `make -C sim packs` is also part of the normal simulator build. Independently authored TOML can be built, dumped or verified with [`tools/ptpk.py`](../tools/ptpk.py). See [Authoring](ptpk.md#authoring), rather than hand-editing binary records.
+- **Card library** *(after the snapshot, PR #16; only when `PT_CARD` is 1)*: a microSD card's `/packs/NAME.ptpk` files are read one visit at a time by the PACKS page under ADVANCED, checked by [`packs_dry_check`](../common/packs/ptpk.c) (the loader's own rules with nothing committed and no pool slot taken) and, if the keeper asks, installed into a **pack store in flash** ([`pstore.c`](../common/packs/pstore.c): the `storage` partition's unused `0x6000`–`0x10000`, ten 4 KB sectors, header written last so a power cut leaves the state before or after). [`library_boot`](../common/packs/library.c) loads that store through the same `packs_add` at every boot, so a tank never depends on the card being in its slot. The simulator's card is a folder (`POCKET_CARD_DIR`) and its store a file. See [Card library](card-library.md).
 
 The following diagram follows pack intake and **restoration of a saved tank**. A refused file leaves the loaded registry unchanged; it is different from a validly loaded pack that cannot satisfy a saved pair.
 
@@ -127,6 +128,8 @@ The following diagram follows pack intake and **restoration of a saved tank**. A
 flowchart TB
     builtin["Built-in C definitions"]
     folder["Simulator folder<br/>PTPK files"]
+    card["Card library, PT_CARD<br/>PACKS page: scan, install"]
+    store["Pack store in flash<br/>10 sectors"]
     loader{"packs_add<br/>parse and validate"}
     registry["Fixed registries<br/>species, habitats, manifests"]
     refused["Refused file<br/>registry unchanged"]
@@ -136,6 +139,8 @@ flowchart TB
     paused["Pause saved tank<br/>PACK MISSING or PACK NEEDS"]
     builtin -->|encode at boot| loader
     folder --> loader
+    card -->|install| store
+    store -->|library_boot, every boot| loader
     loader -->|accepted| registry
     loader -->|refused| refused
     registry --> check
@@ -169,19 +174,19 @@ There is a rendering detail worth knowing: the build's default descriptors can s
 |---|---|---|
 | **Terrarium** | Leopard gecko + desert, lizard body/morphs, stop-and-go ground walking, routed rocks/ramps, heat and basking, hides, cricket hunting and mealworm dish, moisture/mister, sheds and shed-gated growth, its care gates/shop/badges/setup and decorations. | Not every lizard species; walking up terrain is not an arboreal climbing/perching implementation. |
 | **Aquarium** | Fish + freshwater retained on the same core, swim/depth behavior, pellet food, fish art/genetics/progression, grass/decor and aquarium critter modules. | Not a second simultaneously running world inside a terrarium binary. |
-| **Packs** | PTPK encode/parse/validate, fixed registries, stable identity, needs/provides checks, model manifests, simulator folder intake and paused missing-pack restoration. | No device microSD pack library, generic pack-browser UI, or unbounded runtime registry. |
+| **Packs** | PTPK encode/parse/validate, fixed registries, stable identity, needs/provides checks, model manifests, simulator folder intake and paused missing-pack restoration. *After the snapshot (PR #16, `PT_CARD`):* a card library - scan, dry check, install/update/remove into a flash pack store, a PACKS page under ADVANCED - proven in the simulator. | The 1.8's card driver is **compile-only and unverified on hardware**, and no shipped image enables it (Kconfig `CONFIG_POCKET_TANK_CARD`, default off, 1.8 only); no generic pack-selection UI or unbounded runtime registry. |
 | **Models** | Separate world-selected weights/tokenizers, L1 versus fish encoding and goal checks; manifests declare supported goal names. | No hot model swapping, multiple active brains or implemented manifest `INPUTS` contract. |
 | **Multiworld / mixed species** | Dispatch seams separate shared engine from world-specific code; capability vocabulary can describe water/land/shore requirements. | No one-image runtime world selection; no tank containing multiple species; no amphibious/crossover habitat shipped. |
 | **Additional content** | Built-in keeper-facing species are gecko and fish; warm gecko/desert are test-only packs. | Bearded dragon, monitor, chameleon, crested gecko, jungle, reef/jellyfish and turtles are future directions, not delivered packs. `SLITHER`, `SHORE` and `GREENS` being named capabilities does not implement their missing mechanics/content. |
 | **Activity / networking** | Current species validation accepts `SCHED_DAY`; the standard fork builds have networking off. | Dusk/night schedules need a clock-based day. Inherited OTA/link/passport/gift/collection designs are not enabled features of the default fork image. |
 
-For scope and historical acceptance records, read [PLAN](../PLAN.md), especially P2e–P2g, P6 and P7, alongside the source. Its opening status and some “not committed” / future-phase wording are historical notes, not a current implementation inventory. Likewise, `DRAFT`, `DESIGN` and “nothing built” headings in older documents can coexist with later built sections. The overview above resolves those ambiguities for `fe3ec76`; it does not claim fresh hardware or test results.
+The card library is the only code on this page that postdates `fe3ec76`; the [1.8 card page](board-amoled-1.8-card.md) says what of it has run on a board (nothing). For scope and historical acceptance records, read [PLAN](../PLAN.md), especially P2e–P2g, P6 and P7, alongside the source. Its opening status and some “not committed” / future-phase wording are historical notes, not a current implementation inventory. Likewise, `DRAFT`, `DESIGN` and “nothing built” headings in older documents can coexist with later built sections. The overview above resolves those ambiguities for `fe3ec76`; it does not claim fresh hardware or test results.
 
 ### Resource constraints are part of the design
 
 - **Flash:** the current [`partition table`](../firmware/partitions.csv) has two `0x280000` app slots and **one `0x800000` model partition** at `0x290000` in the 16 MB layout. [`version.h`](../common/version.h) records 7,558,660 bytes for the lizard model and 7,557,640 for the fish model. Both existing weight files cannot fit together in that model partition. A future one-image design needs a model strategy, not just more pack metadata.
 - **RAM placement:** [`psram_plan.h`](../firmware/main/psram_plan.h) separates framebuffers and model working state/KV cache in PSRAM from internal-SRAM stacks and hot scratch; weights are memory-mapped from flash rather than copied wholesale into RAM. Wider frames, another scene/body family and spare pack slots still consume real memory. The L1 advisor reserves its 45-token prefill batch at model load to avoid later buffer growth; [PLAN P7](../PLAN.md#p7--boards) records the historical pendant measurements and remaining device checks.
-- **Bounded pack storage:** [`ptpk.h`](../common/packs/ptpk.h) caps the body at 2,048 bytes, so a file is at most 2,068 bytes. Registries use fixed arrays with inline fields, no registry heap allocation and no retained pointers into input bytes. Release firmware currently has **zero spare species/habitat and manifest slots**; `PT_ALL_PACKS` builds add 12 spare slots for each species/habitat registry and four manifest slots. A parser API is not yet device capacity for a card library.
+- **Bounded pack storage:** [`ptpk.h`](../common/packs/ptpk.h) caps the body at 2,048 bytes, so a file is at most 2,068 bytes. Registries use fixed arrays with inline fields, no registry heap allocation and no retained pointers into input bytes. Release firmware has **zero spare species/habitat and manifest slots**; `PT_ALL_PACKS` builds add 12 spare slots for each species/habitat registry and four manifest slots. *After the snapshot:* a `PT_CARD` firmware (1.8 only, default off) has **2 species, 2 habitats and 1 manifest** spare (+2,928 B `.bss`, measured with `idf.py size` in both worlds) and the ten-sector pack store; a shipped image keeps zero, with `.bss` identical to `fe3ec76`. A parser API is device capacity for a card library only in that opt-in build.
 - **Bounded behavior:** pack counts, terrain geometry and population have hard limits. Fish swimming still uses existing engine constants rather than tunable locomotion floats; nonzero SWIM/SLITHER locomotion numbers are rejected. The general-looking format is not a guarantee that every future tuning or movement is implemented.
 
 [Memory budget](memory_budget.md) is useful for the original allocation rationale, **not an authoritative current partition table or benchmark**: its factory-app/storage layout predates the two app slots, and its latency table is an estimate. Use the current source above and the dated measurements in [PLAN](../PLAN.md) / [Stats](stats.md) for their stated worlds and hardware.
@@ -199,6 +204,7 @@ Start with the first group, then follow the concern you are changing. These link
 | [Species packs](species-pack.md) | Species fields, normalization, gecko/fish values, validation and explicit exclusions. |
 | [Habitat packs](habitat-pack.md) | Climate, areas/provisions, ground coordinate/layout/routing rules, worlds and build recipes. |
 | [PTPK](ptpk.md) | Exact bytes, records, identity, capability checks, refusals, registries, saves and authoring. |
+| [Card library](card-library.md) | *(After the snapshot.)* The microSD card as a library of packs: verdicts, the dry check, the flash pack store and why it is not NVS, a tank on a removed pack, the PACKS page, the simulator's card. |
 | [PLAN](../PLAN.md) | Fork decisions and dated implementation/acceptance history. Its [phase dependency diagram](../PLAN.md#5-phases) is the original work plan, not runtime architecture. |
 | [Upstream divergence](upstream-divergence.md) | Shared baseline, fork changes and the evidence limits of the upstream-adoption comparison. |
 
@@ -231,6 +237,7 @@ Start with the first group, then follow the concern you are changing. These link
 |---|---|
 | [Simulator quick start](../README.md#run-the-simulator-in-docker-linux-desktop) and [per-world builds](habitat-pack.md#building-each-world) | Running the fork's world/board choices without confusing pack inventory with executable selection. |
 | [Boards](BOARDS.md) | Shared-code/coordinate/port rules and the four board targets. |
+| [1.8 card slot](board-amoled-1.8-card.md) | *(After the snapshot.)* The 1.8's microSD driver: each pin with its source, what is unverified, measured size costs and a bench test. |
 | [Round pendant](board-amoled-1.75c.md), [watch](board-amoled-2.06-watch.md), [square](board-amoled-2.16.md) | Board-specific display, touch, pins, power and bring-up findings. |
 | [Bring-up](bringup.md) and [Device](DEVICE.md) | Original 1.8 checklist and safe device/preflight practices; device status notes are dated. |
 | [Memory budget](memory_budget.md), [`psram_plan.h`](../firmware/main/psram_plan.h), [`partitions.csv`](../firmware/partitions.csv) | Allocation rationale versus current compile-time memory/flash limits; heed the stale-layout caveat above. |
