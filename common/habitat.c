@@ -1,25 +1,77 @@
 /* habitat.c - the habitat registry and its rules (habitat.h) */
 #include "habitat.h"
 #include "terrain.h"
+#include "packs/builtin.h"                 /* PTPK_BUILTIN_HABITATS: how many packs this build ships */
+#include "packs/ptpk.h"                    /* packs_init, PACKS_SPARE */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 const char *const HIDE_KIND_NAMES[HIDE_KINDS] = { "warm", "humid", "cool" };
 
-#if PT_ALL_PACKS
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM, &HABITAT_PACK_FRESHWATER };
-#elif PT_TERRARIUM
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_DESERT, &HABITAT_PACK_TEST_WARM };
-#else
-static const habitat_t *const HABITATS[] = { &HABITAT_PACK_FRESHWATER };
-#endif
-#define N_HABITATS ((int)(sizeof HABITATS / sizeof HABITATS[0]))
+/* THE POOL, as species.c's: this build's built-in habitats and PACKS_SPARE slots for the ones found at run time */
+#define HABITAT_POOL (PTPK_BUILTIN_HABITATS + PACKS_SPARE)
+static habitat_t s_pool[HABITAT_POOL];
+static uint32_t  s_crc[HABITAT_POOL];
+static int       s_n;
+static uint32_t  s_gen;
 
-int habitat_count(void) { return N_HABITATS; }
-const habitat_t *habitat_at(int i) { return i >= 0 && i < N_HABITATS ? HABITATS[i] : NULL; }
+int habitat_count(void) { packs_init(); return s_n; }
+const habitat_t *habitat_at(int i) { packs_init(); return i >= 0 && i < s_n ? &s_pool[i] : NULL; }
 const habitat_t *habitat_get(uint8_t id) {
-    for (int i = 0; i < N_HABITATS; i++) if (HABITATS[i]->id == id) return HABITATS[i];
+    packs_init();
+    for (int i = 0; i < s_n; i++) if (s_pool[i].id == id) return &s_pool[i];
     return NULL;
+}
+const habitat_t *habitat_by_uid(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) if (s_pool[i].uid == uid) return &s_pool[i];
+    return NULL;
+}
+uint32_t habitat_generation(void) { return s_gen; }
+
+habitat_t *habitat_slot(void) {
+    packs_init();
+    if (s_n >= HABITAT_POOL) return NULL;
+    memset(&s_pool[s_n], 0, sizeof s_pool[s_n]);
+    return &s_pool[s_n];
+}
+
+bool habitat_commit(habitat_t *h, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n) {
+    #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
+    if (h != &s_pool[s_n] || s_n >= HABITAT_POOL) REFUSE("not the slot the registry gave out");
+    if (!h->uid) REFUSE("no uid");
+    for (int i = 0; i < s_n; i++) if (s_pool[i].uid == h->uid) REFUSE("uid %08x is %s's already", (unsigned)h->uid, s_pool[i].name);
+    if (builtin) {                                         /* the one-byte id old saves hold: a species' bit (1..31) */
+        if (legacy_id < 1 || legacy_id > 31) REFUSE("a built-in habitat's legacy id %d is outside 1..31", legacy_id);
+        for (int i = 0; i < s_n; i++) if (s_pool[i].id == legacy_id) REFUSE("legacy id %d is %s's already", legacy_id, s_pool[i].name);
+        h->id = legacy_id;
+    } else {                                               /* a handle for this run: the lowest free of 3..30 (31 is the test desert's) */
+        int id = 3;
+        for (; id <= 30; id++) { bool used = false; for (int i = 0; i < s_n; i++) used |= s_pool[i].id == id; if (!used) break; }
+        if (id > 30) REFUSE("no free id");
+        h->id = (uint8_t)id;
+    }
+    h->builtin = builtin;
+    if (!habitat_check(h, why, n)) return false;
+    s_crc[s_n] = crc; s_n++; s_gen++;
+    species_relink();                                      /* a species may have been waiting for it */
+    return true;
+    #undef REFUSE
+}
+
+pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by) {
+    packs_init();
+    for (int i = 0; i < s_n; i++)
+        if (s_pool[i].uid == uid) { if (by) *by = s_pool[i].name; return s_crc[i] == crc ? PACK_SAME : PACK_UID_TAKEN; }
+    return PACK_NEW;
+}
+
+void habitat_drop_loaded(void) {
+    int k = 0;
+    for (int i = 0; i < s_n; i++) if (s_pool[i].builtin) { if (k != i) { s_pool[k] = s_pool[i]; s_crc[k] = s_crc[i]; } k++; }
+    s_n = k; s_gen++;
+    species_relink();                                      /* ... and a species that lived in one that is gone loses its bit */
 }
 
 bool habitat_fits(const habitat_t *h, const species_t *s) {
@@ -38,7 +90,7 @@ static bool on_surface(const habitat_t *h, int s, float u) {
 
 bool habitat_check(const habitat_t *h, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
-    if (!h->name || !h->name[0]) REFUSE("no name");
+    if (!h->name[0]) REFUSE("no name");
     if (h->id < 1 || h->id > 31) REFUSE("id %d is outside 1..31 (species_t.habitats has a bit per id)", h->id);
     if (h->world != WORLD_AQUARIUM && h->world != WORLD_TERRARIUM) REFUSE("world %d is no world", (int)h->world);
     const bool terr = h->world == WORLD_TERRARIUM;           /* a terrarium's thermoregulation needs a gradient, a lamp and the hides */

@@ -1,4 +1,4 @@
-# Habitat packs — DRAFT
+# Habitat packs
 
 The enclosure is a pack too, separate from the species (`docs/species-pack.md`).
 A tank holds one habitat and one species, the species must list the habitat
@@ -7,12 +7,18 @@ neither the engine nor the model names a habitat.
 
 ## Where they live
 
-- `common/habitat.h`: `habitat_t`, `habitat_get(id)`; `common/habitat.c` the registry and the rules.
-- `common/habitat/<name>.c`: one `const habitat_t` per habitat, compiled in: `desert.c` (id 1, the terrarium's) and
-  `freshwater.c` (id 2, the aquarium's, P2b). Both are in both bins; a tank holds its world's.
-- `common/terrain.h`: a habitat's ground laid out on a glass (P2c) - the walk, the heat field, the scene and the rules
-  all read it from there.
-- The save stores `habitat_id` beside the species `pack_id`, and each humid hide's moisture.
+A habitat is a **PTPK file** too (`docs/ptpk.md`: the format and the loader; the records that fill `habitat_t`, with their units).
+
+- `common/habitat.h`: `habitat_t` and the registry (`habitat_get(id)`, `habitat_by_uid(uid)`, `habitat_at(i)`); `common/habitat.c`
+  its pool and the rules (`habitat_check`). Like a species, everything in it is inline.
+- `common/habitat/<name>.c`: one `const habitat_t` per habitat, the **source** of the built-in packs: `desert.c` (id 1, the
+  terrarium's, and `pt.test.desert-warm`, id 31, A16's warm desert, tests only) and `freshwater.c` (id 2, the aquarium's, P2b).
+  `common/packs/ptpk_write.c` encodes each into a PTPK file at boot and the loader takes it like any other pack;
+  `tools/ptpk_emit.c` writes them as `packs/<uid_ns>.ptpk` (`docs/ptpk.md` "Authoring"). A release image carries its world's;
+  a tank holds its world's.
+- `common/terrain.h`: a habitat's ground laid out on a glass (P2c) - the walk, the heat field, the scene and the rules all read it
+  from there.
+- The save stores the habitat's uid (and its one-byte `habitat_id` when it is built in) beside the species', and each humid hide's moisture.
 
 ## What a habitat owns
 
@@ -87,8 +93,9 @@ the high rock, the humid box under the low ledge's end, the cool cave under the 
   floor; the basking spot the highest ground within the lamp's pool, with `TERRAIN_LAMP_PX` (100) of glass over it; no
   rock or ramp lower than `TERRAIN_HIDE_CLEAR_PX` (44) over the floor within `TERRAIN_HIDE_HW` (36) of a hide.
 - Every habitat's lit ground (the floor, its rocks, its ramps) reaches each compatible species' comfort band (`t_lo`..`t_hi`) somewhere.
-- A tank never holds an incompatible (habitat, species) pair, nor another world's: `tank_set_packs` refuses both, and
-  a save of such a pair loads as the world's defaults (`docs/species-pack.md` "Where packs live").
+- A tank never holds an incompatible (habitat, species) pair, nor another world's: `tank_set_packs` refuses both, and a
+  save of such a pair no longer loads as the world's defaults - the tank keeps the saved pair, shows PACK MISSING and holds still
+  until the pack comes (`docs/ptpk.md` "A tank and its packs").
 - The scene (`--lizard-sheet`): every point of every rock's and ramp's walking line stands on that piece's own drawn top,
   on all four glasses.
 

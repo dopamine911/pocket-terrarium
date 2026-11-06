@@ -1,25 +1,91 @@
 /* species.c - the pack registry, the heat map, the phase and the pack rules (species.h) */
 #include "species.h"
+#include "habitat.h"
 #include "tank.h"                          /* POP_CAP */
+#include "packs/builtin.h"                 /* PTPK_BUILTIN_SPECIES: how many packs this build ships */
+#include "packs/ptpk.h"                    /* packs_init, PACKS_SPARE */
 #include <stdio.h>
+#include <string.h>
 
-const char *const LZ_GOAL_NAMES[LZ_GOALS] = { "hunt", "bask", "hide", "explore", "investigate", "dig", "rest" };
+/* (LZ_GOAL_NAMES and FISH_GOAL_NAMES, the words a pack names its goals by, are packs/ptpk_write.c's: the host emitter links
+   them without this registry) */
 const char *const PHASE_NAMES[PHASE_N] = { "active", "settle", "sleep" };
 
-#if PT_ALL_PACKS
-static const species_t *const PACKS[] = { &SPECIES_PACK_GECKO, &SPECIES_PACK_TEST_WARM, &SPECIES_PACK_FISH };
-#elif PT_TERRARIUM
-static const species_t *const PACKS[] = { &SPECIES_PACK_GECKO, &SPECIES_PACK_TEST_WARM };
-#else
-static const species_t *const PACKS[] = { &SPECIES_PACK_FISH };
-#endif
-#define N_PACKS ((int)(sizeof PACKS / sizeof PACKS[0]))
+/* THE POOL (docs/ptpk.md "The loader"): this build's built-in packs and PACKS_SPARE slots for the ones found at run time,
+ * in .bss - nothing is malloc'd on the device path. The loader fills it a slot at a time (species_slot, species_commit);
+ * the built-in packs go in first, so a pack that is not built in is always at the end (species_drop_loaded). s_crc is
+ * the body CRC of the file each came from, to tell the same file offered again from another with its uid. */
+#define SPECIES_POOL (PTPK_BUILTIN_SPECIES + PACKS_SPARE)
+static species_t s_pool[SPECIES_POOL];
+static uint32_t  s_crc[SPECIES_POOL];
+static int       s_n;
 
-int species_count(void) { return N_PACKS; }
-const species_t *species_at(int i) { return i >= 0 && i < N_PACKS ? PACKS[i] : NULL; }
+int species_count(void) { packs_init(); return s_n; }
+const species_t *species_at(int i) { packs_init(); return i >= 0 && i < s_n ? &s_pool[i] : NULL; }
 const species_t *species_get(uint8_t id) {
-    for (int i = 0; i < N_PACKS; i++) if (PACKS[i]->id == id) return PACKS[i];
+    packs_init();
+    for (int i = 0; i < s_n; i++) if (s_pool[i].id == id) return &s_pool[i];
     return NULL;
+}
+const species_t *species_by_uid(uint32_t uid) {
+    packs_init();
+    for (int i = 0; uid && i < s_n; i++) if (s_pool[i].uid == uid) return &s_pool[i];
+    return NULL;
+}
+
+/* its habitats' bits: the loaded habitats whose uids it lists (a habitat not loaded - another world's, a card's not yet read -
+   sets none) */
+static void relink(species_t *p) {
+    p->habitats = 0;
+    for (int k = 0; k < p->n_habitat_uids && k < SPECIES_HABITATS_MAX; k++) {
+        const habitat_t *h = habitat_by_uid(p->habitat_uid[k]);
+        if (h && h->id >= 1 && h->id <= 31) p->habitats |= 1u << h->id;
+    }
+}
+void species_relink(void) { for (int i = 0; i < s_n; i++) relink(&s_pool[i]); }
+
+species_t *species_slot(void) {
+    packs_init();
+    if (s_n >= SPECIES_POOL) return NULL;
+    memset(&s_pool[s_n], 0, sizeof s_pool[s_n]);
+    return &s_pool[s_n];
+}
+
+bool species_commit(species_t *p, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n) {
+    #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
+    if (p != &s_pool[s_n] || s_n >= SPECIES_POOL) REFUSE("not the slot the registry gave out");
+    if (!p->uid) REFUSE("no uid");
+    for (int i = 0; i < s_n; i++) if (s_pool[i].uid == p->uid) REFUSE("uid %08x is %s's already", (unsigned)p->uid, s_pool[i].name);
+    if (builtin) {                                         /* the one-byte id old saves hold */
+        if (!legacy_id) REFUSE("a built-in pack has no legacy id");
+        for (int i = 0; i < s_n; i++) if (s_pool[i].id == legacy_id) REFUSE("legacy id %d is %s's already", legacy_id, s_pool[i].name);
+        p->id = legacy_id;
+    } else {                                               /* a handle for this run: the lowest free (the built-in ids stay clear of it) */
+        int id = 3;
+        for (; id <= 249; id++) { bool used = false; for (int i = 0; i < s_n; i++) used |= s_pool[i].id == id; if (!used) break; }
+        if (id > 249) REFUSE("no free id");
+        p->id = (uint8_t)id;
+    }
+    p->builtin = builtin;
+    relink(p);
+    if (!p->habitats) REFUSE("it lists %d habitat(s) and none is loaded", p->n_habitat_uids);
+    if (!species_check(p, why, n)) return false;
+    s_crc[s_n] = crc; s_n++;
+    return true;
+    #undef REFUSE
+}
+
+pack_seen_t species_seen(uint32_t uid, uint32_t crc, const char **by) {
+    packs_init();
+    for (int i = 0; i < s_n; i++)
+        if (s_pool[i].uid == uid) { if (by) *by = s_pool[i].name; return s_crc[i] == crc ? PACK_SAME : PACK_UID_TAKEN; }
+    return PACK_NEW;
+}
+
+void species_drop_loaded(void) {
+    int k = 0;
+    for (int i = 0; i < s_n; i++) if (s_pool[i].builtin) { if (k != i) { s_pool[k] = s_pool[i]; s_crc[k] = s_crc[i]; } k++; }
+    s_n = k;
 }
 
 float species_heat_of(const species_t *p, float c) {
@@ -48,7 +114,7 @@ int species_phase(const species_t *p, bool lit, float since_s) {
  * sheds keeps the shed cycle's (shed_every_s ...), and every pack's goals are of its own world's set */
 bool species_check(const species_t *p, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
-    if (!p->name || !p->name[0]) REFUSE("no name");
+    if (!p->name[0]) REFUSE("no name");
     if (p->world != WORLD_AQUARIUM && p->world != WORLD_TERRARIUM) REFUSE("world %d is no world", (int)p->world);
     if (!p->habitats || (p->habitats & 1u)) REFUSE("habitats %08x: it must live somewhere, and habitat ids start at 1", (unsigned)p->habitats);
     if (!(p->t_cold < p->t_lo && p->t_lo < p->t_hi && p->t_hi < p->t_hot))
@@ -90,13 +156,15 @@ bool species_check(const species_t *p, char *why, size_t n) {
         if (p->shed_every_s[s] < p->shed_soon_s + p->shed_window_s)
             REFUSE("shed_every_s[%d] %.0f is under shed_soon_s + shed_window_s (%.0f): more than half its life shedding", s, p->shed_every_s[s], p->shed_soon_s + p->shed_window_s);
     if (p->pop_cap < 1 || p->pop_cap > POP_CAP) REFUSE("pop_cap %d is outside 1..%d", p->pop_cap, POP_CAP);
-    if (!p->morphs || p->n_morphs < 1) REFUSE("no morph");
-    for (int s = 0; s < 4; s++) if (!p->pattern[s]) REFUSE("no pattern for stage %d", s);
+    if (p->n_morphs < 1 || p->n_morphs > SPECIES_MORPHS_MAX) REFUSE("%d morphs, not 1..%d", p->n_morphs, SPECIES_MORPHS_MAX);
+    for (int s = 0; s < 4; s++) if (!p->pattern[s].name[0]) REFUSE("no pattern for stage %d", s);
     if (p->schedule != SCHED_DAY) REFUSE("schedule %d needs the clock-based day (P5+): only SCHED_DAY runs", (int)p->schedule);
     if (!p->goals) REFUSE("no goals");
     const unsigned own = p->world == WORLD_TERRARIUM ? LZ_SCHEMA_GOALS : FISH_SCHEMA_GOALS;   /* its world's schema */
     if (p->goals & ~own) REFUSE("goals %03x need a goal its world's schema does not have (a climber): refused until the schema grows one", p->goals);
-    /* the heat map: monotonic, 5.0 at t_lo and 7.0 at t_hi (and 0 / 10 past the ends) */
+    /* the heat map: monotonic, 5.0 at t_lo and 7.0 at t_hi (and 0 / 10 past the ends). A band is a few tens of degrees: one far outside
+       any body's (a file's hostile float - 1e19 C, where a step of 0.01 changes nothing) would walk this loop for ever, so it is refused first */
+    if (!(p->t_cold > -100.0f && p->t_hot < 200.0f)) REFUSE("the heat band %.1f..%.1f C is outside -100..200 C", p->t_cold, p->t_hot);
     float prev = -1;
     for (float c = p->t_cold - 5; c <= p->t_hot + 5; c += 0.01f) {
         float h = species_heat_of(p, c);

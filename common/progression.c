@@ -314,6 +314,15 @@ typedef struct {
     /* the terrarium's decorations' spots (pocket-terrarium P5b: tank_t.deco_x, x / 2 on the sand; an older save's zeros -
      * and every aquarium's - read: unplaced, each at its own clear spot) */
     uint8_t  deco_x[TERR_DECO_N];
+    /* the packs by uid (pocket-terrarium, issue #4 phase 1: docs/ptpk.md "A tank and its packs"): the 32-bit uid of the
+     * species pack and of the habitat pack the tank holds - a pack's identity for good, where the one-byte ids above only
+     * ever named the built-in ones - and their names as they were saved, for the PACK MISSING card. 0 = not saved (an
+     * older save: the one-byte ids above decide). A save is read by uid first. When this build cannot hold the pair the
+     * save names, the tank keeps these, the ids above and the whole per-animal tail as loaded and every save writes them
+     * back unchanged (progression.c s_want); pack_id / habitat_id above are the built-in packs' ids, 0 for a pack that is
+     * not built in, so an older build still reads a save of a built-in pair */
+    uint32_t species_uid, habitat_uid;
+    char     species_name[PACK_NAME_MAX], habitat_name[PACK_NAME_MAX];
     /* never a field: where this build's fields end and a newer build's tail
      * begins (SAVE_FIELDS_END; new fields go above it) */
     uint8_t  newer_tail[];
@@ -445,7 +454,9 @@ SAVE_AT(clean_run, 2097); SAVE_AT(dish_farm, 2098);                             
 _Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2099 of fields, padded to 8 */
 SAVE_AT(deco_x, 2099);                                                                                 /* the terrarium's decorations, pocket-terrarium P5b */
 _Static_assert(sizeof(save_t) >= 2104, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2103 of fields, padded to 8 */
-/* (the next field: SAVE_AT(its_name, 2103 or its type's alignment past it);) */
+SAVE_AT(species_uid, 2104); SAVE_AT(habitat_uid, 2108); SAVE_AT(species_name, 2112); SAVE_AT(habitat_name, 2136);   /* the packs by uid, pocket-terrarium pack structure phase 1 */
+_Static_assert(sizeof(save_t) >= 2160, "SAVE LAYOUT LOCK: save_t only ever grows");   /* 2160 of fields */
+/* (the next field: SAVE_AT(its_name, 2160 or its type's alignment past it);) */
 /* A ROLLBACK keeps the newer build's tail (2026-10-05): a save longer than
  * this build's fields loads its head, and every save writes the bytes past
  * SAVE_FIELDS_END back as they were - so the update back up finds its tail
@@ -468,9 +479,9 @@ _Static_assert(SAVE_FIELDS_END >= 1952 && SAVE_FIELDS_END <= sizeof(save_t), "SA
  * is 3 x ~128 = ~390 entries, plus ~10 for the settings, "bat"/"hist" and
  * the batlog's "bed": under 2/3 of the 630, so GC always has room. Past it,
  * saves can start failing for space, and any nvs_flash_init error makes
- * main.c ERASE the partition. 2104 B today (pocket-terrarium: P2a's packs tail at 1956..2095, P2c's mealworm dish at
- * 2096 and P5's clean run and farm at 2097..2098 past pocket-tank 0.4's 1956; 2099 of fields padded to 8; ~66 entries a
- * copy): 1896 B of headroom
+ * main.c ERASE the partition. 2160 B today (pocket-terrarium: P2a's packs tail at 1956..2095, P2c's mealworm dish at
+ * 2096 and P5's clean run and farm at 2097..2098 past pocket-tank 0.4's 1956; 2099 of fields padded to 8; the packs' uids
+ * and names at 2104..2159, issue #4 phase 1; ~69 entries a copy): 1840 B of headroom
  * under the 4000. A rolled-back tank writes the newer build's length instead
  * (SAVE_FIELDS_END).
  * MY TANKS holds the save in a slot of SHELF_SAVE_MAX (3840, shelf.h), under the 4000 the NVS math allows: that is the
@@ -552,6 +563,15 @@ static uint16_t s_fry_seed;               /* the fry offer (progression_fry_*): 
 static double   s_fry_age;                /* ... its age in tank seconds (a double, as s_age) */
 static uint8_t  s_fry_sold;               /* ... bit k = fry k bought */
 static uint8_t  s_clean_run;              /* the terrarium's sheds off clean in a row, tank-wide (TMS_CLEAN_RUN; saved) */
+/* THE PACKS A TANK WAITS FOR (tank.h packs_missing; docs/ptpk.md "A tank and its packs"): the pair its save named when this
+   build could not hold it (below, want_keep), and the seconds to the next look for it (packs_resume) */
+static struct {
+    uint32_t species_uid, habitat_uid;
+    uint8_t  pack_id, habitat_id;
+    char     species_name[PACK_NAME_MAX], habitat_name[PACK_NAME_MAX];
+} s_want;
+static float s_resume_in;
+#define PACKS_RESUME_S 1.0f
 static uint32_t s_ms_last[N_FISH_MAX], s_tms_last;   /* the terrarium's badges last tick: one set in tank.c (a catch, the hand) saves */
 
 static void mark_dirty(void) { if (!s_dirty) { s_dirty = true; s_dirty_since = 0; } }
@@ -1543,7 +1563,7 @@ static void hatch(tank_t *t) {
     if (fish_held(t) >= pop_cap(t)) { s_arrival_pending = false; s_spawn_in = -1; mark_dirty(); return; }
     do_arrival(t);
 }
-void progression_woke(tank_t *t) { if (s_arrival_pending) { if (PT_TERRARIUM) hatch(t); else do_arrival(t); } }
+void progression_woke(tank_t *t) { if (t->packs_missing) return; if (s_arrival_pending) { if (PT_TERRARIUM) hatch(t); else do_arrival(t); } }
 void progression_stage_arrival(tank_t *t) { (void)t; if (!s_arrival_pending) { s_arrival_pending = true; mark_dirty(); } }
 
 static void newer_drop(void) { free(s_newer); s_newer = NULL; s_newer_n = 0; }
@@ -1605,6 +1625,7 @@ static int pack_slot(const save_t *sv, int i, uint32_t *used) {
 }
 
 void progression_fresh(tank_t *t) {
+    t->packs_missing = false; memset(&s_want, 0, sizeof s_want);   /* a new tank holds a pair of its own */
     newer_drop();                    /* a new tank: no older save's tail goes with it */
     tank_new_population(t);          /* a new tank: two FRY, contrasting -
                                       * the keeper watches them grow up */
@@ -1688,6 +1709,53 @@ static void relayout(tank_t *t, save_t *sv) {
     }
 }
 
+/* THE PACKS A TANK WAITS FOR (tank.h packs_missing; docs/ptpk.md "A tank and its packs"). A save names its pair by uid (an
+ * older one by the one-byte ids). When this build cannot hold that pair - a pack that is not loaded, a pair that does not
+ * fit, another world's - the tank is paused with the defaults drawn in their place, and the save's own words stay in
+ * s_want: every save while it waits writes them back (the uids, the ids, the names), never the defaults', and
+ * progression_tick looks for the pack once a second (the simulator's folder is read again; the card will be) and resumes
+ * the tank. */
+static void want_name(char *dst, const char *src) {          /* a save's text: printable, terminated */
+    size_t i = 0;
+    for (; i < PACK_NAME_MAX - 1 && src[i]; i++) dst[i] = src[i] >= 0x20 && src[i] <= 0x7e ? src[i] : '?';
+    dst[i] = 0;
+}
+static void want_keep(const save_t *sv) {
+    s_want.species_uid = sv->species_uid; s_want.habitat_uid = sv->habitat_uid;
+    s_want.pack_id = sv->pack_id; s_want.habitat_id = sv->habitat_id;
+    want_name(s_want.species_name, sv->species_name); want_name(s_want.habitat_name, sv->habitat_name);
+    s_resume_in = PACKS_RESUME_S;
+}
+static const species_t *want_species(void) { return s_want.species_uid ? species_by_uid(s_want.species_uid) : species_get(s_want.pack_id); }
+static const habitat_t *want_habitat(void) { return s_want.habitat_uid ? habitat_by_uid(s_want.habitat_uid) : habitat_get(s_want.habitat_id); }
+/* the name the PACK MISSING card shows: the pack that is not here (the species first), else the one the save knew; "" if it
+   did not say */
+const char *progression_packs_missing_name(const tank_t *t) {
+    if (!t->packs_missing) return "";
+    const char *sn = s_want.species_name, *hn = s_want.habitat_name;
+    if (!want_species()) return sn[0] ? sn : hn;
+    if (!want_habitat()) return hn[0] ? hn : sn;
+    return sn[0] ? sn : hn;                                   /* both are loaded, but not a pair this build holds */
+}
+/* the pair has come (a pack was added to the registry): the tank takes it up where it stopped. The animals' tail was loaded
+   as saved; what depended on the pack (the heat the body's temperature reads as, a dish this habitat lacks, the moisture of a
+   hide that is not damp) is made its own now */
+static bool packs_resume(tank_t *t) {
+    const species_t *sp = want_species(); const habitat_t *hb = want_habitat();
+    if (!sp || !hb || !tank_set_packs(t, hb->id, sp->id)) return false;   /* (a pair that fits and is this world's: it clears packs_missing) */
+    for (int i = 0; i < t->n_fish; i++) t->fish[i].heat = species_heat_of(sp, t->fish[i].body_c);
+    for (int k = 0; k < HABITAT_HIDES_MAX; k++) if (!(k < hb->n_hides && hb->hides[k].kind == HIDE_HUMID)) t->moist[k] = 0;
+    if (!tank_dish_here(t)) { t->dish_worms = 0; t->dish_farm = false; }
+    mark_dirty();
+    return true;
+}
+/* saves: coalesced event saves + heartbeat */
+static void save_window(tank_t *t, float dt) {
+    s_since_save += dt; if (s_dirty) s_dirty_since += dt;
+    if ((s_dirty && s_since_save >= SAVE_MIN_GAP_S) || s_since_save >= SAVE_HEARTBEAT_S)
+        progression_save(t);
+}
+
 /* restore the saved tank into t; false = no usable save (t untouched).
  * *saved_unix gets the save's wall-clock stamp (0 if unknown). */
 static bool load_save(tank_t *t, int64_t *saved_unix) {
@@ -1710,11 +1778,21 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
     *saved_unix = sv.saved_unix; s_loaded_unix = sv.saved_unix;
     s_loaded_release = sv.saved_release;
     t->n_fish = 0;
-    /* the packs first: every fish is made on its species (an older save, an id this build lacks, a pair that does not fit or is
-       another world's - a terrarium's save under the aquarium's bin, say: the defaults, and the tail's heat and sheds, which
-       are that pack's, are not taken - its animals start fresh) */
-    const bool packs_ok = sv.pack_v && tank_set_packs(t, sv.habitat_id, sv.pack_id);
+    /* the packs first: every fish is made on its species. A save names its pair by uid (an older one by the one-byte ids); a
+       save from before the packs tail (pack_v 0) is a new tank's defaults as ever. A pair this build cannot hold - a pack
+       that is not loaded, one that does not fit, another world's (a terrarium's save under the aquarium's bin, say) - is NOT
+       swapped for the defaults: the tank keeps the pair the save named, shows PACK MISSING and holds still (tank.h
+       packs_missing); the defaults only stand in for it to be drawn, and the animals' tail is taken as saved */
+    const species_t *sp0 = NULL; const habitat_t *hb0 = NULL;
+    if (sv.pack_v) {
+        sp0 = sv.species_uid ? species_by_uid(sv.species_uid) : species_get(sv.pack_id);
+        hb0 = sv.habitat_uid ? habitat_by_uid(sv.habitat_uid) : habitat_get(sv.habitat_id);
+    }
+    const bool packs_ok = sp0 && hb0 && tank_set_packs(t, hb0->id, sp0->id);
     if (!packs_ok) { t->habitat_id = HABITAT_DEFAULT; t->pack_id = SPECIES_DEFAULT; }
+    t->packs_missing = sv.pack_v && !packs_ok;
+    if (t->packs_missing) want_keep(&sv); else memset(&s_want, 0, sizeof s_want);
+    const bool tail_ok = packs_ok || t->packs_missing;       /* (the packs tail is there: pack_v) */
     bool upgraded = false;                    /* a fish from before 0.4: its genes / IDs made up at this load */
     uint32_t tail_used = 0, pack_used = 0; bool any_away = false;
     for (int i = 0; i < sv.n_fish; i++) {
@@ -1749,7 +1827,7 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         if (ts >= 0 && sv.fish_uid[ts]) { f->uid = sv.fish_uid[ts]; f->parent_uid[0] = sv.parent_uid[ts][0]; f->parent_uid[1] = sv.parent_uid[ts][1]; }
         else upgraded = true;
         if (ts >= 0 && (sv.link_away >> ts & 1)) { f->away = true; any_away = true; }   /* next door when it was saved */
-        int ps = packs_ok ? pack_slot(&sv, i, &pack_used) : -1;
+        int ps = tail_ok ? pack_slot(&sv, i, &pack_used) : -1;
         if (ps >= 0) {                            /* the lizard (P2a): its heat and its shed, by the tail's own print; nonsense = tank_make_fish's fresh ones */
             const species_t *sp = tank_species(t);
             float bc = sv.body_c[ps], ss = sv.shed_s[ps], sd = sv.shed_damp[ps];
@@ -1766,14 +1844,16 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) {
             float m = sv.moist[k];
             bool humid = k < h->n_hides && h->hides[k].kind == HIDE_HUMID;
-            t->moist[k] = !humid ? 0 : packs_ok && m >= 0 && m <= 1 ? m : h->moist_start;
+            if (t->packs_missing) t->moist[k] = m >= 0 && m <= 1 ? m : 0;   /* held as saved, by index: it is the missing habitat's hides' */
+            else t->moist[k] = !humid ? 0 : packs_ok && m >= 0 && m <= 1 ? m : h->moist_start;
         }
     }
     /* the mealworm dish's worms (P2c, tank.h THE CRICKETS): the save's pair's dish as it was (more than a full dish: full); a
-       habitat without a dish, a pair not held (the defaults, as the hides' moisture) or an older save (its zero): empty */
-    t->dish_worms = tank_dish_here(t) && packs_ok ? (sv.dish_worms <= DISH_WORMS ? sv.dish_worms : DISH_WORMS) : 0;
+       habitat without a dish, or an older save (its zero): empty. A pair that is missing: as saved (packs_resume empties it if the
+       habitat that comes has no dish) */
+    t->dish_worms = (t->packs_missing || tank_dish_here(t)) && tail_ok ? (sv.dish_worms <= DISH_WORMS ? sv.dish_worms : DISH_WORMS) : 0;
     t->dish_farm = t->dish_worms && sv.dish_farm != 0;   /* (P5: the farm's worms, the tank's own; an older save's zero: the keeper's) */
-    s_clean_run = packs_ok ? sv.clean_run : 0;           /* (P5: the clean run - another world's pair starts its own) */
+    s_clean_run = tail_ok ? sv.clean_run : 0;            /* (P5: the clean run) */
     memcpy(t->deco_x, sv.deco_x, sizeof t->deco_x);       /* (P5b: the decorations' spots; an older save's zeros: each its own clear spot) */
     if (sv.tank_uid) t->uid = sv.tank_uid;
     tank_ensure_ids(t);                       /* a pre-0.4 save: fresh IDs, the parents' from their slots */
@@ -1925,7 +2005,7 @@ uint32_t progression_blob_unlocks(const void *blob, size_t len) {
 
 #define SLEPT_SLICE_S 300.0f              /* the night lived at tank_tick_sleep's own grain (it is the same in one span or many) */
 void progression_slept(tank_t *t, float seconds) {
-    if (seconds <= 0) return;
+    if (seconds <= 0 || t->packs_missing) return;     /* (a tank whose packs are missing lives no night: tank.h packs_missing) */
     if (!tank_species(t)->sheds) {
         /* a pack that does not shed (the aquarium's fish): the night in one span, as pocket-tank always lived it - the
            meal pay's wait, the fry offer (aged in full), then their slow growth in the dark */
@@ -1998,6 +2078,11 @@ bool progression_finger_company(const tank_t *t, int i) {
 void progression_tick(tank_t *t, float dt) {
     if (!s_booted) return;
     progression_cap_check(t, "progression_tick");   /* (any path, once a tick: a compare) */
+    if (t->packs_missing) {                          /* paused (tank.h packs_missing): nothing ages; the pack is looked for, the save window runs */
+        if ((s_resume_in -= dt) <= 0) { s_resume_in = PACKS_RESUME_S; packs_resume(t); }
+        save_window(t, dt);
+        return;
+    }
     if (t->cap_over && fish_held(t) < t->cap_over) t->cap_over = (int8_t)(fish_held(t) > POP_CAP ? fish_held(t) : 0);   /* (an older save's extra fish, gone: the cap again) */
     float aged = dt * progression_time_scale;                    /* growth: every awake second, lit or not */
     live_tended(t, aged);                                        /* the age, the growth sheds, the shed's clock */
@@ -2194,9 +2279,7 @@ void progression_tick(tank_t *t, float dt) {
     }
 
     /* saves: coalesced event saves + heartbeat */
-    s_since_save += dt; if (s_dirty) s_dirty_since += dt;
-    if ((s_dirty && s_since_save >= SAVE_MIN_GAP_S) || s_since_save >= SAVE_HEARTBEAT_S)
-        progression_save(t);
+    save_window(t, dt);
 }
 
 bool progression_save(tank_t *t) {
@@ -2283,9 +2366,19 @@ bool progression_save(tank_t *t) {
         sv.body_c[i] = f->body_c; sv.shed_s[i] = f->shed_s; sv.shed_damp[i] = f->shed_damp;
         sv.pack_print[i] = fish_print(f->preset, f->bold0, f->sociable0);
     }
-    sv.pack_v = 1; sv.pack_id = t->pack_id; sv.habitat_id = t->habitat_id;
+    sv.pack_v = 1;
+    if (t->packs_missing) {                          /* the pair the save named, as it came: never the defaults that stand in for it */
+        sv.pack_id = s_want.pack_id; sv.habitat_id = s_want.habitat_id;
+        sv.species_uid = s_want.species_uid; sv.habitat_uid = s_want.habitat_uid;
+        memcpy(sv.species_name, s_want.species_name, sizeof sv.species_name); memcpy(sv.habitat_name, s_want.habitat_name, sizeof sv.habitat_name);
+    } else {
+        const species_t *sp = tank_species(t); const habitat_t *hb = tank_habitat(t);
+        sv.pack_id = sp->builtin ? sp->id : 0; sv.habitat_id = hb->builtin ? hb->id : 0;   /* (the one-byte ids an older build reads: a built-in pack's alone) */
+        sv.species_uid = sp->uid; sv.habitat_uid = hb->uid;
+        snprintf(sv.species_name, sizeof sv.species_name, "%s", sp->name); snprintf(sv.habitat_name, sizeof sv.habitat_name, "%s", hb->name);
+    }
     for (int k = 0; k < HABITAT_HIDES_MAX; k++) sv.moist[k] = t->moist[k];
-    sv.dish_worms = tank_dish_here(t) ? t->dish_worms : 0;   /* (an aquarium's: always 0 - freshwater has no dish) */
+    sv.dish_worms = (t->packs_missing || tank_dish_here(t)) ? t->dish_worms : 0;   /* (an aquarium's: always 0 - freshwater has no dish) */
     sv.dish_farm = sv.dish_worms && t->dish_farm;            /* (P5) */
     sv.clean_run = s_clean_run;
     memcpy(sv.deco_x, t->deco_x, sizeof sv.deco_x);       /* (P5b) */

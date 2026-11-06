@@ -15,7 +15,7 @@ static void veg_sync(tank_t *t);   /* veg_growth[] = per-bed mean of veg_h[][] *
 const char *const GOAL_NAMES[GOAL_COUNT] = {
     "seek_food", "flee_shadow", "visit_bubbles", "follow_friend",                     /* the fish's (schema v2-v4) */
     "explore", "rest", "dart_play", "inspect_reef",
-    "hunt", "bask", "hide", "explore", "investigate", "dig", "rest",                  /* the lizard's (L1: species.c LZ_GOAL_NAMES) */
+    "hunt", "bask", "hide", "explore", "investigate", "dig", "rest",                  /* the lizard's (L1: packs/ptpk_write.c LZ_GOAL_NAMES) */
 };
 const char *const LZ_POSE_NAMES[LZ_POSES] = {
     "stand", "walk", "turn", "flick", "stalk", "lunge", "bask", "dig", "rest", "hidden", "peek", "standoff",
@@ -719,7 +719,7 @@ void tank_init(tank_t *t, uint32_t seed) {
     t->coral_x = 0; t->coral_z = DECOR_Z_FRONT; t->coral_rgb = 0; t->coral_growth = 0; t->coral_acc = 0;
     t->cluster_x = 0; t->cluster_z = DECOR_Z_FRONT; t->cluster_scheme = 0; t->cluster_growth = 0; t->cluster_acc = 0;
     t->tank_ms_bits = 0; t->tank_ms_seen = 0; t->ask_rr = 0; t->advisor_asks = 0;
-    t->pack_id = SPECIES_DEFAULT; t->habitat_id = HABITAT_DEFAULT; t->light_s = 0;
+    t->pack_id = SPECIES_DEFAULT; t->habitat_id = HABITAT_DEFAULT; t->packs_missing = false; t->light_s = 0;
     tank_terrain(t);                                  /* (the habitat's ground laid out here, before anything reads it) */
     {   const habitat_t *h = tank_habitat(t);         /* the humid hides at the habitat's start (the rest hold none) */
         for (int k = 0; k < HABITAT_HIDES_MAX; k++) t->moist[k] = k < h->n_hides && h->hides[k].kind == HIDE_HUMID ? h->moist_start : 0; }
@@ -3327,6 +3327,7 @@ static int ck_tick(tank_t *t, float dt) {
 }
 
 void tank_touch_hold(tank_t *t, float x, float y) {
+    if (t->packs_missing) return;                /* the packs are missing: a paused tank takes no hand (tank.h packs_missing) */
     tank_handled(t);
     if (t->tool == TOOL_MISTER) { t->mist_hold = true; t->mist_x = x; t->mist_y = y; return; }   /* the mister held on a lizard: the soak (touch_tick) */
     if (t->tool != TOOL_HAND) return;            /* a tool in hand: the glass takes its strokes and nothing else (2026-10-04) */
@@ -3334,6 +3335,7 @@ void tank_touch_hold(tank_t *t, float x, float y) {
 }
 
 void tank_touch_drag(tank_t *t, float x, float y) {
+    if (t->packs_missing) return;
     tank_handled(t);
     t->drag_active = true;
     if (!t->drag_has_prev) {
@@ -3411,6 +3413,7 @@ void tank_lock_tools(tank_t *t, bool lock) { t->tools_locked = lock; }
 bool tank_stroking(const tank_t *t) { return t->drag_has_prev && t->drag_dist >= WIPE_ENGAGE_PX; }
 
 void tank_feed(tank_t *t, float x, int n) {
+    if (t->packs_missing) return;
     tank_handled(t);
     if (PT_TERRARIUM) {                          /* THE CRICKETS (tank.h): n from the hand at x - or, over the dish, the dish filled */
         float dx = 0, dy;
@@ -3488,6 +3491,7 @@ int tank_shrimp_tap(tank_t *t, float x, float y) {
     return t->shrimp_taps;
 }
 void tank_touch_tap(tank_t *t, float x, float y) {
+    if (t->packs_missing) return;
     tank_handled(t);
     if (t->tool != TOOL_HAND) return;            /* a tool in hand: no feed, no light, no startle - DONE first (2026-10-04) */
     if (y - tank_glass_top(x) < FEED_ZONE_Y) { tank_feed(t, x, 3); return; }     /* surface tap = feed (the bowl's surface is its top glass) */
@@ -3716,22 +3720,25 @@ bool tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id) {
     const habitat_t *h = habitat_get(habitat_id);
     const species_t *s = species_get(pack_id);
     if (!habitat_fits(h, s) || s->world != PT_WORLD_ID) return false;   /* (an unknown id fits nothing; another world's pair is another bin's) */
-    t->habitat_id = habitat_id; t->pack_id = pack_id;
+    t->habitat_id = habitat_id; t->pack_id = pack_id; t->packs_missing = false;
     tank_terrain(t);                                    /* (its ground laid out now, on the tank's own task) */
     return true;
 }
 /* THE GROUND: each habitat's terrain on this board, laid out the first time it is asked for (tank_init and tank_set_packs
-   ask at once, so the tick's task lays it before the advisor's or a renderer's reads it) and kept: the habitat is const */
+   ask at once, so the tick's task lays it before the advisor's or a renderer's reads it) and kept: a habitat does not
+   change while the registry stands (habitat_generation: a pack added or dropped lays everything out again) */
 #define TERRAIN_CACHE 2                  /* (a bin lives in its world's habitat; the packs test stages the other world's too) */
 const terrain_t *tank_terrain(const tank_t *t) {
     static terrain_t laid[TERRAIN_CACHE];
     static const habitat_t *of[TERRAIN_CACHE];
+    static uint32_t gen[TERRAIN_CACHE];
     const habitat_t *h = tank_habitat(t);
+    const uint32_t now = habitat_generation();
     int k = 0;
-    for (; k < TERRAIN_CACHE && of[k]; k++) if (of[k] == h) return &laid[k];
+    for (; k < TERRAIN_CACHE && of[k]; k++) { if (gen[k] != now) break; if (of[k] == h) return &laid[k]; }   /* (a slot laid before the registry changed is the one to lay again) */
     if (k == TERRAIN_CACHE) k = TERRAIN_CACHE - 1;        /* (more habitats than that in one bin: the last slot is re-laid) */
     const glass_t g = glass_here();
-    of[k] = NULL; terrain_lay(h, &g, &laid[k]); of[k] = h;
+    of[k] = NULL; terrain_lay(h, &g, &laid[k]); of[k] = h; gen[k] = now;
     return &laid[k];
 }
 float tank_floor_x(float u) { const glass_t g = glass_here(); return glass_floor_x(&g, u); }
@@ -3869,7 +3876,7 @@ bool tank_mist_soak(tank_t *t, int i) {
  * DRIVES), a lizard's its pack's (species_t.sleep_*_per_h, P2b) */
 #define SLEEP_SLICE_S      300.0f  /* the night's growth and grazing interleave at this grain */
 void tank_tick_sleep(tank_t *t, float seconds) {
-    if (seconds <= 0) return;
+    if (seconds <= 0 || t->packs_missing) return;       /* (a tank whose packs are missing lives no night: tank.h packs_missing) */
     float h = seconds / 3600.0f;
     t->clock += seconds;
     const species_t *sp = tank_species(t);                  /* its pack's sleep (the fish pack's are THE FISH'S DRIVES: the same numbers) */
@@ -5325,6 +5332,7 @@ static uint32_t state_signature(const tank_t *t, int idx) {
 }
 
 void tank_tick(tank_t *t, float dt, advisor_fn advise) {
+    if (t->packs_missing) { t->hold_active = false; return; }   /* paused: nothing moves, nothing is asked, no time passes (tank.h packs_missing) */
     t->clock += dt;
     /* the light: on while the device is handled, off LIGHT_IDLE_S after the
      * last touch or movement (tank_handled) - a tank left on the desk goes

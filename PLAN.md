@@ -208,6 +208,8 @@ flowchart LR
 
 **P2d — tuning** against A13–A15 once a lizard model exists
 
+**P2e — packs as files (issue #4, phase 1: PTPK format and loader; check-all green, not committed)**: `docs/ptpk.md`, `common/packs/` (`ptpk.c` the loader, `ptpk_write.c` the encoder), `tools/ptpk.py` (dump/verify/build, a new pack for the card) + `packs/`. The C structs (`common/species/*.c`, `common/habitat/*.c`) are the source: an encoder emits `packs/*.ptpk` and the built-ins load through the same loader as folder packs; no TOML/Python generator. The registry serves the loaded packs, the save keeps the pack uids and a missing pack pauses the tank (PACK MISSING); `--selftest-ptpk`. Phases 2-4 (capabilities, module split, SD card) are open
+
 ### P3 — Render (`common/render.c`)
 **P3a — the art, standalone (done, 16db118)**: `render_lizard.c` (12 poses, 5 morphs, stage patterns, shed looks,
 body cache: ~0.4 ms cached / ~2.5–3 ms on a body build on the device, estimated), `render_scene_desert.c`, the mister

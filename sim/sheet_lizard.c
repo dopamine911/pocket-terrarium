@@ -64,7 +64,7 @@ static uint16_t g_strip[TANK_W * TANK_H];
 static float g_strip_sand;
 static void strip_make(void) {
     static uint16_t fb[480 * 480];
-    habitat_t h = HABITAT_PACK_DESERT; h.n_hides = 0; h.n_rocks = 0; h.n_ramps = 0; h.bask_surf = 0; h.bask_u = 3.0f;
+    habitat_t h = *habitat_get(HABITAT_DESERT); h.n_hides = 0; h.n_rocks = 0; h.n_ramps = 0; h.bask_surf = 0; h.bask_u = 3.0f;
     glass_t b = glass_of(0);
     scene_desert_draw(fb, b.w, &b, &h, true, NULL, 1.0f, NULL);
     for (int y = 0; y < TANK_H && y < b.h; y++) for (int x = 0; x < TANK_W && x < b.w; x++) g_strip[y * TANK_W + x] = fb[y * b.w + x];
@@ -83,8 +83,8 @@ static void sh_cell(int x, int y, int w, int h, int foot) {
 }
 
 static lizard_look_t sl_look(int morph, int stage, uint32_t seed) {
-    const species_t *sp = &SPECIES_PACK_GECKO;
-    lizard_look_t lk = { &sp->geom, &sp->morphs[morph % sp->n_morphs], sp->pattern[stage & 3], (uint8_t)stage, seed };
+    const species_t *sp = species_get(SPECIES_GECKO);
+    lizard_look_t lk = { &sp->geom, &sp->morphs[morph % sp->n_morphs], &sp->pattern[stage & 3], (uint8_t)stage, seed };
     return lk;
 }
 static const char *const STAGE_NAME[4] = { "HATCHLING", "JUVENILE", "ADULT", "ELDER" };
@@ -101,7 +101,7 @@ static void sh_lizard(int cx, int cy, int cw, int ch, int foot, const lizard_loo
 /* ---- the sheets ---- */
 static void sheet_morphs(const char *prefix) {
     const int CW = 136, CH = 62, FOOT = 46, LX = 78, TY = 16;
-    const species_t *sp = &SPECIES_PACK_GECKO;
+    const species_t *sp = species_get(SPECIES_GECKO);
     sh_begin(LX + 4 * CW + 4, TY + sp->n_morphs * CH + 4);
     for (int s = 0; s < 4; s++) sh_label(LX + s * CW + 4, 4, 0xe8e0d0, STAGE_NAME[s]);
     for (int m = 0; m < sp->n_morphs; m++) {
@@ -233,7 +233,7 @@ static void gecko_on(const lz_canvas_t *cv, const scene_desert_t *d, int s, floa
     draw_lizard(cv, lk, p, x, terrain_y(q, x) + TERRAIN_FEET_DY, scale);
 }
 static void scene_with_geckos(const glass_t *b, bool lit, const float *moist, float clock) {
-    const habitat_t *h = &HABITAT_PACK_DESERT;
+    const habitat_t *h = habitat_get(HABITAT_DESERT);
     vig_fill(b);
     scene_desert_draw(g_frame, b->w, b, h, lit, moist, lit ? 1.0f : 0.45f, g_vig);
     scene_desert_t d; scene_desert_layout(b, h, &d);
@@ -291,7 +291,7 @@ static void sheet_scenes(const char *prefix) {
     }
     /* the humid box, moisture 0 .. 1 */
     glass_t b = glass_of(0);
-    const habitat_t *h = &HABITAT_PACK_DESERT;
+    const habitat_t *h = habitat_get(HABITAT_DESERT);
     scene_desert_t d; scene_desert_layout(&b, h, &d);
     int hk = 1; for (int k = 0; k < d.n_hides; k++) if (d.hide[k].kind == HIDE_HUMID) hk = k;
     const int cw = 96, ch = 60;
@@ -312,7 +312,7 @@ static int ground_misses(void) {
     int bad = 0, pts = 0;
     for (int k = 0; k < GLASS_BOARDS; k++) {
         glass_t b = glass_of(k);
-        static scene_desert_t d; scene_desert_layout(&b, &HABITAT_PACK_DESERT, &d);
+        static scene_desert_t d; scene_desert_layout(&b, habitat_get(HABITAT_DESERT), &d);
         for (int s = 1; s < d.tr.n_paths; s++) {
             const terrain_path_t *q = &d.tr.path[s];
             for (float x = q->x[0]; x <= q->x[q->n - 1]; x += 1) {
@@ -498,7 +498,7 @@ static void cost(const char *prefix) {
     for (int b = 0; b < GLASS_BOARDS; b++) {
         glass_t sb = glass_of(b);
         int64_t t0 = sl_now_us();
-        for (int i = 0; i < 10; i++) scene_desert_draw(g_frame, sb.w, &sb, &HABITAT_PACK_DESERT, true, NULL, 1.0f, NULL);
+        for (int i = 0; i < 10; i++) scene_desert_draw(g_frame, sb.w, &sb, habitat_get(HABITAT_DESERT), true, NULL, 1.0f, NULL);
         double us = (double)(sl_now_us() - t0) / 10;
         SAY("  the desert's bake, %-6s %3dx%3d:               %6.0f us  ~%5.1f ms on the board (once per light switch / moisture step)\n", sb.name, sb.w, sb.h, us, us * k / 1000);
     }

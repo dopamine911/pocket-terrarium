@@ -12,9 +12,14 @@ string(REGEX REPLACE "^#define[ \t]+PT_NET[ \t]+([01]).*$" "\\1" PT_NET "${PT_NE
 set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON}/icons.c" "${COMMON}/progression.c" "${COMMON}/setup.c"
          "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c"
          "${COMMON}/species.c" "${COMMON}/habitat.c" "${COMMON}/terrain.c"
+         "${COMMON}/packs/ptpk.c" "${COMMON}/packs/ptpk_write.c" "${COMMON}/packs/builtin.c"
          "persist_port_esp.c" "rtc_port_pcf85063.c")
-# THE WORLD's owned const packs and renderer art. The simulator deliberately carries both packs for cross-world tests;
-# a release image carries only its own. render.c preprocessor-excludes the other live renderer before link resolution.
+# THE PACKS (docs/ptpk.md): the built-in packs' source is a const species_t / habitat_t in C (common/species, common/habitat);
+# packs_load_builtin encodes each (packs/ptpk_write.c) into a PTPK file on the main task's stack at boot and loads it through
+# the one loader (packs/ptpk.c, packs_add), as a file from a card would be. The table of them (packs/builtin.c) names only what
+# this image links: a release image carries its own world's pair, test-only packs left out - the simulator carries them all
+# (PT_ALL_PACKS). THE WORLD's owned const packs and renderer art; render.c preprocessor-excludes the other live renderer
+# before link resolution.
 if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
     list(APPEND SRCS "${COMMON}/species/fish.c" "${COMMON}/habitat/freshwater.c")
 else()

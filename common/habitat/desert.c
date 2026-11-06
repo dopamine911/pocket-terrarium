@@ -24,11 +24,18 @@
  * HABITAT_PACK_TEST_WARM (tests only): the same desert WARMER C warmer throughout - the floor, the spot, the hides - for
  * A16's test pack, whose band is the gecko's + 6 C. A16 asks the model to keep a differently built lizard in its own band;
  * that needs a place offering the band as the desert offers the gecko's. In the plain desert only the basking spot reaches
- * the test pack's band: the rule stub kept it there 16-42% of lit time, the model 42-70% (2026-11-05, --census-llm). */
+ * the test pack's band: the rule stub kept it there 16-42% of lit time, the model 42-70% (2026-11-05, --census-llm).
+ *
+ * THESE STRUCTS ARE THE PACKS' SOURCE (docs/ptpk.md "Authoring"): nothing reads them at run time. common/packs/ptpk_write.c
+ * encodes each into the PTPK file the loader takes at boot (packs_load_builtin, through packs_add) and tools/ptpk_emit.c writes
+ * them to packs/pt.habitat.desert.ptpk and packs/pt.test.desert-warm.ptpk (`make packs`). `.id` is the one-byte id old saves hold
+ * (the file's LEGACY_ID record), `.uid` the FNV-1a-32 of the pack's uid_ns (packs/builtin.h; --selftest-ptpk holds it to the
+ * hash). `builtin` is the registry's, filled in when the pack is loaded. */
 #include "habitat.h"
+#include "packs/builtin.h"
 
-#define DESERT_PACK(NAME, ID, TEST, WARMER) {                                                  \
-    .name = NAME, .id = ID, .world = WORLD_TERRARIUM, .test_only = TEST,                       \
+#define DESERT_PACK(NAME, ID, UID, TEST, WARMER) {                                             \
+    .name = NAME, .id = ID, .uid = UID, .world = WORLD_TERRARIUM, .test_only = TEST,           \
     .floor_warm_c = 31 + (WARMER), .floor_cool_c = 25 + (WARMER), .night_drop_c = 5, .rise_c = 4, \
     .bask_surf = 3, .bask_u = 0.20f, .bask_c = 35 + (WARMER), .bask_r_px = 70,                \
     .hides = {                                                                                 \
@@ -54,5 +61,7 @@
     .dish = true, .dish_u = 0.20f,                                                             \
 }
 
-const habitat_t HABITAT_PACK_DESERT    = DESERT_PACK("DESERT", HABITAT_DESERT, false, 0);
-const habitat_t HABITAT_PACK_TEST_WARM = DESERT_PACK("TEST WARM DESERT", HABITAT_TEST_WARM, true, 6);
+const habitat_t HABITAT_PACK_DESERT    = DESERT_PACK("DESERT", HABITAT_DESERT, HABITAT_UID_DESERT, false, 0);
+#if PT_ALL_PACKS
+const habitat_t HABITAT_PACK_TEST_WARM = DESERT_PACK("TEST WARM DESERT", HABITAT_TEST_WARM, HABITAT_UID_TEST_WARM, true, 6);
+#endif

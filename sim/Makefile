@@ -75,9 +75,10 @@ ifeq ($(NET),1)   # the networked bin's: updates, the passport, the link engine 
 APP_SRCS  += ../common/update.c ../common/passport.c ../common/link.c ../common/tank_link.c ../common/collection.c ../common/gift.c
 APP_SRCS  += net_port_sim.c selftest_link.c selftest_coll.c   # the pretend radio; the link's tests; the visitor collection's pages (0.4)
 endif
-APP_SRCS  += ../common/species.c ../common/species/gecko.c ../common/species/fish.c ../common/habitat.c ../common/habitat/desert.c ../common/habitat/freshwater.c   # the packs, both worlds' (P2a, P2b)
+APP_SRCS  += ../common/species.c ../common/habitat.c ../common/packs/ptpk.c ../common/packs/ptpk_write.c ../common/packs/builtin.c packs_dir.c   # the pack registry and the PTPK loader (P2a, P2b; issue #4 phase 1), the encoder and the built-in table; the simulator's folder of packs
+APP_SRCS  += ../common/species/gecko.c ../common/species/fish.c ../common/habitat/desert.c ../common/habitat/freshwater.c   # the built-in packs' source: both worlds' const species_t / habitat_t, the test packs too (PT_ALL_PACKS)
 APP_SRCS  += ../common/terrain.c   # a habitat's ground laid out on a glass: the walk, the heat, the scene, the rules (P2c)
-APP_SRCS  += selftest_packs.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the L1 encoder against the Python fixture (R4)
+APP_SRCS  += selftest_packs.c selftest_ptpk.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the PTPK format, loader and a tank without its packs (issue #4 phase 1); the L1 encoder against the Python fixture (R4)
 APP_SRCS  += selftest_walk.c  # the terrarium's walk, its goals and a free-running census (P2b)
 ifeq ($(WORLD),terrarium)
 APP_SRCS  += ../common/render_lizard.c ../common/render_scene_desert.c sheet_lizard.c   # this world's lizard/desert art; --lizard-sheet (P3a)
@@ -87,8 +88,25 @@ APP_SRCS  += sim_tmp.c          # the run's own scratch directory: no selftest n
 LVGL_SRCS := $(shell find lvgl/src -name '*.c')
 OBJS      := $(patsubst %.c,$(BUILD)/%.o,$(filter-out ../common/%,$(APP_SRCS)) $(LVGL_SRCS)) $(patsubst ../common/%.c,$(BUILD)/common/%.o,$(filter ../common/%,$(APP_SRCS)))
 
+# THE BUILT-IN PACKS' FILES (issue #4 phase 1, docs/ptpk.md "Authoring"): the const species_t / habitat_t of common/species and
+# common/habitat are the packs' source; tools/ptpk_emit.c encodes them (common/packs/ptpk_write.c, the table in builtin.c) into
+# packs/<uid_ns>.ptpk, the files a card gets. `make packs` builds that emitter and runs it - a file is rewritten only when its
+# bytes differ - and the default build and `make check` run it, so those files cannot be stale against the sim's own built-ins.
+# Its objects are the sim's own, compiled with its CFLAGS (every build here is -DPT_ALL_PACKS=1: the table holds all six
+# packs): the encoder, the table and the four const definitions, no registry.
+EMIT      := $(BUILD)/ptpk_emit
+EMIT_OBJS := $(BUILD)/tools/ptpk_emit.o $(patsubst %,$(BUILD)/common/%.o,packs/ptpk_write packs/builtin species/gecko species/fish habitat/desert habitat/freshwater)
+
+all: $(OUT) packs
+
 $(OUT): $(OBJS)
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+
+$(EMIT): $(EMIT_OBJS)
+	$(CC) -o $@ $(EMIT_OBJS) $(ARCH) -lm
+
+packs: $(EMIT)
+	@$(EMIT) ../packs
 
 # THE SELFTESTS, by world (P2b): the shared ones hold in both bins; the aquarium's assert the fish - the swim, the
 # grass and the pieces they swim among, the shop's meals and pieces, the fish brain's census - and stay as pocket-tank
@@ -103,6 +121,7 @@ SELFTESTS_SHARED := --selftest-battery --selftest-card --selftest-keeper \
              --selftest-saves --selftest-update --selftest-genes --selftest-advanced --selftest-model --selftest-restore --selftest-shelf --selftest-shelf-safe --selftest-shelf-away --selftest-temper --selftest-board --selftest-critter-nav --selftest-touch-lock --selftest-shelf-rename --selftest-bake-order --selftest-order-squares --selftest-clock --selftest-under-card
 SELFTESTS_SHARED += --selftest-double-tap   # a double tap never buys: the shop, MY TANKS, a card's SELL (0.4 rc)
 SELFTESTS_SHARED += --selftest-packs        # every pack of both worlds against its rules; this world's pairs held, the other's refused (P2a, P2b)
+SELFTESTS_SHARED += --selftest-ptpk         # the pack file format and its loader: every built-in pack encoded from its const struct, read back equal, the file in packs/ the same; hostile files refused, a folder, a tank without its pack (issue #4 phase 1)
 SELFTESTS_AQUARIUM := --selftest --selftest-hunger --selftest-pop --selftest-fry --selftest-sleep --selftest-tend --selftest-llm \
              --selftest-breather --selftest-hold --selftest-depth --selftest-depth-pop --selftest-hold-emerge --selftest-fish-pair
 SELFTESTS_AQUARIUM += --selftest-shop   # the meals the fish eat at the surface, the pieces
@@ -145,7 +164,7 @@ endif
 # worlds on one board; `make check-net` the network's tests (SELFTESTS_NET) in the networked bin of the world built;
 # `make check-all` both worlds on all four boards, and the network's tests in both worlds' networked bins on each -
 # the gate for anything in common/ (docs/BOARDS.md)
-check: $(OUT)
+check: $(OUT) packs
 	@set -e; for test in $(SELFTESTS); do echo "RUN $(OUT) $$test"; ./$(OUT) "$$test"; done
 
 ifeq ($(NET),1)
@@ -185,6 +204,10 @@ $(BUILD)/common/%.o: ../common/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/tools/%.o: ../tools/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -194,6 +217,6 @@ clean:
 	rm -rf build-aquarium build-round-aquarium build-watch-aquarium build-square-aquarium fishsim-aquarium fishsim-round-aquarium fishsim-watch-aquarium fishsim-square-aquarium
 	rm -rf build*-net fishsim*-net
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(EMIT_OBJS:.o=.d)
 
-.PHONY: check check-net check-worlds check-net-worlds check-all check-nomodel clean
+.PHONY: all packs check check-net check-worlds check-net-worlds check-all check-nomodel clean

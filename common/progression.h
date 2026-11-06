@@ -166,6 +166,11 @@ void progression_stage_arrival(tank_t *t);
 /* the device woke (a deep-sleep boot, or the grace's quick wake): a staged
  * fry that missed its live birth is born now, in the grass */
 void progression_woke(tank_t *t);
+/* a tank whose save names a pair this build cannot hold (tank.h packs_missing, docs/ptpk.md "A tank and its packs") is paused
+ * and keeps that pair: this is the name of the pack that is not here as the save knew it, "" when the save did not say
+ * (an older one) or nothing is missing. progression_tick looks for the pack once a second and resumes the tank when it is
+ * there; every save in between writes the saved pair back unchanged */
+const char *progression_packs_missing_name(const tank_t *t);
 bool progression_arrival_pending(void);
 float progression_age_s(const tank_t *t, int idx);        /* grown seconds */
 /* director/debug: put a fish's tended clock at `seconds` and apply the stage

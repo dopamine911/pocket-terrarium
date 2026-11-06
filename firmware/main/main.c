@@ -58,6 +58,7 @@
 #include "batlog.h"
 #include "codec_port.h"
 #include "progression.h"
+#include "packs/ptpk.h"      /* packs_init: the built-in packs, encoded and loaded before any task reads one (docs/ptpk.md) */
 #include "audio_port.h"
 #include "audio.h"
 #include "notice.h"
@@ -1819,6 +1820,7 @@ void device_provision_request(void) {
 #endif
 
 void app_main(void) {
+    packs_init();     /* the species and habitat registry, once, first thing: it encodes each built-in pack from its const struct into a 2 KB buffer on THIS stack (the main task's 16 KB) and loads it - so no small task may be the first to ask (a later call would load it lazily, from that task's stack), and none starts before it (docs/ptpk.md "The loader") */
     ESP_LOGI(TAG, "pocket-terrarium (on pocket-tank v%s %s, build %s) for %s boot%s", PT_RELEASE, PT_RELEASE_STAGE, version_port_string(), PT_BOARD,
              esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 || esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 ? " (woken by button)" : "");
     gpio_config_t btn = { .pin_bit_mask = 1ULL << BTN_SLEEP, .mode = GPIO_MODE_INPUT,

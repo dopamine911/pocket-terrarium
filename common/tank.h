@@ -1121,11 +1121,16 @@ typedef struct tank {
     double   link_restore_at;      /* > 0: at this clock, fish still away come home from bubbles (a boot found them away) */
     uint32_t uid_n;                /* IDs this tank has handed out (mixed into the next when no entropy hook is set) */
     /* the packs (pocket-terrarium P2a): the species pack and the habitat it lives in (species.h, habitat.h) -
-     * SPECIES_DEFAULT in HABITAT_DEFAULT for a new tank, only a pair that fits (tank_set_packs); saved. moist:
-     * each of the habitat's hides' moisture 0..1 (by its index; only a humid hide's is read: docs/shed.md
-     * "Moisture"), the habitat's moist_start for a new tank; saved. light_s: seconds since the light last
-     * switched, either way (the species' phase, tank_phase_now); not saved */
+     * SPECIES_DEFAULT in HABITAT_DEFAULT for a new tank, only a pair that fits (tank_set_packs); saved (as the packs'
+     * uids too: progression.c). moist: each of the habitat's hides' moisture 0..1 (by its index; only a humid hide's is
+     * read: docs/shed.md "Moisture"), the habitat's moist_start for a new tank; saved. light_s: seconds since the light
+     * last switched, either way (the species' phase, tank_phase_now); not saved. packs_missing (docs/ptpk.md "A tank and
+     * its packs"): the save named a pair this build cannot hold - a pack that is not loaded, a pair that does not fit,
+     * another world's - so the tank holds the defaults only to be drawn and is PAUSED: tank_tick and tank_tick_sleep do
+     * nothing, the hand does nothing on the glass, progression ages nothing, and progression.c keeps the saved pair (its
+     * uids and every animal's tail as loaded) for every save until the pack comes (progression_tick looks for it); not saved */
     uint8_t  pack_id, habitat_id;
+    bool     packs_missing;
     float    moist[HABITAT_HIDES_MAX];
     float    light_s;
     /* the mister in hand (TOOL_MISTER, docs/shed.md "The mister"): the humid hides this stroke has misted (a

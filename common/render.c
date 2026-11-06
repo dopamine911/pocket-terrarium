@@ -6218,7 +6218,7 @@ static bool ts_lizard(ctx_t *c, const tank_t *t, int i, const habitat_t *h, bool
     if (sp->plan != PLAN_LIZARD) return false;
     const int cover = ts_behind(t, i);
     if (f->hide >= 0 && f->pose != LZ_POSE_PEEK) return false;         /* in a hide: out of sight */
-    lizard_look_t lk = { &sp->geom, lizard_morph_of(sp, f), sp->pattern[f->stage & 3], (uint8_t)f->stage, f->uid };
+    lizard_look_t lk = { &sp->geom, lizard_morph_of(sp, f), &sp->pattern[f->stage & 3], (uint8_t)f->stage, f->uid };
     lizard_pose_t p = lizard_pose(f->pose, f->yaw);
     p.yaw_tail = f->yaw_tail; p.pitch = f->slope;
     p.phase = f->lz_phase; p.blink = f->lz_blink; p.tongue = f->lz_tongue; p.fat = f->lz_fat;
@@ -8282,7 +8282,7 @@ static void lizard_still(ctx_t *c, float x, float y, float size, const fish_t *f
     const morph_t flat = { "", f->color, f->color };            /* a silhouette (the keeper page's not-yet, the empty places: one colour
                                                                    given for all three) is the lizard in that colour, not in its morph's */
     const bool silhouette = f->color == f->fin && f->fin == f->accent;
-    lizard_look_t lk = { &sp->geom, silhouette ? &flat : lizard_morph_of(sp, f), sp->pattern[f->stage & 3], (uint8_t)f->stage, who->uid ? who->uid : f->color };
+    lizard_look_t lk = { &sp->geom, silhouette ? &flat : lizard_morph_of(sp, f), &sp->pattern[f->stage & 3], (uint8_t)f->stage, who->uid ? who->uid : f->color };
     float r[4], e[4]; fish_box(SHAPE_CLASSIC, FINS_CLASSIC, (stage_t)f->stage, r); fish_box(SHAPE_CLASSIC, FINS_CLASSIC, STAGE_ELDER, e);
     float w = LZ_STILL_K * (r[1] - r[0]) * size;
     if (room > 0 && w > room * (e[1] - e[0]) * size) w = room * (e[1] - e[0]) * size;
@@ -9541,13 +9541,13 @@ static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
         } else return MS_TAP_NONE;
     } else if (tank_row) {
         if (k < 0) {
-            snprintf(g_ms_title, sizeof g_ms_title, "%s", PT_TERRARIUM ? tank_habitat(t)->name : "TANK");
+            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", PT_TERRARIUM ? tank_habitat(t)->name : "TANK");   /* (a pack's name is up to 23: the title holds 15) */
             snprintf(g_ms_caption, sizeof g_ms_caption, WORLD_STR("%d OF %d FISH SO FAR", "%d OF %d LIZARDS SO FAR"), t->n_fish, progression_pop_cap(t));
             g_ms_lit = true; g_ms_icon = NULL; g_ms_fish = -1;
         } else {
             uint32_t bit = tank_badge(t, k)->bit; bool on = (t->tank_ms_bits & bit) != 0;
             g_ms_tpage = k / MSP_PER_ROW;            /* the arrows can cross pages: the row follows */
-            snprintf(g_ms_title, sizeof g_ms_title, "%s", on ? (PT_TERRARIUM ? tank_habitat(t)->name : "TANK") : "NOT YET");
+            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", on ? (PT_TERRARIUM ? tank_habitat(t)->name : "TANK") : "NOT YET");
             snprintf(g_ms_caption, sizeof g_ms_caption, "%s", TMS_NAMES[bit_index(bit)]);
             g_ms_lit = on; g_ms_icon = tank_badge(t, k)->icon; g_ms_fish = -1;
         }
@@ -9811,8 +9811,13 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
     const char *caption2 = NULL;                              /* a second line: the title and both move up */
     const icon_t *ic = NULL;
     const fish_t *f = fish >= 0 && fish < t->n_fish ? &t->fish[fish] : NULL;
-    if (kind == 6 || kind == 7) {                             /* NOTICE_MODEL_DAMAGED (2026-10-21): the AI model is damaged; */
-        if (kind == 7) {                                      /* NOTICE_WRONG_BOARD (0.3.9.3): this version is another board's */
+    if (kind == 6 || kind == 7 || kind == 8) {                /* NOTICE_MODEL_DAMAGED (2026-10-21): the AI model is damaged; */
+        if (kind == 8) {                                      /* NOTICE_PACK_MISSING (issue #4 phase 1): the tank's save names a pack this build does not have */
+            const char *w = progression_packs_missing_name(t);
+            snprintf(title, sizeof title, "PACK MISSING");
+            snprintf(caption, sizeof caption, "%s", w[0] ? w : "A PACK THIS TANK USES");
+            caption2 = WORLD_STR("THE TANK WAITS FOR IT", "THE TERRARIUM WAITS FOR IT");
+        } else if (kind == 7) {                               /* NOTICE_WRONG_BOARD (0.3.9.3): this version is another board's */
             const char *w = pt_board_words(board_port_hw());
             snprintf(title, sizeof title, "WRONG VERSION");
             snprintf(caption, sizeof caption, "THIS IS THE %s", w ? w : "BOARD");

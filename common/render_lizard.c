@@ -246,7 +246,7 @@ bool   lizard_last_box(int *x0, int *y0, int *x1, int *y1) {
    TANGERINE 1, ALBINO 2, BLIZZARD 3, MACK SNOW 4 (species/gecko.c) */
 static const uint8_t BY_BODY[LOOK_N] = { 0, 1, 0, 4, 0, 2, 3, 3, 4 };
 int lizard_morph_index(const species_t *sp, const fish_t *f) {
-    if (!sp || !sp->morphs || !sp->n_morphs) return -1;
+    if (!sp || !sp->n_morphs) return -1;
     const int g = tank_gene(f, GENE_BODY);
     return BY_BODY[g < 0 || g >= LOOK_N ? 0 : g] % sp->n_morphs;
 }
@@ -587,7 +587,7 @@ static void lz_build(lz_slot_t *sl, const lz_spine_t *sp, const lz_bctx_t *b) {
 
 /* ---- the palette (the last few kept: a morph, a stage, a shed, the night's dim) ---- */
 static const lz_art_t *lz_art_of(const morph_t *m, lz_art_t *own) {
-    if (m && m->name) for (int i = 0; i < LZ_N_ARTS; i++) if (strcmp(m->name, LZ_ARTS[i].name) == 0) return &LZ_ARTS[i];
+    if (m && m->name[0]) for (int i = 0; i < LZ_N_ARTS; i++) if (strcmp(m->name, LZ_ARTS[i].name) == 0) return &LZ_ARTS[i];
     uint32_t body = m ? m->body : 0xd8b878, acc = m ? m->accent : 0x403028;    /* a morph not listed: its two colours */
     own->name = NULL; own->ground = body; own->pattern = acc;
     own->hatch_band = acc; own->hatch_ground = body;
@@ -926,7 +926,7 @@ static int lz_class(int kind) {
     }
 }
 static int lz_pat_kind(const pattern_t *p) {                                     /* 1 banded, 2 spotted, 0 plain */
-    if (!p || !p->name) return 0;
+    if (!p || !p->name[0]) return 0;
     return strcmp(p->name, "BANDED") == 0 ? 1 : strcmp(p->name, "SPOTTED") == 0 ? 2 : 0;
 }
 

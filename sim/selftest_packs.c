@@ -165,8 +165,8 @@ int selftest_packs(void) {
            held, PT_WORLD_NAME, PT_TERRARIUM ? "; the test pack lives in the desert" : "");
     /* the rules refuse what they must: one broken copy of the gecko (and the desert) each */
     species_t b; habitat_t hb; int refused = 0;
-    #define REFUSE_S(stmt, what) do { b = SPECIES_PACK_GECKO; stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
-    #define REFUSE_H(stmt, what) do { hb = HABITAT_PACK_DESERT; stmt; if (habitat_check(&hb, why, sizeof why)) PF("a desert with %s passed its rules", what); refused++; } while (0)
+    #define REFUSE_S(stmt, what) do { b = *species_get(SPECIES_GECKO); stmt; if (species_check(&b, why, sizeof why)) PF("a gecko with %s passed its rules", what); refused++; } while (0)
+    #define REFUSE_H(stmt, what) do { hb = *habitat_get(HABITAT_DESERT); stmt; if (habitat_check(&hb, why, sizeof why)) PF("a desert with %s passed its rules", what); refused++; } while (0)
     #define REFUSE_HW(stmt, what, word) do { REFUSE_H(stmt, what); if (!strstr(why, word)) PF("a desert with %s was refused for another reason: %s", what, why); } while (0)
     REFUSE_S(b.t_lo = b.t_hi + 1, "its band out of order");
     REFUSE_S(b.t_hi = b.t_lo + 1.5f, "a comfort band 1.5 C wide");
@@ -196,8 +196,8 @@ int selftest_packs(void) {
     REFUSE_HW(hb.ramps[0].u_lo = 1.0f, "a ramp's foot at the glass", "could not reach");
     REFUSE_HW(hb.ramps[1].u_lo = 0.9f, "a ramp ending off its ledge", "off its surfaces");
     REFUSE_HW(hb.rise_c = -1, "air colder up toward the lamp", "cools toward the lamp");
-    b = SPECIES_PACK_GECKO; b.world = WORLD_AQUARIUM;
-    if (habitat_fits(&HABITAT_PACK_DESERT, &b)) PF("a fish of the aquarium fits the desert");
+    b = *species_get(SPECIES_GECKO); b.world = WORLD_AQUARIUM;
+    if (habitat_fits(habitat_get(HABITAT_DESERT), &b)) PF("a fish of the aquarium fits the desert");
     printf("selftest-packs: the rules refuse %d broken packs (band, rates, stages, shed cycle, cap, morphs, a climber, a dusk schedule, no home; "
            "the desert reversed, without a humid hide, hides on one spot, a cold lamp, wet past 1; its ground with a step, a rock out of reach, "
            "a ledge on the floor, no room under a rock, the basking spot under a rock, a hide under a ramp, a ramp at the glass, a ramp off its "

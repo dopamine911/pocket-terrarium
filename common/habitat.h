@@ -2,17 +2,19 @@
  *
  * Everything about the enclosure the engine would otherwise hardcode - the floor's temperature profile and the air's
  * rise toward the lamp, the ground (the floor, its rocks and the ramps between them), the basking spot, the hides, the
- * humid hide's moisture - is a compiled-in `const habitat_t` (common/habitat/<name>.c), the same pattern as the species
- * packs (species.h). A terrarium stores both ids (tank_t.habitat_id, tank_t.pack_id; saved), and holds only a pair that
- * fits: the species lists the habitat (species_t.habitats) - tank_set_packs refuses anything else. --selftest-packs
- * checks every habitat (habitat_check, its ground on all four boards: terrain.h THE RULES) and that every habitat's lit
- * ground reaches each fitting species' comfort band somewhere.
+ * humid hide's moisture - is a habitat pack: a PTPK file (docs/ptpk.md) loaded by common/packs/ptpk.c into a `habitat_t` of
+ * the registry below (habitat.c: a fixed pool), the same pattern as the species packs (species.h); a built-in habitat's
+ * source is a const habitat_t in C (common/habitat/<name>.c) that the firmware encodes into such a file at boot. A
+ * terrarium stores both ids (tank_t.habitat_id, tank_t.pack_id; the save adds the packs'
+ * uids), and holds only a pair that fits: the species lists the habitat (species_t.habitats) - tank_set_packs refuses
+ * anything else. --selftest-packs checks every habitat (habitat_check, its ground on all four boards: terrain.h THE
+ * RULES) and that every habitat's lit ground reaches each fitting species' comfort band somewhere.
  *
  * Positions are fractions of the glass, so a habitat lays out on every board (terrain.h): along the floor, u from the
  * warm, left end (0) to the cool, right end (1) of its span (tank.h PLACE_*); a rock's points (u, v) across the glass at
  * their height and up it. Temperatures are degrees C; times are tended seconds (awake in full, asleep at
- * SLEEP_GROWTH_FRAC). Two habitats: the terrarium's desert, and the aquarium's freshwater (P2b: pocket-tank's water as a
- * pack - a heater's even 25 C, no lamp, no hides, no rocks). */
+ * SLEEP_GROWTH_FRAC). Built in: the terrarium's desert, and the aquarium's freshwater (P2b: pocket-tank's water as a
+ * pack - a heater's even 25 C, no lamp, no hides, no rocks), and A16's warm desert for the tests. */
 #ifndef HABITAT_H
 #define HABITAT_H
 #include <stdbool.h>
@@ -47,10 +49,13 @@ typedef struct {
 } ramp_t;
 
 typedef struct {
-    const char *name;                   /* "DESERT" */
-    uint8_t     id;                     /* stored in the save; never reused; 1..31 (species_t.habitats is a bit per id) */
+    char        name[PACK_NAME_MAX];    /* "DESERT" */
+    uint8_t     id;                     /* the registry's one-byte handle (tank_t.habitat_id): a built-in habitat's is the one old saves hold,
+                                           never reused, 1..31 (species_t.habitats is a bit per id); any other is given a free 3..30 when loaded */
+    bool        builtin;                /* shipped in the firmware (see species_t.builtin) */
     world_t     world;                  /* the build it belongs to: only a species of the same world lives in it */
     bool        test_only;              /* compiled in for the tests (A16's warm desert), never offered to a keeper */
+    uint32_t    uid;                    /* the pack's identity for good: FNV-1a-32 of its uid string (docs/ptpk.md) - what a save stores */
     /* the air while lit: the floor from its warm end to its cool end, straight across (an aquarium's may be even), and
        rise_c warmer at the glass's top than on the floor under it - the lamp's heat rising, straight up with v; dark, the
        lamp out, all of it night_drop_c cooler than the lit floor and no rise */
@@ -75,9 +80,10 @@ typedef struct {
     float       dish_u;
 } habitat_t;
 
-#define HABITAT_DESERT     1            /* common/habitat/desert.c (the terrarium) */
-#define HABITAT_FRESHWATER 2            /* common/habitat/freshwater.c (the aquarium) */
-#define HABITAT_TEST_WARM  31           /* common/habitat/desert.c: A16's - the desert 6 C warmer throughout, for the test pack */
+/* the built-in habitats' one-byte ids: the ones old saves hold - each const habitat_t's `.id`, and its file's LEGACY_ID record */
+#define HABITAT_DESERT     1            /* common/habitat/desert.c (the terrarium; pt.habitat.desert) */
+#define HABITAT_FRESHWATER 2            /* common/habitat/freshwater.c (the aquarium; pt.habitat.freshwater) */
+#define HABITAT_TEST_WARM  31           /* common/habitat/desert.c: A16's - the desert 6 C warmer throughout, for the test pack (pt.test.desert-warm) */
 #if PT_TERRARIUM
 #define HABITAT_DEFAULT HABITAT_DESERT
 #else
@@ -85,11 +91,19 @@ typedef struct {
 #endif
 /* the dish's half-width on the sand (the rules keep it clear of the hides; render.c draws it this wide) */
 #define HABITAT_DISH_HW 14.0f
-extern const habitat_t HABITAT_PACK_DESERT, HABITAT_PACK_FRESHWATER, HABITAT_PACK_TEST_WARM;
 
-const habitat_t *habitat_get(uint8_t id);      /* NULL: no such habitat */
+/* THE REGISTRY, as species.h's: the habitats loaded, built-in ones first (packs_init), in a fixed pool */
+const habitat_t *habitat_get(uint8_t id);      /* by the one-byte handle; NULL: no such habitat */
+const habitat_t *habitat_by_uid(uint32_t uid); /* by the pack's uid; NULL: not loaded */
 int  habitat_count(void);
 const habitat_t *habitat_at(int i);
+/* the loader's, as species_slot / species_commit / species_seen / species_drop_loaded (habitat ids: a built-in pack's own
+ * 1..31, any other the lowest free 3..30); a habitat added re-derives every species' `habitats` mask (species_relink) */
+habitat_t *habitat_slot(void);
+bool habitat_commit(habitat_t *slot, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n);
+pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by);
+void habitat_drop_loaded(void);
+uint32_t habitat_generation(void);             /* counts every habitat added or dropped: what a cache of a habitat's layout must be laid again on (tank.c tank_terrain) */
 /* a habitat's own rules (--selftest-packs), its world's: a terrarium's - an ordered, positive layout, a warm end warmer
  * than its cool end, a lamp that warms its spot, at least one humid hide; an aquarium's - the floor may be even, a lamp
  * and hides are its own business (none in freshwater); every one's moisture and humidity in 0..1, and its ground well
