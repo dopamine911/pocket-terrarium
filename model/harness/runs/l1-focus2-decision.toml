@@ -1,0 +1,22 @@
+# l1-focus2 with the loss on the decision only (train.py --loss decision): whole docs from BOS,
+# targets only on the tokens after `->` (goal, urgency, digit), the checkpoint kept at the best
+# goal NLL. Same data, model, seeds and panels, to compare against l1-focus2.
+
+model = "l1-14m"
+dataset = "l1-focus2"
+iters = 5000
+batch = 64
+lr = 6e-4
+loss = "decision"
+seeds = [1337, 1, 2]
+mode = "training"
+cpu = false
+export = true
+
+[[probes]]
+n = 400
+seed = 11
+
+[[probes]]
+n = 400
+seed = 23
