@@ -40,7 +40,8 @@ static pp_mem_t *s_m;
 static tank_t   *s_tank;
 static int       s_tab, s_page, s_conf, s_pend;
 static int       s_row;                                      /* the confirm's / the pending install's row: an index into the tab's rows */
-static uint32_t  s_uid;                                      /* the confirm's / the pending removal's pack */
+static uint32_t  s_uid;                                      /* the confirm's / the pending removal's pack: (s_kind, s_uid) is its identity (a species and a habitat may share a uid) */
+static int       s_kind;
 static bool      s_scanned, s_drawn, s_changed;
 static char      s_msg[LIB_WHY_MAX + 32];
 static char      s_scan_why[LIB_WHY_MAX];
@@ -105,14 +106,14 @@ void pp_close(void) {
 
 /* ---- one row's words ---- */
 static const char *kind_word(int k) { return k == PTPK_KIND_SPECIES ? "SPECIES" : k == PTPK_KIND_HABITAT ? "HABITAT" : k == PTPK_KIND_MODEL ? "MODEL" : "PACK"; }
-typedef struct { char name[PACK_NAME_MAX + 8]; char detail[LIB_WHY_MAX + 24]; const char *btn; uint32_t uid; uint32_t rgb; } row_t;
+typedef struct { char name[PACK_NAME_MAX + 8]; char detail[LIB_WHY_MAX + 24]; const char *btn; uint32_t uid; int kind; uint32_t rgb; } row_t;
 static void row_at(int idx, row_t *r) {        /* idx: the row's number in the whole tab */
     memset(r, 0, sizeof *r); r->rgb = MSP_QUIET;
     if (s_tab == PP_TAB_INSTALLED) {
         const lib_inst_t *p = library_installed_at(idx);
         if (!p) return;
         snprintf(r->name, sizeof r->name, "%s", p->name[0] ? p->name : "UNNAMED");
-        r->uid = p->uid; r->btn = "REMOVE";
+        r->uid = p->uid; r->kind = p->kind; r->btn = "REMOVE";
         int slot = idx - s_page * pp_rows_per_page();
         if (p->loaded) snprintf(r->detail, sizeof r->detail, "%s", kind_word(p->kind));
         else { snprintf(r->detail, sizeof r->detail, "NOT LOADED: %s", slot >= 0 && slot < PP_ROWS_MAX ? s_m->why[slot] : ""); r->rgb = PP_BAD; }
@@ -120,7 +121,7 @@ static void row_at(int idx, row_t *r) {        /* idx: the row's number in the w
     }
     const lib_row_t *w = &s_m->w.row[idx];
     snprintf(r->name, sizeof r->name, "%s", w->name[0] ? w->name : w->file);
-    r->uid = w->uid;
+    r->uid = w->uid; r->kind = w->kind;
     switch (w->status) {
     case LIB_INSTALLABLE: snprintf(r->detail, sizeof r->detail, "NEW %s", kind_word(w->kind)); r->btn = "INSTALL"; r->rgb = PP_OK; break;
     case LIB_INSTALLED:   snprintf(r->detail, sizeof r->detail, "%s - INSTALLED", kind_word(w->kind)); r->btn = "REMOVE"; break;
@@ -198,18 +199,18 @@ bool pp_row_text(int i, char *name, size_t nn, char *detail, size_t dn) {
 }
 
 /* ---- what a tank lives on ---- */
-static bool lives_on(uint32_t uid) {
+static bool lives_on(int kind, uint32_t uid) {          /* the bound tank's species (or habitat) IS this pack */
     if (!s_tank || s_tank->packs_missing || !uid) return false;
-    return tank_species(s_tank)->uid == uid || tank_habitat(s_tank)->uid == uid;
+    return kind == PTPK_KIND_SPECIES ? tank_species(s_tank)->uid == uid : kind == PTPK_KIND_HABITAT && tank_habitat(s_tank)->uid == uid;
 }
 
-bool pp_confirm_lives(void) { return s_m && s_conf != CONF_NONE && lives_on(s_uid); }
+bool pp_confirm_lives(void) { return s_m && s_conf != CONF_NONE && lives_on(s_kind, s_uid); }
 
 /* ---- the tap ---- */
-static void ask_remove(uint32_t uid, int row) {
+static void ask_remove(int kind, uint32_t uid, int row) {
     char why[LIB_WHY_MAX];
-    if (!library_removable(uid, why, sizeof why)) { say(why); return; }
-    s_uid = uid; s_row = row; s_conf = CONF_REMOVE;
+    if (!library_removable(kind, uid, why, sizeof why)) { say(why); return; }
+    s_kind = kind; s_uid = uid; s_row = row; s_conf = CONF_REMOVE;
 }
 int pp_tap(float x, float y) {
     if (!s_m || s_pend) return PP_NONE;
@@ -233,8 +234,8 @@ int pp_tap(float x, float y) {
         int idx = s_page * pp_rows_per_page() + i;
         row_t row; row_at(idx, &row);
         if (!row.btn) return PP_NONE;
-        if (!strcmp(row.btn, "REMOVE")) { ask_remove(row.uid, idx); return PP_TICK; }
-        s_row = idx; s_uid = row.uid;
+        if (!strcmp(row.btn, "REMOVE")) { ask_remove(row.kind, row.uid, idx); return PP_TICK; }
+        s_row = idx; s_kind = row.kind; s_uid = row.uid;
         if (!strcmp(row.btn, "UPDATE")) { s_conf = CONF_UPDATE; return PP_TICK; }
         s_pend = PEND_INSTALL; s_drawn = false;                   /* INSTALL: nothing to lose, no question */
         return PP_TICK;
@@ -243,17 +244,17 @@ int pp_tap(float x, float y) {
 }
 
 /* ---- the blocking calls ---- */
-static void rows_after_install(int i, uint32_t uid) {   /* the scan's rows say what is true now, as far as the card's own files can tell */
+static void rows_after_install(int i, int kind, uint32_t uid) {   /* the scan's rows say what is true now, as far as the card's own files can tell */
     for (int j = 0; j < s_m->w.n; j++) {
         lib_row_t *r = &s_m->w.row[j];
-        if (r->uid != uid || (r->status != LIB_INSTALLABLE && r->status != LIB_UPDATE && r->status != LIB_INSTALLED)) continue;
+        if (r->uid != uid || r->kind != kind || (r->status != LIB_INSTALLABLE && r->status != LIB_UPDATE && r->status != LIB_INSTALLED)) continue;
         r->status = j == i ? LIB_INSTALLED : LIB_UPDATE;
     }
 }
-static void rows_after_remove(uint32_t uid) {
+static void rows_after_remove(int kind, uint32_t uid) {
     for (int j = 0; j < s_m->w.n; j++) {
         lib_row_t *r = &s_m->w.row[j];
-        if (r->uid == uid && (r->status == LIB_INSTALLED || r->status == LIB_UPDATE)) r->status = LIB_INSTALLABLE;
+        if (r->uid == uid && r->kind == kind && (r->status == LIB_INSTALLED || r->status == LIB_UPDATE)) r->status = LIB_INSTALLABLE;
     }
 }
 void pp_tick(float dt) {
@@ -275,19 +276,19 @@ void pp_tick(float dt) {
     char msg[LIB_WHY_MAX + 32];
     if (what == PEND_INSTALL) {
         lib_row_t *r = &s_m->w.row[s_row];
-        uint32_t uid = r->uid;
-        if (r->status == LIB_UPDATE && s_tank && lives_on(uid)) progression_pack_leaving(s_tank, uid);   /* BEFORE the registry changes */
+        const uint32_t uid = r->uid; const int kind = r->kind;
+        if (r->status == LIB_UPDATE && s_tank && lives_on(kind, uid)) progression_pack_leaving(s_tank, kind, uid);   /* BEFORE the registry changes */
         lib_result_t lr = library_install(&s_m->w, s_row, msg, sizeof msg);
         if (s_tank) progression_pack_arrived(s_tank);       /* (a tank that waits for it resumes; one paused for the old version when the update failed, too) */
         say(msg);
-        if (lr == LIB_DONE_INSTALLED || lr == LIB_DONE_UPDATED) { rows_after_install(s_row, uid); s_changed = true; }
-        else if (lr == LIB_DONE_SAME) rows_after_install(s_row, uid);
+        if (lr == LIB_DONE_INSTALLED || lr == LIB_DONE_UPDATED) { rows_after_install(s_row, kind, uid); s_changed = true; }
+        else if (lr == LIB_DONE_SAME) rows_after_install(s_row, kind, uid);
     } else {
-        uint32_t uid = s_uid; char why[LIB_WHY_MAX];
-        const lib_inst_t *p = library_installed_uid(uid);
+        const uint32_t uid = s_uid; const int kind = s_kind; char why[LIB_WHY_MAX];
+        const lib_inst_t *p = library_installed_uid(kind, uid);
         char nm[PACK_NAME_MAX]; snprintf(nm, sizeof nm, "%s", p ? p->name : "PACK");
-        bool left = s_tank && lives_on(uid) && progression_pack_leaving(s_tank, uid);   /* BEFORE the registry changes */
-        if (library_remove(uid, why, sizeof why)) { snprintf(s_msg, sizeof s_msg, "REMOVED %s", nm); rows_after_remove(uid); s_changed = true; }
+        bool left = s_tank && lives_on(kind, uid) && progression_pack_leaving(s_tank, kind, uid);   /* BEFORE the registry changes */
+        if (library_remove(kind, uid, why, sizeof why)) { snprintf(s_msg, sizeof s_msg, "REMOVED %s", nm); rows_after_remove(kind, uid); s_changed = true; }
         else { if (left && s_tank) progression_pack_arrived(s_tank); say(why); }
     }
     clamp_page(); refresh_why();
@@ -307,11 +308,11 @@ static void draw_confirm(ctx_t *c) {
     const bool upd = s_conf == CONF_UPDATE;
     char name[PACK_NAME_MAX + 8] = "";
     if (upd) snprintf(name, sizeof name, "%s", s_m->w.row[s_row].name[0] ? s_m->w.row[s_row].name : s_m->w.row[s_row].file);
-    else { const lib_inst_t *p = library_installed_uid(s_uid); snprintf(name, sizeof name, "%s", p && p->name[0] ? p->name : "THIS PACK"); }
+    else { const lib_inst_t *p = library_installed_uid(s_kind, s_uid); snprintf(name, sizeof name, "%s", p && p->name[0] ? p->name : "THIS PACK"); }
     text_mid(c, SET_TITLE_Y, 3, 0xffffff, upd ? "UPDATE?" : "REMOVE?");
     int y = SET_TITLE_Y + 50;
     fit(name, 2, PP_RX - PP_LX); text_mid(c, y, 2, MSP_TEAL, name); y += 34;
-    if (lives_on(s_uid)) {
+    if (lives_on(s_kind, s_uid)) {
         text_mid(c, y, 2, PP_BAD, "YOUR TANK LIVES ON IT."); y += 24;
         text_mid(c, y, 2, 0xffffff, "IT WILL WAIT, PAUSED,"); y += 22;
         text_mid(c, y, 2, 0xffffff, "UNTIL THE PACK IS BACK."); y += 30;

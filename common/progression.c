@@ -9,6 +9,9 @@
 #include "tank_events.h"
 #include "version.h"
 #include "shelf.h"
+#if PT_CARD
+#include "packs/ptpk.h"                    /* PTPK_KIND_*: progression_pack_leaving names the kind of the pack that goes */
+#endif
 #include "tank_link.h"
 #include "packs/compat.h"                 /* packs_check: what a pair that cannot run lacks */
 #include <stddef.h>
@@ -1134,10 +1137,10 @@ static bool packs_resume(tank_t *t) {
    drawn, s_want keeps the pair as it is now - its uids, the built-in packs' one-byte ids, its names - for every save, the tick looks
    for it once a second (packs_resume). Read from the registry BEFORE the pack goes. The animals are not touched: a paused tank
    changes nothing, and packs_resume makes the heat and the hides their own again when the pair is back */
-bool progression_pack_leaving(tank_t *t, uint32_t uid) {
+bool progression_pack_leaving(tank_t *t, int kind, uint32_t uid) {
     if (!uid || t->packs_missing) return false;
     const species_t *sp = tank_species(t); const habitat_t *hb = tank_habitat(t);
-    if (sp->uid != uid && hb->uid != uid) return false;
+    if (!(kind == PTPK_KIND_SPECIES ? sp->uid == uid : kind == PTPK_KIND_HABITAT && hb->uid == uid)) return false;
     memset(&s_want, 0, sizeof s_want);
     s_want.species_uid = sp->uid; s_want.habitat_uid = hb->uid;
     s_want.pack_id = sp->builtin ? sp->id : 0; s_want.habitat_id = hb->builtin ? hb->id : 0;

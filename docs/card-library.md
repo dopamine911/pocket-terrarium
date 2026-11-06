@@ -67,7 +67,9 @@ whose goal words an installed species needs and no other manifest lists - until 
 REMOVE IT FIRST`). A stored pack that cannot load at boot (its habitat was removed behind the library's back) is **kept**, listed NOT
 LOADED with the loader's reason, and loads when what it needed arrives (every habitat or manifest install retries them).
 
-**Updates.** Same uid, another file: the new version goes into a second sector, then the old one is erased (below); in the registry
+**Identity.** A pack is identified by **(kind, uid)** everywhere - the store, the library, the page and the tank's hook - because `docs/ptpk.md` scopes a uid to its kind: a species and a habitat may share one, and both then install, survive a reboot and remove independently (`--selftest-library`, "one uid, two kinds"). Until that test existed the store matched on uid alone, so installing a habitat that shared an installed species' uid replaced the species in the flash.
+
+**Updates.** Same kind and uid, another file: the new version goes into a second sector, then the old one is erased (below); in the registry
 the old pack is taken out and the new one loaded, the old put back if the flash refuses the new. A pack the keeper's tank lives on is
 the page's to pause first (below).
 
@@ -103,7 +105,7 @@ after, never half:
 - **Install:** erase a free sector, program the file at 32, program the header at 0 **last**. Until the header is whole the sector
   reads as blank or torn, so a cut anywhere leaves what was there.
 - **Update:** the new version into a *second* free sector (a higher `seq`), then erase the first. A cut between leaves two sectors of
-  one uid; the boot keeps the higher `seq` and erases the other.
+  one (kind, uid); the boot keeps the higher `seq` and erases the other.
 - **Remove:** erase the sector.
 - **Boot** (`pstore_boot`): every sector read; one that does not read true - bad magic or layout, a length no pack has, a `seq` that
   was never written, a header whose CRC fails, a file that does not pass `ptpk_open`, a uid or kind the file does not carry - is

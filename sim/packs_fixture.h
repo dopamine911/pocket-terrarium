@@ -29,6 +29,7 @@ void pf_variant(pf_blob_t *out, const pf_blob_t *from, const char *ns_tail, cons
 /* the header from the body: len, uid = FNV-1a of UID_NS, crc */
 void pf_fix(pf_blob_t *k);
 uint32_t pf_uid(const pf_blob_t *k);
+int      pf_kind(const pf_blob_t *k);   /* PTPK_KIND_* (the header's) */
 /* a species file's habitats (the HABITATS record, 1..4 uids) set to these */
 void pf_set_habitats(pf_blob_t *k, const uint32_t *uids, int n);
 /* records by id: where one is (the tag's offset, its value's length), replaced (REQUIRED bit kept, length may change), deleted,

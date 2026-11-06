@@ -288,7 +288,7 @@ static int t_flow(void) {
     { pf_blob_t h, s; char up[4]; upper2(up, "xh");
       pf_variant(&h, &H0, "xh", up); mk_species(&s, "xs"); { uint32_t hu = pf_uid(&h); pf_set_habitats(&s, &hu, 1); }
       if (!install_direct(&h) || !install_direct(&s)) PF("a habitat and a species that lives in it did not install");
-      if (!pstore_remove(pf_uid(&h))) PF("could not take the habitat out of the flash"); }
+      if (!pstore_remove(PTPK_KIND_HABITAT, pf_uid(&h))) PF("could not take the habitat out of the flash"); }
     packs_drop_loaded(); library_boot();
     if (!open_page()) PF("open");
     { char d[160] = ""; if (pp_rows_total() == 1) pp_row_text(0, NULL, 0, d, sizeof d);
