@@ -9,6 +9,8 @@
 #   tools/flash_round.sh --model       # the app and the build's world's model + its trailer; the tank's save (nvs) kept
 #   tools/flash_round.sh --full        # a blank board: clear nvs, the model, bootloader + table + app
 #   ROUND_SERIAL=AA:BB:CC:DD:EE:FF tools/flash_round.sh    # the board, by its USB serial (or set it once in tools/boards.local.sh)
+#   WORLD=aquarium tools/flash_round.sh --model   # the aquarium's image (the fish) instead of the terrarium's; its own build dir. The two
+#                                                 # worlds use different models: switching worlds needs --model (or --full), see docs/modules.md
 #
 # Its own build directory and sdkconfig (~/.cache/pocket-terrarium/fw-build-175c):
 # the tank's fw-build is never touched. No preflight: this board holds no tank
@@ -18,13 +20,19 @@ cd "$(dirname "$0")/.."
 [ -f tools/boards.local.sh ] && . tools/boards.local.sh   # your boards' USB serials (not tracked)
 SERIAL=${ROUND_SERIAL:-}
 [ -n "$SERIAL" ] || { echo "flash_round: set ROUND_SERIAL=<the board's USB serial> (in tools/boards.local.sh, or the environment)"; exit 1; }
-B=${TANK_BUILD:-~/.cache/pocket-terrarium/fw-build-175c}   # another checkout (a worktree) builds in its own dir: a build dir is tied to its source path
+WORLD=${WORLD:-terrarium}
+case "$WORLD" in
+  terrarium) WORLD_CFG=; B=${TANK_BUILD:-~/.cache/pocket-terrarium/fw-build-175c} ;;
+  aquarium)  WORLD_CFG=";sdkconfig.aquarium"; B=${TANK_BUILD:-~/.cache/pocket-terrarium/fw-build-175c-aq} ;;
+  *) echo "flash_round: WORLD is terrarium or aquarium, not $WORLD"; exit 1 ;;
+esac   # another checkout (a worktree) builds in its own dir: a build dir is tied to its source path
 . ~/esp/esp-idf/export.sh > /dev/null 2>&1 || { echo "flash_round: ESP-IDF export failed"; exit 1; }
 [ -f firmware/keys/ota_signing_key.pem ] || { echo "flash_round: no firmware/keys/ota_signing_key.pem - tools/ota_key.sh"; exit 1; }
 LOG=$(mktemp); trap 'rm -f "$LOG"' EXIT
-( cd firmware && idf.py -B "$B" -DSDKCONFIG="$B/sdkconfig" -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.round" build ) > "$LOG" 2>&1 \
+( cd firmware && idf.py -B "$B" -DSDKCONFIG="$B/sdkconfig" -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.round$WORLD_CFG" build ) > "$LOG" 2>&1 \
   || { echo "flash_round: build FAILED"; grep -Ei "error|fatal|failed" "$LOG" | head -30; exit 1; }
 grep -E "pocket_tank.bin binary size" "$LOG" || true
+[ "$WORLD" = aquarium ] && { grep -q "CONFIG_POCKET_TANK_WORLD_AQUARIUM=y" "$B/sdkconfig" || { echo "flash_round: $B is not an aquarium build"; exit 1; }; }
 grep -q "CONFIG_POCKET_TANK_ROUND=y" "$B/sdkconfig" || { echo "flash_round: $B is not a ROUND build"; exit 1; }
 [[ " $* " == *" --build-only "* ]] && exit 0
 PORT=$(python - "$SERIAL" <<'PY'
