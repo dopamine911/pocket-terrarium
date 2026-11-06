@@ -5,6 +5,13 @@
     ptpk.py dump FILE.ptpk          check the file and print the pack as a source
     ptpk.py verify FILE.ptpk        check the header, length, CRC and records; exit 1 when the file is bad
 
+A source's [pack] has kind = "species", "habitat" or "model" (a model manifest: its `tag` and its [goals]), uid_ns, name, and
+optionally worlds = ["aquarium", "terrarium"] (the WORLDS record, a shop/menu filter), legacy_id, test_only. Species have
+[[locomotion]] (one table per mode) and [media]; habitats [areas] and [provides]. Capabilities are written by name (swim walk
+slither water land bask shore cricket mealworm greens pellet lamp hides); `bitNN` (a bit this tool does not name) is accepted
+only in [media] wants, [areas] has and [provides] has, where the loader drops it. dump prints [pack], [[locomotion]], [media],
+the other sections, then [areas] and [provides], and `dump | build` reproduces the file byte for byte.
+
 The built-in packs are not made here: the C const structs are their source and tools/ptpk_emit.c writes packs/*.ptpk.
 Python 3.11+, standard library only. Exit 0 ok, 1 bad file (verify), 2 usage or source error.
 """
@@ -28,17 +35,35 @@ ROOT = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------------------------------------------- format
 
 FMT = 1
-KIND_SPECIES, KIND_HABITAT = 1, 2
-KIND_NAMES = {"species": KIND_SPECIES, "habitat": KIND_HABITAT}
-WORLDS = {"aquarium": 1, "terrarium": 2}                      # world.h PT_WORLD_*
+KIND_SPECIES, KIND_HABITAT, KIND_MODEL = 1, 2, 3
+KIND_NAMES = {"species": KIND_SPECIES, "habitat": KIND_HABITAT, "model": KIND_MODEL}
+KIND_TEXT = {v: k for k, v in KIND_NAMES.items()}
+WORLDS = {"aquarium": 1, "terrarium": 2}                      # world.h PT_WORLD_*; the WORLDS record is a shop/menu filter only
 BODY_MAX = 2048
 REQUIRED = 0x8000
 
-# the world's goal names, in bit order (tank.c FISH_GOAL_NAMES / LZ_GOAL_NAMES)
-GOAL_NAMES = {
-    1: ["seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef"],
-    2: ["hunt", "bask", "hide", "explore", "investigate", "dig", "rest"],
-}
+# capabilities: name -> bit index (common/packs/caps.h). Bit 3 and 14..31 are not known; in a source they are written bitNN
+CAPS = {"swim": 0, "walk": 1, "slither": 2, "water": 4, "land": 5, "bask": 6, "shore": 7,
+        "cricket": 8, "mealworm": 9, "greens": 10, "pellet": 11, "lamp": 12, "hides": 13}
+CAP_NAME = {i: n for n, i in CAPS.items()}
+
+
+def cmask(*names):
+    return sum(1 << CAPS[n] for n in names)
+
+
+CAPS_MOVES = cmask("swim", "walk", "slither")
+CAPS_AREAS = cmask("water", "land", "bask", "shore")
+CAPS_FOODS = cmask("cricket", "mealworm", "greens", "pellet")
+CAPS_FITTINGS = cmask("lamp", "hides")
+CAPS_KNOWN = CAPS_MOVES | CAPS_AREAS | CAPS_FOODS | CAPS_FITTINGS
+NEEDS_OK = CAPS_AREAS | CAPS_FITTINGS                          # MEDIA_NEEDS needs: areas and fittings
+PROVIDES_OK = CAPS_FITTINGS | CAPS_FOODS                       # PROVIDES has: fittings and foods
+MODES = {n: CAPS[n] for n in ("swim", "walk", "slither")}     # [[locomotion]] mode -> capability index
+AREA_IDX = {n: CAPS[n] for n in ("water", "land", "bask", "shore")}
+
+GOAL_RE = re.compile(r"[a-z][a-z0-9_]*\Z")
+TAG_RE = re.compile(r"[A-Za-z0-9._-]{1,15}\Z")
 
 SCHEDULES = {"day": 0, "dusk": 1, "night": 2}
 SHED_STYLES = {"whole": 0, "patches": 1}
@@ -46,21 +71,28 @@ PLANS = {"lizard": 0, "fish": 1}
 HIDE_KINDS = {"warm": 0, "humid": 1, "cool": 2}
 DIET_BITS = {"cricket": 1, "mealworm": 2, "greens": 4, "pellet": 8}
 
-# id -> (name, REQUIRED, applies to kind: 0 both / 1 species / 2 habitat)
-R_NAME, R_UID_NS, R_WORLD, R_LEGACY, R_TEST = 0x0001, 0x0002, 0x0003, 0x0004, 0x0005
-R_HABITATS, R_ACTIVITY, R_HEAT, R_DRIVES, R_WALK, R_LIFE, R_SHED, R_DIET, R_BODY, R_MORPHS, R_PATTERNS, R_GOALS = (
-    0x0101, 0x0102, 0x0103, 0x0104, 0x0105, 0x0106, 0x0107, 0x0108, 0x0109, 0x010A, 0x010B, 0x010C)
+# record ids (0x0003 and 0x0105 are retired and stay unused)
+R_NAME, R_UID_NS, R_LEGACY, R_TEST, R_WORLDS = 0x0001, 0x0002, 0x0004, 0x0005, 0x0010
+R_HABITATS, R_ACTIVITY, R_HEAT, R_DRIVES, R_LIFE, R_SHED, R_DIET, R_BODY, R_MORPHS, R_PATTERNS, R_GOALS = (
+    0x0101, 0x0102, 0x0103, 0x0104, 0x0106, 0x0107, 0x0108, 0x0109, 0x010A, 0x010B, 0x010C)
+R_LOCO, R_MEDIA = 0x0110, 0x0111
 R_CLIMATE, R_BASK, R_HIDES, R_ROCKS, R_RAMPS, R_MOISTURE, R_DISH = 0x0201, 0x0202, 0x0203, 0x0204, 0x0205, 0x0206, 0x0207
+R_AREAS, R_PROVIDES = 0x0210, 0x0211
+R_MODEL_TAG, R_MODEL_GOALS = 0x0301, 0x0302
+# id -> (name, REQUIRED bit on the wire, kinds the record belongs to)
+_ALL, _SH, _SPECIES, _HABITAT, _MODEL = (1, 2, 3), (1, 2), (1,), (2,), (3,)
 RECORDS = {
-    R_NAME: ("NAME", True, 0), R_UID_NS: ("UID_NS", True, 0), R_WORLD: ("WORLD", True, 0),
-    R_LEGACY: ("LEGACY_ID", False, 0), R_TEST: ("TEST_ONLY", False, 0),
-    R_HABITATS: ("HABITATS", True, 1), R_ACTIVITY: ("ACTIVITY", True, 1), R_HEAT: ("HEAT", True, 1),
-    R_DRIVES: ("DRIVES", True, 1), R_WALK: ("WALK", True, 1), R_LIFE: ("LIFE", True, 1), R_SHED: ("SHED", True, 1),
-    R_DIET: ("DIET", True, 1), R_BODY: ("BODY", True, 1), R_MORPHS: ("MORPHS", False, 1),
-    R_PATTERNS: ("PATTERNS", False, 1), R_GOALS: ("GOALS", True, 1),
-    R_CLIMATE: ("CLIMATE", True, 2), R_BASK: ("BASK", True, 2), R_HIDES: ("HIDES", True, 2),
-    R_ROCKS: ("ROCKS", True, 2), R_RAMPS: ("RAMPS", True, 2), R_MOISTURE: ("MOISTURE", True, 2),
-    R_DISH: ("DISH", True, 2),
+    R_NAME: ("NAME", True, _ALL), R_UID_NS: ("UID_NS", True, _ALL),
+    R_LEGACY: ("LEGACY_ID", False, _SH), R_TEST: ("TEST_ONLY", False, _SH), R_WORLDS: ("WORLDS", False, _SH),
+    R_HABITATS: ("HABITATS", True, _SPECIES), R_ACTIVITY: ("ACTIVITY", True, _SPECIES), R_HEAT: ("HEAT", True, _SPECIES),
+    R_DRIVES: ("DRIVES", True, _SPECIES), R_LIFE: ("LIFE", True, _SPECIES), R_SHED: ("SHED", True, _SPECIES),
+    R_DIET: ("DIET", True, _SPECIES), R_BODY: ("BODY", True, _SPECIES), R_MORPHS: ("MORPHS", False, _SPECIES),
+    R_PATTERNS: ("PATTERNS", False, _SPECIES), R_GOALS: ("GOALS", True, _SPECIES),
+    R_LOCO: ("LOCOMOTION", True, _SPECIES), R_MEDIA: ("MEDIA_NEEDS", True, _SPECIES),
+    R_CLIMATE: ("CLIMATE", True, _HABITAT), R_BASK: ("BASK", True, _HABITAT), R_HIDES: ("HIDES", True, _HABITAT),
+    R_ROCKS: ("ROCKS", True, _HABITAT), R_RAMPS: ("RAMPS", True, _HABITAT), R_MOISTURE: ("MOISTURE", True, _HABITAT),
+    R_DISH: ("DISH", True, _HABITAT), R_AREAS: ("AREAS", True, _HABITAT), R_PROVIDES: ("PROVIDES", True, _HABITAT),
+    R_MODEL_TAG: ("MODEL_TAG", True, _MODEL), R_MODEL_GOALS: ("MODEL_GOALS", True, _MODEL),
 }
 
 # fixed-layout records: id -> (source section, [(key, type, arg)]); type f32 (arg = count), enum (arg = map), bool, u8
@@ -71,7 +103,6 @@ FIXED = {
     R_DRIVES: ("drives", [(k, "f32", 1) for k in (
         "hunger_per_s", "energy_per_s", "energy_rest_per_s", "curiosity_per_s", "hunger_per_cricket",
         "sleep_hunger_per_h", "sleep_energy_per_h", "sleep_stress_per_h")]),
-    R_WALK: ("walk", [("walk_px_s", "f32", 4), ("bout_s", "f32", 2), ("pause_s", "f32", 2), ("turn_s", "f32", 1)]),
     R_LIFE: ("life", [("stage_s", "f32", 3), ("pop_cap", "u8", None)]),
     R_SHED: ("shed", [("sheds", "bool", None), ("style", "enum", SHED_STYLES), ("every_s", "f32", 4),
                       ("soon_s", "f32", 1), ("window_s", "f32", 1)]),
@@ -83,14 +114,26 @@ FIXED = {
     R_MOISTURE: ("moisture", [("start", "f32", 1), ("dry_per_s", "f32", 1), ("humidity", "f32", 1)]),
     R_DISH: ("dish", [("u", "f32", 1)]),
 }
+# one [[locomotion]] walk entry's numbers: key -> count (nine floats; a swim / slither entry encodes nine +0.0 floats)
+LOCO_NUMS = [("px_s", 4), ("bout_s", 2), ("pause_s", 2), ("turn_s", 1)]
 # sections whose absence means "the record is absent" (everything else is a missing REQUIRED section)
-OPTIONAL_SECTIONS = {"walk", "shed", "dish", "hides", "rocks", "ramps", "morphs", "patterns"}
-SPECIES_SECTIONS = ["pack", "activity", "heat", "drives", "walk", "life", "shed", "diet", "body", "morphs", "patterns", "goals"]
-HABITAT_SECTIONS = ["pack", "climate", "bask", "hides", "rocks", "ramps", "moisture", "dish"]
-ARRAY_SECTIONS = {"morphs", "hides", "rocks", "ramps"}
+OPTIONAL_SECTIONS = {"shed", "dish", "hides", "rocks", "ramps", "morphs", "patterns"}
+# per kind: [pack] first, then the sections in the order dump prints them
+SECTIONS = {
+    KIND_SPECIES: ["pack", "locomotion", "media", "activity", "heat", "drives", "life", "shed", "diet", "body",
+                   "morphs", "patterns", "goals"],
+    KIND_HABITAT: ["pack", "climate", "bask", "hides", "rocks", "ramps", "moisture", "dish", "areas", "provides"],
+    KIND_MODEL: ["pack", "goals"],
+}
+ARRAY_SECTIONS = {"locomotion", "morphs", "hides", "rocks", "ramps"}
 SEC_RECORD = {sec: rid for rid, (sec, _f) in FIXED.items()}
 SEC_RECORD.update({"diet": R_DIET, "morphs": R_MORPHS, "patterns": R_PATTERNS, "goals": R_GOALS,
-                   "hides": R_HIDES, "rocks": R_ROCKS, "ramps": R_RAMPS})
+                   "hides": R_HIDES, "rocks": R_ROCKS, "ramps": R_RAMPS, "locomotion": R_LOCO, "media": R_MEDIA,
+                   "areas": R_AREAS, "provides": R_PROVIDES})
+
+
+def sec_rid(kind, sec):
+    return R_MODEL_GOALS if kind == KIND_MODEL and sec == "goals" else SEC_RECORD[sec]
 
 UID_NS_RE = re.compile(r"[a-z0-9._-]{3,47}\Z")
 
@@ -270,6 +313,33 @@ class Sec:
             self.err(key, "must be a list of %d..%d strings" % (lo, hi))
         return v
 
+    def capset(self, key, allowed, bits):
+        """a list of capability names -> the u32 mask; `allowed` is a mask of the names this list takes, `bits` whether bitNN is accepted"""
+        v = self.raw(key)
+        if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+            self.err(key, "must be a list of capability names")
+        mask = 0
+        for x in v:
+            m = re.fullmatch(r"bit(\d{1,2})", x)
+            if x in CAPS:
+                b = CAPS[x]
+                if not allowed >> b & 1:
+                    if key == "needs" and CAPS_MOVES >> b & 1:
+                        self.err(key, '"%s" is a movement mode: it belongs in [[locomotion]]' % x)
+                    if key == "needs" and CAPS_FOODS >> b & 1:
+                        self.err(key, '"%s" is a food: it belongs in [diet]' % x)
+                    self.err(key, '"%s" is not valid here (%s)' % (x, ", ".join(n for n, i in CAPS.items() if allowed >> i & 1)))
+            elif m and int(m.group(1)) <= 31 and int(m.group(1)) not in CAP_NAME:
+                if not bits:
+                    self.err(key, '"%s": bitNN is accepted only in wants, [areas] has and [provides] has' % x)
+                b = int(m.group(1))
+            else:
+                self.err(key, 'unknown capability "%s" (%s)' % (x, ", ".join(n for n, i in CAPS.items() if allowed >> i & 1)))
+            if mask >> b & 1:
+                self.err(key, 'capability "%s" listed twice' % x)
+            mask |= 1 << b
+        return mask
+
 
 def u32(v):
     return struct.pack("<I", v)
@@ -297,8 +367,8 @@ def s8(s):
 
 
 class Pack:
-    def __init__(self, path, kind, uid_ns, name, world, legacy_id, test_only, habitats, blob):
-        self.path, self.kind, self.uid_ns, self.name, self.world = path, kind, uid_ns, name, world
+    def __init__(self, path, kind, uid_ns, name, worlds, legacy_id, test_only, habitats, blob):
+        self.path, self.kind, self.uid_ns, self.name, self.worlds = path, kind, uid_ns, name, worlds
         self.legacy_id, self.test_only, self.habitats, self.blob = legacy_id, test_only, habitats, blob
         self.uid = fnv1a32(uid_ns.encode("ascii"))
 
@@ -318,18 +388,31 @@ def compile_source(path):
         raise ToolError("%s: [pack]: missing section (REQUIRED)" % rel(path))
     p = Sec(path, "pack", doc["pack"])
     kind = p.raw("kind")
-    if kind not in KIND_NAMES:
-        p.err("kind", 'must be "species" or "habitat"')
+    if not isinstance(kind, str) or kind not in KIND_NAMES:
+        p.err("kind", 'must be "species", "habitat" or "model"')
     kind = KIND_NAMES[kind]
     uid_ns = p.raw("uid_ns")
     if not isinstance(uid_ns, str) or not UID_NS_RE.match(uid_ns):
         p.err("uid_ns", "must be 3..47 characters of [a-z0-9._-]")
     name = p.text("name", 1, 23)
-    world = p.enum("world", WORLDS)
-    legacy_id = None
-    if p.has("legacy_id"):
-        legacy_id = p.uint("legacy_id", 1, 255 if kind == KIND_SPECIES else 31)
-    test_only = p.boolean("test_only") if p.has("test_only") else False
+    worlds, legacy_id, test_only, tag = 0, None, False, None
+    if kind != KIND_MODEL:
+        if p.has("worlds"):
+            w = p.strlist("worlds", 0, len(WORLDS))
+            for x in w:
+                if x not in WORLDS:
+                    p.err("worlds", 'unknown world "%s" (%s)' % (x, ", ".join(WORLDS)))
+            if len(set(w)) != len(w):
+                p.err("worlds", "a world is listed twice")
+            for x in w:
+                worlds |= WORLDS[x]
+        if p.has("legacy_id"):
+            legacy_id = p.uint("legacy_id", 1, 255 if kind == KIND_SPECIES else 31)
+        test_only = p.boolean("test_only") if p.has("test_only") else False
+    else:
+        tag = p.raw("tag")
+        if not isinstance(tag, str) or not TAG_RE.match(tag):
+            p.err("tag", "must be 1..15 characters of [A-Za-z0-9._-]")
     habitats = []
     if kind == KIND_SPECIES:
         habitats = p.raw("habitats")
@@ -346,15 +429,19 @@ def compile_source(path):
     if uid == 0:
         p.err("uid_ns", "hashes to uid 0 (rename the pack)")
 
-    recs = {R_NAME: name.encode("ascii"), R_UID_NS: uid_ns.encode("ascii"), R_WORLD: bytes([world])}
+    recs = {R_NAME: name.encode("ascii"), R_UID_NS: uid_ns.encode("ascii")}
+    if worlds:
+        recs[R_WORLDS] = bytes([worlds])
     if legacy_id is not None:
         recs[R_LEGACY] = bytes([legacy_id])
     if test_only:
         recs[R_TEST] = b"\x01"
-    sections = SPECIES_SECTIONS if kind == KIND_SPECIES else HABITAT_SECTIONS
+    if tag is not None:
+        recs[R_MODEL_TAG] = tag.encode("ascii")
+    sections = SECTIONS[kind]
     for k in doc:
         if k not in sections:
-            raise ToolError("%s: [%s]: unknown section for a %s" % (rel(path), k, "species" if kind == KIND_SPECIES else "habitat"))
+            raise ToolError("%s: [%s]: unknown section for a %s" % (rel(path), k, KIND_TEXT[kind]))
     for sec in sections[1:]:
         if sec not in doc:
             if sec not in OPTIONAL_SECTIONS:
@@ -366,9 +453,47 @@ def compile_source(path):
                 raise ToolError("%s: [[%s]]: must be an array of tables" % (rel(path), sec))
         elif not isinstance(val, dict):
             raise ToolError("%s: [%s]: must be a table" % (rel(path), sec))
-        rid = SEC_RECORD[sec]
+        rid = sec_rid(kind, sec)
         if rid in FIXED:
             recs[rid] = enc_fixed(Sec(path, sec, val), FIXED[rid][1])
+        elif sec == "locomotion":
+            if len(val) > 3:
+                raise ToolError("%s: [[locomotion]]: at most 3, one per mode (is %d)" % (rel(path), len(val)))
+            out = bytearray([len(val)])
+            seen = set()
+            for i, t in enumerate(val):
+                s = Sec(path, "locomotion #%d" % (i + 1), t)
+                mode = s.enum("mode", MODES)
+                area = s.enum("area", AREA_IDX)
+                if mode in seen:
+                    s.err("mode", "a mode appears once (this one is listed twice)")
+                seen.add(mode)
+                out += bytes([mode, area])
+                if mode == CAPS["walk"]:
+                    for key, n in LOCO_NUMS:
+                        for b in ([s.f32(key)] if n == 1 else s.f32list(key, n)):
+                            out += u32(b)
+                else:
+                    for key, _n in LOCO_NUMS:
+                        if s.has(key):
+                            s.err(key, "a %s table carries no numbers yet (only walk does)" % CAP_NAME[mode])
+                    out += bytes(36)
+                s.finish()
+            recs[rid] = bytes(out)
+        elif sec == "media":
+            s = Sec(path, sec, val)
+            needs = s.capset("needs", NEEDS_OK, False)
+            wants = s.capset("wants", CAPS_KNOWN, True) if s.has("wants") else 0
+            s.finish()
+            recs[rid] = u32(needs) + u32(wants)
+        elif sec == "areas":
+            s = Sec(path, sec, val)
+            recs[rid] = u32(s.capset("has", CAPS_AREAS, True))
+            s.finish()
+        elif sec == "provides":
+            s = Sec(path, sec, val)
+            recs[rid] = u32(s.capset("has", PROVIDES_OK, True))
+            s.finish()
         elif sec == "diet":
             s = Sec(path, sec, val)
             eats = s.strlist("eats", 0, 4)
@@ -404,10 +529,9 @@ def compile_source(path):
         elif sec == "goals":
             s = Sec(path, sec, val)
             names = s.strlist("names", 1, 8)
-            valid = GOAL_NAMES[world]
             for n in names:
-                if n not in valid:
-                    s.err("names", 'goal "%s" is not in the %s list (%s)' % (n, "aquarium" if world == 1 else "terrarium", " ".join(valid)))
+                if not 1 <= len(n) <= 15 or not GOAL_RE.match(n):
+                    s.err("names", 'goal "%s" must be 1..15 bytes of [a-z][a-z0-9_]*' % n)
             if len(set(names)) != len(names):
                 s.err("names", "a goal is listed twice")
             s.finish()
@@ -450,7 +574,7 @@ def compile_source(path):
             recs[rid] = bytes(out)
     if kind == KIND_SPECIES:
         recs[R_HABITATS] = None                              # placeholder: resolved by encode_blob()
-    return Pack(path, kind, uid_ns, name, world, legacy_id, test_only, habitats, recs)
+    return Pack(path, kind, uid_ns, name, worlds, legacy_id, test_only, habitats, recs)
 
 
 def encode_blob(pack, habitat_uids):
@@ -559,8 +683,30 @@ def known_habitats():
     return m
 
 
+def idx_problem(i, allowed, what):
+    """why a capability index (u8) is no `what` (a movement mode / an area), or None"""
+    if i not in CAP_NAME:
+        return "capability bit %d, which this tool does not know" % i
+    if not allowed >> i & 1:
+        return "%s, which is not %s" % (CAP_NAME[i].upper(), what)
+    return None
+
+
+def cap_list(mask):
+    """a capability set -> names in bit order; a bit this tool does not name prints as bitNN"""
+    return [CAP_NAME.get(i, "bit%d" % i) for i in range(32) if mask >> i & 1]
+
+
+def cap_upper(mask):
+    return ", ".join(n.upper() for n in cap_list(mask))
+
+
+def lowest_bit(mask):
+    return (mask & -mask).bit_length() - 1
+
+
 def decode(data, name):
-    """validate one .ptpk and return (header facts, [(header, is_array, [(key, value)])], notes); PackError on any refusal"""
+    """validate one .ptpk and return (uid, size, [(header, is_array, [(key, value)])], notes, unknown); PackError on any refusal"""
     def refuse(why):
         raise PackError("%s: %s" % (name, why))
 
@@ -571,9 +717,7 @@ def decode(data, name):
         refuse("wrong magic %r (not a PTPK file)" % magic)
     if fmt == 0 or fmt > FMT:
         refuse("fmt %d is not supported (this tool reads fmt %d)" % (fmt, FMT))
-    if kind == 3:
-        refuse("kind 3 is a model manifest (reserved; not read)")
-    if kind not in (KIND_SPECIES, KIND_HABITAT):
+    if kind not in KIND_TEXT:
         refuse("unknown kind %d" % kind)
     if flags:
         refuse("flags 0x%04x set (every flag bit is reserved)" % flags)
@@ -600,7 +744,7 @@ def decode(data, name):
         pos += rlen
         rid = tag & 0x7FFF
         info = RECORDS.get(rid)
-        if info and info[2] in (0, kind):
+        if info and kind in info[2]:
             if rid in raw:
                 refuse("record %s appears twice" % info[0])
             raw[rid] = val
@@ -616,7 +760,22 @@ def decode(data, name):
         nm = RECORDS[rid][0]
         return Rd(lambda why: refuse("record %s %s" % (nm, why)), raw[rid]), (lambda why: refuse("record %s %s" % (nm, why)))
 
-    for rid in (R_NAME, R_UID_NS, R_WORLD):
+    def goal_names(r, fail):
+        n = r.u8()
+        if not 1 <= n <= 8:
+            fail("count %d is out of range 1..8" % n)
+        names = []
+        for _ in range(n):
+            g = r.text(1, 15, "goal name")
+            if not GOAL_RE.match(g):
+                fail("goal name %r is not [a-z][a-z0-9_]*" % g)
+            if g in names:
+                fail("goal %s is listed twice" % g)
+            names.append(g)
+        r.done()
+        return names
+
+    for rid in (R_NAME, R_UID_NS):
         if rid not in raw:
             refuse("record %s is missing" % RECORDS[rid][0])
     pack = []
@@ -632,12 +791,16 @@ def decode(data, name):
         fail("%r is not 3..47 characters of [a-z0-9._-]" % uid_ns)
     if fnv1a32(raw[R_UID_NS]) != uid:
         fail("%s hashes to 0x%08x, the header says 0x%08x" % (uid_ns, fnv1a32(raw[R_UID_NS]), uid))
-    r, fail = reader(R_WORLD)
-    if len(raw[R_WORLD]) != 1 or raw[R_WORLD][0] not in (1, 2):
-        fail("must be one byte, 1 aquarium or 2 terrarium")
-    world = raw[R_WORLD][0]
-    head = [("kind", "species" if kind == KIND_SPECIES else "habitat"), ("uid_ns", uid_ns), ("name", nm),
-            ("world", reverse(WORLDS, world, fail, "world"))]
+    head = [("kind", KIND_TEXT[kind]), ("uid_ns", uid_ns), ("name", nm)]
+    if R_WORLDS in raw:
+        r, fail = reader(R_WORLDS)
+        v = r.u8()
+        r.done()
+        if v == 0:
+            fail("mask 0 is out of range 1..255")
+        head.append(("worlds", [k for k, b in WORLDS.items() if v & b]))
+        if v & ~sum(WORLDS.values()):
+            notes.append("record WORLDS has bits 0x%02x this tool names no world for; build leaves them out" % (v & ~sum(WORLDS.values()) & 0xFF))
     if R_LEGACY in raw:
         r, fail = reader(R_LEGACY)
         v = r.u8()
@@ -663,11 +826,16 @@ def decode(data, name):
             hs.append(names.get(u) or hexw(u, 8))
         r.done()
         head.append(("habitats", hs))
+    if kind == KIND_MODEL:
+        r, fail = reader(R_MODEL_TAG) if R_MODEL_TAG in raw else refuse("record MODEL_TAG is missing")
+        tag = raw[R_MODEL_TAG].decode("latin-1")
+        if not TAG_RE.match(tag):
+            fail("%r is not 1..15 characters of [A-Za-z0-9._-]" % tag)
+        head.append(("tag", tag))
     pack.append(("[pack]", False, head))
 
-    secs = SPECIES_SECTIONS if kind == KIND_SPECIES else HABITAT_SECTIONS
-    for sec in secs[1:]:
-        rid = SEC_RECORD[sec]
+    for sec in SECTIONS[kind][1:]:
+        rid = sec_rid(kind, sec)
         if rid not in raw:
             if sec not in OPTIONAL_SECTIONS:
                 refuse("record %s is missing" % RECORDS[rid][0])
@@ -692,6 +860,53 @@ def decode(data, name):
                     d.append((key, r.u8()))
             r.done()
             pack.append(("[%s]" % sec, False, d))
+        elif sec == "locomotion":
+            n = r.u8()
+            if not 1 <= n <= 3:
+                fail("count %d is out of range 1..3" % n)
+            if len(raw[rid]) != 1 + 38 * n:
+                fail("is %d bytes, its layout says %d" % (len(raw[rid]), 1 + 38 * n))
+            seen = set()
+            for i in range(1, n + 1):
+                mode, area = r.u8(), r.u8()
+                p = idx_problem(mode, CAPS_MOVES, "a movement mode")
+                if p:
+                    fail("entry %d mode is %s" % (i, p))
+                p = idx_problem(area, CAPS_AREAS, "an area")
+                if p:
+                    fail("entry %d area is %s" % (i, p))
+                if mode in seen:
+                    fail("entry %d: mode %s appears twice" % (i, CAP_NAME[mode].upper()))
+                seen.add(mode)
+                nums = [r.f32s(4), r.f32s(2), r.f32s(2), r.f32()]
+                d = [("mode", CAP_NAME[mode]), ("area", CAP_NAME[area])]
+                if mode == CAPS["walk"]:
+                    d += [(k, v) for (k, _n), v in zip(LOCO_NUMS, nums)]
+                elif any(f.bits for v in nums for f in (v if isinstance(v, list) else [v])):
+                    fail("entry %d: %s carries no numbers yet (all nine floats must be +0.0)" % (i, CAP_NAME[mode].upper()))
+                pack.append(("[[locomotion]]", True, d))
+            r.done()
+        elif sec == "media":
+            needs, wants = r.u32(), r.u32()
+            r.done()
+            if needs & ~CAPS_KNOWN & 0xFFFFFFFF:
+                fail("needs holds capability bit %d, which this tool does not know (an unknown REQUIRED capability bit)"
+                     % lowest_bit(needs & ~CAPS_KNOWN))
+            if needs & (CAPS_MOVES | CAPS_FOODS):
+                fail("needs holds %s: movement belongs in LOCOMOTION, foods in DIET" % cap_upper(needs & (CAPS_MOVES | CAPS_FOODS)))
+            pack.append(("[media]", False, [("needs", cap_list(needs)), ("wants", cap_list(wants))]))
+        elif sec == "areas":
+            v = r.u32()
+            r.done()
+            if v & CAPS_KNOWN & ~CAPS_AREAS:
+                fail("%s is not an area" % cap_upper(v & CAPS_KNOWN & ~CAPS_AREAS))
+            pack.append(("[areas]", False, [("has", cap_list(v))]))
+        elif sec == "provides":
+            v = r.u32()
+            r.done()
+            if v & CAPS_KNOWN & ~PROVIDES_OK:
+                fail("%s is not a provision (a lamp, hides or a food)" % cap_upper(v & CAPS_KNOWN & ~PROVIDES_OK))
+            pack.append(("[provides]", False, [("has", cap_list(v))]))
         elif sec == "diet":
             v = r.u8()
             r.done()
@@ -717,19 +932,7 @@ def decode(data, name):
             r.done()
             pack.append(("[patterns]", False, [("by_stage", names)]))
         elif sec == "goals":
-            n = r.u8()
-            if not 1 <= n <= 8:
-                fail("count %d is out of range 1..8" % n)
-            names = []
-            for _ in range(n):
-                g = r.text(1, 15, "goal name")
-                if g not in GOAL_NAMES[world]:
-                    fail("goal %s is not in the %s's list" % (g, "aquarium" if world == 1 else "terrarium"))
-                if g in names:
-                    fail("goal %s is listed twice" % g)
-                names.append(g)
-            r.done()
-            pack.append(("[goals]", False, [("names", names)]))
+            pack.append(("[goals]", False, [("names", goal_names(r, fail))]))
         elif sec == "hides":
             n = r.u8()
             if n > 4:
@@ -832,7 +1035,7 @@ def cmd_verify(path):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(prog="ptpk.py", description="PTPK pack tool (docs/ptpk.md): author a new pack, read or check one")
+    ap = argparse.ArgumentParser(prog="ptpk.py", description="PTPK pack tool (docs/ptpk.md): author a new pack (species, habitat or model manifest), read or check one")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="compile one TOML source into a .ptpk")
     b.add_argument("src")

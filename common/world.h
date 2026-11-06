@@ -5,8 +5,10 @@
  *   firmware  the Kconfig choice POCKET_TANK_WORLD (main/Kconfig.projbuild); sdkconfig.aquarium picks the aquarium
  * It picks, for the whole build:
  *   - the brain: the model and its tokenizer (THE BRAIN below - the one place the lizard model's files go),
- *   - the packs a tank may hold and a new tank's pair (species.h SPECIES_DEFAULT, habitat.h HABITAT_DEFAULT;
- *     a release bin carries only its world; the simulator defines PT_ALL_PACKS for cross-world pack validation),
+ *   - the packs a bin LINKS and a new tank's pair (species.h SPECIES_DEFAULT, habitat.h HABITAT_DEFAULT; a release bin carries
+ *     only its world's; the simulator defines PT_ALL_PACKS to carry both). Which pack a tank may HOLD is no longer the world's
+ *     to say: it is the pair's capabilities (packs/compat.h, issue #4 phase 2) - the world is a preset (modules, model,
+ *     default packs) and a filter for the shop and the menus (a pack's WORLDS mask: PT_WORLD_* are its bits),
  *   - the goal set (tank.h GOAL_FIRST / GOAL_N: the fish's eight or the lizard's seven),
  *   - the locomotion (tank.c: the swim, or THE WALK on the habitat's ground - terrain.h),
  *   - the renderer and art sources (the aquarium's live water/grass stack or the terrarium's desert/lizards),
@@ -15,8 +17,8 @@
 #ifndef WORLD_H
 #define WORLD_H
 
-#define PT_WORLD_AQUARIUM  1          /* pocket-tank's fish, swimming (the fish model, schema v4) */
-#define PT_WORLD_TERRARIUM 2          /* the lizards, walking (the lizard model, schema L1) */
+#define PT_WORLD_AQUARIUM  1          /* pocket-tank's fish, swimming (the fish model, schema v4). Also its bit (1) in a pack's WORLDS mask */
+#define PT_WORLD_TERRARIUM 2          /* the lizards, walking (the lizard model, schema L1). Also its bit (2) in a pack's WORLDS mask */
 #ifndef PT_WORLD
 #define PT_WORLD PT_WORLD_TERRARIUM
 #endif

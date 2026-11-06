@@ -1,15 +1,11 @@
-/* ptpk_write.c - the PTPK encoder (ptpk_write.h; docs/ptpk.md is the byte-exact contract), the format's two hashes and the
- * worlds' goal words. The encoder is ptpk.c's reader read backwards: the same ids (ptpk_tags.h), the same layouts, the same
- * REQUIRED bits, the same limits, one record to one case, in ascending id - and it refuses what the reader would, so a file it
- * writes is a file that reader takes (--selftest-ptpk writes every built-in pack and reads it back, field for field).
- * Registry-free by design: nothing here may reach species.c, habitat.c, terrain or the tank (tools/ptpk_emit.c links this
- * file alone). */
+/* ptpk_write.c - the PTPK encoder (ptpk_write.h; docs/ptpk.md is the byte-exact contract) and the format's two hashes. The encoder
+ * is ptpk.c's reader read backwards: the same ids (ptpk_tags.h), the same layouts, the same REQUIRED bits, the same limits, one
+ * record to one case, in ascending id - and it refuses what the reader would, so a file it writes is a file that reader takes
+ * (--selftest-ptpk writes every built-in pack and reads it back, field for field). Registry-free by design: nothing here may
+ * reach species.c, habitat.c, manifest.c, terrain or the tank (tools/ptpk_emit.c links this file alone). */
 #include "ptpk_write.h"
 #include "ptpk_tags.h"
 #include <string.h>
-
-const char *const LZ_GOAL_NAMES[LZ_GOALS] = { "hunt", "bask", "hide", "explore", "investigate", "dig", "rest" };
-const char *const FISH_GOAL_NAMES[FISH_GOALS] = { "seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef" };
 
 /* ---- CRC-32 (zlib's: reflected, 0xedb88320, init and final xor 0xffffffff), a nibble at a time: 64 B of table ---- */
 uint32_t ptpk_crc32(const uint8_t *b, size_t n) {
@@ -36,6 +32,18 @@ bool ptpk_ns_ok(const uint8_t *s, size_t n) {                  /* UID_NS: [a-z0-
     if (n < 3 || n > 47) return false;
     for (size_t i = 0; i < n; i++)
         if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '.' || s[i] == '_' || s[i] == '-')) return false;
+    return true;
+}
+bool ptpk_goal_ok(const uint8_t *s, size_t n) {                /* a goal's word: 1..15 of [a-z0-9_], a lowercase letter first */
+    if (n < 1 || n > 15 || s[0] < 'a' || s[0] > 'z') return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) return false;
+    return true;
+}
+bool ptpk_tag_ok(const uint8_t *s, size_t n) {                 /* a model's tag: 1..15 of [A-Za-z0-9._-] */
+    if (n < 1 || n > 15) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '.' || s[i] == '_' || s[i] == '-')) return false;
     return true;
 }
 
@@ -86,6 +94,23 @@ static void put_str(wr_t *w, const char *s, size_t max, const char *why) {      
     put(w, (uint32_t)n, 1);
     for (size_t k = 0; k < n; k++) put(w, (uint8_t)s[k], 1);
 }
+/* a goal's word as a `str` (the length of 1..15 and the grammar are the format's) */
+static void put_word(wr_t *w, const char *s) {
+    size_t n = 0;
+    while (n <= GOAL_NAME_MAX && s[n]) n++;
+    if (n >= GOAL_NAME_MAX || !ptpk_goal_ok((const uint8_t *)s, n)) { no(w, "a goal's word is not 1..15 of [a-z0-9_], a letter first"); return; }
+    put(w, (uint32_t)n, 1);
+    for (size_t k = 0; k < n; k++) put(w, (uint8_t)s[k], 1);
+}
+/* the GOALS / MODEL_GOALS value: u8 n (1..8), then n words, none twice */
+static void put_goals(wr_t *w, int n, const char (*goal)[GOAL_NAME_MAX]) {
+    if (n < 1 || n > SPECIES_GOALS_MAX) { no(w, "it has no goal, or more than eight"); return; }
+    put(w, (uint32_t)n, 1);
+    for (int j = 0; j < n; j++) {
+        for (int m = 0; m < j; m++) if (strncmp(goal[m], goal[j], GOAL_NAME_MAX) == 0) no(w, "a goal listed twice");
+        put_word(w, goal[j]);
+    }
+}
 
 /* a record: its tag and a length to be filled in, the value after it, close_rec when the value is in */
 static size_t open_rec(wr_t *w, unsigned id, bool required) { put(w, id | (required ? PTPK_REQUIRED : 0u), 2); put(w, 0, 2); return w->n; }
@@ -95,8 +120,8 @@ static void close_rec(wr_t *w, size_t at) {
     w->p[at - 2] = (uint8_t)len; w->p[at - 1] = (uint8_t)(len >> 8);
 }
 
-/* NAME UID_NS WORLD LEGACY_ID TEST_ONLY; the uid is the hash of uid_ns, and the struct's own must be it */
-static void common(wr_t *w, const char *name, const char *uid_ns, uint32_t uid, world_t world, unsigned legacy, unsigned legacy_max, bool test_only) {
+/* NAME and UID_NS; the uid is the hash of uid_ns, and the struct's own must be it */
+static void ident(wr_t *w, const char *name, const char *uid_ns, uint32_t uid) {
     size_t at = open_rec(w, T_NAME, true);
     put_text(w, name, PACK_NAME_MAX - 1, "the name is not 1..23 printable characters");
     close_rec(w, at);
@@ -107,18 +132,22 @@ static void common(wr_t *w, const char *name, const char *uid_ns, uint32_t uid, 
     else if (!uid || uid != ptpk_fnv1a((const uint8_t *)uid_ns, n)) no(w, "the uid is not the hash of uid_ns");
     for (size_t k = 0; k < n; k++) put(w, (uint8_t)uid_ns[k], 1);
     close_rec(w, at);
-    at = open_rec(w, T_WORLD, true);
-    if (world != WORLD_AQUARIUM && world != WORLD_TERRARIUM) no(w, "the world is neither the aquarium nor the terrarium");
-    put(w, world == WORLD_TERRARIUM ? PT_WORLD_TERRARIUM : PT_WORLD_AQUARIUM, 1);
-    close_rec(w, at);
+}
+/* LEGACY_ID TEST_ONLY WORLDS (a species' and a habitat's), each only when set */
+static void extras(wr_t *w, unsigned legacy, unsigned legacy_max, bool test_only, unsigned worlds) {
     if (legacy) {
-        at = open_rec(w, T_LEGACY_ID, false);
+        const size_t at = open_rec(w, T_LEGACY_ID, false);
         put_range(w, 1, legacy, legacy_max, "the legacy id (its `id`) is out of range");
         close_rec(w, at);
     }
     if (test_only) {
-        at = open_rec(w, T_TEST_ONLY, false);
+        const size_t at = open_rec(w, T_TEST_ONLY, false);
         put(w, 1, 1);
+        close_rec(w, at);
+    }
+    if (worlds) {
+        const size_t at = open_rec(w, T_WORLDS, false);
+        put_range(w, 1, worlds, 255, "the worlds mask is past 255");
         close_rec(w, at);
     }
 }
@@ -135,7 +164,8 @@ static size_t finish(wr_t *w, int kind, uint32_t uid, uint8_t *out, const char *
 
 size_t ptpk_encode_species(const species_t *p, const char *uid_ns, uint8_t *out, size_t cap, const char **why) {
     wr_t w; start(&w, out, cap);
-    common(&w, p->name, uid_ns, p->uid, p->world, p->id, 255, p->test_only);
+    ident(&w, p->name, uid_ns, p->uid);
+    extras(&w, p->id, 255, p->test_only, p->worlds);
     size_t at;
     at = open_rec(&w, T_HABITATS, true);
     if (p->n_habitat_uids < 1 || p->n_habitat_uids > SPECIES_HABITATS_MAX) no(&w, "it lists no habitat, or more than four");
@@ -161,11 +191,6 @@ size_t ptpk_encode_species(const species_t *p, const char *uid_ns, uint8_t *out,
     put_f(&w, p->hunger_per_cricket);
     put_f(&w, p->sleep_hunger_per_h); put_f(&w, p->sleep_energy_per_h); put_f(&w, p->sleep_stress_per_h);
     close_rec(&w, at);
-    if (!zero(p->walk_px_s, 4) || !zero(p->bout_s, 2) || !zero(p->pause_s, 2) || !zero(&p->turn_s, 1)) {   /* absent: all zero (an aquarium pack swims) */
-        at = open_rec(&w, T_WALK, true);
-        put_fa(&w, p->walk_px_s, 4); put_fa(&w, p->bout_s, 2); put_fa(&w, p->pause_s, 2); put_f(&w, p->turn_s);
-        close_rec(&w, at);
-    }
     at = open_rec(&w, T_LIFE, true);
     put_fa(&w, p->stage_s, 3); put(&w, p->pop_cap, 1);
     close_rec(&w, at);
@@ -203,22 +228,41 @@ size_t ptpk_encode_species(const species_t *p, const char *uid_ns, uint8_t *out,
         close_rec(&w, at);
     }
     at = open_rec(&w, T_GOALS, true);
-    {
-        const char *const *names = p->world == WORLD_TERRARIUM ? LZ_GOAL_NAMES : FISH_GOAL_NAMES;   /* bit k is the world's k-th word */
-        const int nn = p->world == WORLD_TERRARIUM ? LZ_GOALS : FISH_GOALS;
-        int n = 0;
-        for (int k = 0; k < 16; k++) if ((p->goals >> k) & 1u) { if (k >= nn) no(&w, "a goal the world's list has no word for"); n++; }
-        if (!n) no(&w, "it has no goal");
-        put(&w, (uint32_t)n, 1);
-        for (int k = 0; k < nn; k++) if ((p->goals >> k) & 1u) put_str(&w, names[k], 15, "a goal's word is not 1..15 printable characters");
+    put_goals(&w, p->n_goals, p->goal);
+    close_rec(&w, at);
+    /* how it moves: one entry a mode, the walk's numbers on the walk's own (a swim and a slither carry none yet) */
+    at = open_rec(&w, T_LOCOMOTION, true);
+    if (p->n_loco < 1 || p->n_loco > SPECIES_LOCO_MAX) no(&w, "it moves no way, or in more than three");
+    else {
+        const float none[9] = { 0 };
+        bool walks = false;
+        put(&w, p->n_loco, 1);
+        for (int j = 0; j < p->n_loco; j++) {
+            const int mi = caps_index(p->loco[j].mode), ai = caps_index(p->loco[j].area);
+            if (mi < 0 || !(p->loco[j].mode & CAPS_MOVES)) no(&w, "a locomotion entry whose mode is not one movement mode");
+            if (ai < 0 || !(p->loco[j].area & CAPS_AREAS)) no(&w, "a locomotion entry whose area is not one area");
+            for (int m = 0; m < j; m++) if (p->loco[m].mode == p->loco[j].mode) no(&w, "a movement mode listed twice");
+            put(&w, (uint32_t)mi, 1); put(&w, (uint32_t)ai, 1);
+            if (p->loco[j].mode == CAP_WALK) {
+                walks = true;
+                put_fa(&w, p->walk_px_s, 4); put_fa(&w, p->bout_s, 2); put_fa(&w, p->pause_s, 2); put_f(&w, p->turn_s);
+            } else put_fa(&w, none, 9);
+        }
+        if (!walks && (!zero(p->walk_px_s, 4) || !zero(p->bout_s, 2) || !zero(p->pause_s, 2) || !zero(&p->turn_s, 1))) no(&w, "walk numbers, and no walk among its modes");
     }
+    close_rec(&w, at);
+    at = open_rec(&w, T_MEDIA_NEEDS, true);
+    if (p->media_needs & ~CAPS_MEDIA) no(&w, "a need that is not an area or a fitting (movement is LOCOMOTION's, foods are DIET's)");
+    if (p->media_wants & ~CAPS_KNOWN) no(&w, "a want that names a capability nobody has");
+    put(&w, p->media_needs, 4); put(&w, p->media_wants, 4);
     close_rec(&w, at);
     return finish(&w, PTPK_KIND_SPECIES, p->uid, out, why);
 }
 
 size_t ptpk_encode_habitat(const habitat_t *h, const char *uid_ns, uint8_t *out, size_t cap, const char **why) {
     wr_t w; start(&w, out, cap);
-    common(&w, h->name, uid_ns, h->uid, h->world, h->id, 31, h->test_only);
+    ident(&w, h->name, uid_ns, h->uid);
+    extras(&w, h->id, 31, h->test_only, h->worlds);
     size_t at;
     at = open_rec(&w, T_CLIMATE, true);
     put_f(&w, h->floor_warm_c); put_f(&w, h->floor_cool_c); put_f(&w, h->night_drop_c); put_f(&w, h->rise_c);
@@ -269,5 +313,30 @@ size_t ptpk_encode_habitat(const habitat_t *h, const char *uid_ns, uint8_t *out,
         put_f(&w, h->dish_u);
         close_rec(&w, at);
     }
+    at = open_rec(&w, T_AREAS, true);
+    if (h->areas & ~CAPS_AREAS) no(&w, "an area that is nobody's");
+    put(&w, h->areas, 4);
+    close_rec(&w, at);
+    at = open_rec(&w, T_PROVIDES, true);
+    if (h->provides & ~CAPS_PROVIDED) no(&w, "a provision that is not a lamp, hides or a food");
+    put(&w, h->provides, 4);
+    close_rec(&w, at);
     return finish(&w, PTPK_KIND_HABITAT, h->uid, out, why);
+}
+
+size_t ptpk_encode_manifest(const model_manifest_t *m, const char *uid_ns, uint8_t *out, size_t cap, const char **why) {
+    wr_t w; start(&w, out, cap);
+    ident(&w, m->name, uid_ns, m->uid);
+    size_t at = open_rec(&w, T_MODEL_TAG, true);
+    {
+        size_t n = 0;
+        while (n <= MODEL_TAG_MAX && m->tag[n]) n++;
+        if (n >= MODEL_TAG_MAX || !ptpk_tag_ok((const uint8_t *)m->tag, n)) no(&w, "the model's tag is not 1..15 characters of [A-Za-z0-9._-]");
+        for (size_t k = 0; k < n && k < MODEL_TAG_MAX; k++) put(&w, (uint8_t)m->tag[k], 1);
+    }
+    close_rec(&w, at);
+    at = open_rec(&w, T_MODEL_GOALS, true);
+    put_goals(&w, m->n_goals, m->goal);
+    close_rec(&w, at);
+    return finish(&w, PTPK_KIND_MODEL, m->uid, out, why);
 }

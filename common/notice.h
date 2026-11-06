@@ -54,8 +54,10 @@
  * NOTICE_PACK_MISSING (issue #4 phase 1, docs/ptpk.md "A tank and its packs"): the save names a species or a habitat pack
  * this build does not have (tank.h packs_missing): the tank holds still - the card says so, with the pack's name as the
  * save knew it (progression_packs_missing_name) - and waits for a tap, then again every NOTICE_PACKS_AGAIN_S while the tank
- * stays paused (the glass does nothing, so the card is the only voice it has). It goes when the pack comes. Raised by the
- * tick from tank_t.packs_missing: nothing for the platform to call. */
+ * stays paused (the glass does nothing, so the card is the only voice it has). It goes when the pack comes. Phase 2: both
+ * packs may be here and the species still need what its habitat, the firmware or the model does not provide (a gecko that
+ * needs BASK in a water tank): the same card and the same pause, worded PACK NEEDS <NEED> (progression_packs_need), and it
+ * goes when the need is met. Raised by the tick from tank_t.packs_missing: nothing for the platform to call. */
 #ifndef NOTICE_H
 #define NOTICE_H
 #include <stdbool.h>

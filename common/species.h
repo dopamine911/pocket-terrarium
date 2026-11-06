@@ -14,13 +14,15 @@
  * checks every pack against species_check (the doc's "Validation") and every
  * habitat against it.
  *
- * The engine is one core for two worlds: a WORLD_AQUARIUM build (fish) and a
- * WORLD_TERRARIUM build (lizards); a species and its habitat share a world.
- * A release image ships only its world's built-in packs (the simulator, with
- * PT_ALL_PACKS, all of them); a tank holds only its build's world's
- * (world.h PT_WORLD, tank.h tank_set_packs).
+ * What a species may live in is a question of CAPABILITIES (packs/caps.h, issue #4 phase 2), not of worlds: it says how it
+ * moves (LOCOMOTION), what it needs of its surroundings (MEDIA_NEEDS), what it eats and which goals its reflex performs - by
+ * the model's words - and a tank runs it only where everything it needs is provided by the habitat, the firmware and the
+ * model (packs/compat.h packs_compatible, tank.h tank_set_packs). The species' own list of habitats stays authoritative:
+ * the capability check is in addition. A world (world.h) is a preset and a filter - `worlds`, the WORLDS record: the shop
+ * and the menus - and decides nothing here; a release image ships only its world's built-in packs because its firmware
+ * links only those (builtin.h).
  *
- * All numbers are in the pack's own world units: degrees C, seconds of tended
+ * All numbers are in the pack's own units: degrees C, seconds of tended
  * time (the progression clock: awake in full, asleep at SLEEP_GROWTH_FRAC),
  * pixels at the 1.8's scale. */
 #ifndef SPECIES_H
@@ -30,28 +32,29 @@
 #include <stdint.h>
 #include <math.h>
 #include "world.h"
+#include "packs/caps.h"
 
-typedef enum { WORLD_AQUARIUM, WORLD_TERRARIUM } world_t;
-#define PT_WORLD_ID (PT_TERRARIUM ? WORLD_TERRARIUM : WORLD_AQUARIUM)   /* this build's world (world.h) as a pack names it */
 /* how the light maps to the model's phase (species_phase, below) */
 typedef enum { SCHED_DAY, SCHED_DUSK, SCHED_NIGHT } sched_t;
 typedef enum { PLAN_LIZARD, PLAN_FISH } body_plan_t;      /* the lizard: P3's draw_lizard; the fish: render.c's draw_fish */
 typedef enum { SHED_WHOLE, SHED_PATCHES } shed_style_t;
 enum { DIET_CRICKET = 1u << 0, DIET_MEALWORM = 1u << 1, DIET_GREENS = 1u << 2, DIET_PELLET = 1u << 3 };
+_Static_assert(((caps_t)DIET_CRICKET << CAP_FOOD_SHIFT) == CAP_CRICKET && ((caps_t)DIET_MEALWORM << CAP_FOOD_SHIFT) == CAP_MEALWORM &&
+               ((caps_t)DIET_GREENS << CAP_FOOD_SHIFT) == CAP_GREENS && ((caps_t)DIET_PELLET << CAP_FOOD_SHIFT) == CAP_PELLET,
+               "a diet bit shifted by CAP_FOOD_SHIFT is the food's capability");
 
-/* the schema's seven goals (model/schema-lizard.md "Goals"), as bits of
- * species_t.goals: what a pack's lizards do. A goal past them is a schema
- * change (a climber needs `climb`): species_check refuses such a pack until
- * the schema grows the goal. tank.h's goal_id_t holds them after the fish's
- * eight (GOAL_LZ(LZ_HUNT) ...). */
-enum { LZ_HUNT, LZ_BASK, LZ_HIDE, LZ_EXPLORE, LZ_INVESTIGATE, LZ_DIG, LZ_REST, LZ_GOALS,
-       LZ_CLIMB = LZ_GOALS };                             /* (not in the schema: chameleons, crested geckos) */
-#define LZ_SCHEMA_GOALS ((1u << LZ_GOALS) - 1)
-extern const char *const LZ_GOAL_NAMES[LZ_GOALS];         /* the schema's goal words, LZ_* order (defined in packs/ptpk_write.c: the file format names a goal by its word) */
-/* ... and the fish's eight (schema v2-v4, tank.h GOAL_SEEK_FOOD .. GOAL_INSPECT_REEF): an aquarium pack's goals */
+/* THE GOALS' WORDS. A model's goals are words (the manifest of packs/manifest.h lists them, in its own candidate order) and a
+ * species names the ones its reflex performs by word, so no id of tank.h goes into a file. The lizard model's seven
+ * (model/schema-lizard.md "Goals"; tank.h's goal_id_t holds them after the fish's eight, GOAL_LZ(LZ_HUNT) ...) and the fish
+ * model's eight (schema v2-v4, tank.h GOAL_SEEK_FOOD .. GOAL_INSPECT_REEF), as initializer lists - a manifest and a built-in
+ * species both take them - and as the arrays the engine reads (defined in packs/models.c, with the manifests). A goal past
+ * these (a climber needs `climb`) is in no manifest until a model is trained on it: species_check refuses the word. */
+enum { LZ_HUNT, LZ_BASK, LZ_HIDE, LZ_EXPLORE, LZ_INVESTIGATE, LZ_DIG, LZ_REST, LZ_GOALS };
+#define LZ_GOAL_WORDS   "hunt", "bask", "hide", "explore", "investigate", "dig", "rest"
+extern const char *const LZ_GOAL_NAMES[LZ_GOALS];         /* the lizard model's goal words, LZ_* order */
 #define FISH_GOALS 8
-#define FISH_SCHEMA_GOALS ((1u << FISH_GOALS) - 1)
-extern const char *const FISH_GOAL_NAMES[FISH_GOALS];     /* the fish schema's goal words, in tank.h's order (tank.c GOAL_NAMES holds the same) */
+#define FISH_GOAL_WORDS "seek_food", "flee_shadow", "visit_bubbles", "follow_friend", "explore", "rest", "dart_play", "inspect_reef"
+extern const char *const FISH_GOAL_NAMES[FISH_GOALS];     /* the fish model's goal words, in tank.h's order (tank.c GOAL_NAMES holds the same) */
 
 /* the model's phase (model/schema-lizard.md `phase`) */
 enum { PHASE_ACTIVE, PHASE_SETTLE, PHASE_SLEEP, PHASE_N };
@@ -83,6 +86,10 @@ static inline float lizard_stride_px(const lizard_geom_t *g, float scale) { retu
 #define SPECIES_HABITATS_MAX  4
 typedef struct { char name[MORPH_NAME_MAX]; uint32_t body, accent; } morph_t;   /* 0xRRGGBB */
 typedef struct { char name[PATTERN_NAME_MAX]; } pattern_t;                      /* banded, spotted ... (P3 draws them) */
+#define SPECIES_LOCO_MAX      3      /* a movement mode once each: swim, walk, slither */
+#define SPECIES_GOALS_MAX     8      /* the most words a species or a manifest lists */
+#define GOAL_NAME_MAX        16      /* a goal's word: 1..15 characters of [a-z0-9_], a letter first */
+typedef struct { caps_t mode, area; } loco_t;   /* one way it moves (CAP_SWIM, CAP_WALK, CAP_SLITHER) and the area it moves in (CAP_WATER, CAP_LAND, ...) */
 
 typedef struct {
     char        name[PACK_NAME_MAX];/* "LEOPARD GECKO" (shown on cards) */
@@ -90,7 +97,13 @@ typedef struct {
                                        never reused; any other pack is given a free one when it is loaded and it is never stored */
     bool        builtin;            /* shipped in the firmware: its id is the one a save may hold (progression.c writes 0 for the rest) */
     bool        test_only;          /* compiled in for the tests (A16's warm pack), never offered to a keeper */
-    world_t     world;              /* the build it belongs to; its habitats share it */
+    uint8_t     worlds;             /* the WORLDS record: the worlds whose shop and menus offer it (world.h PT_WORLD bits; 0: all). A filter, nothing more */
+    /* what it needs of its surroundings (packs/compat.h species_needs adds them up): how it moves, and in which area (the
+       LOCOMOTION record - one entry per mode, the walk's numbers below), the areas and fittings it cannot live without
+       (media_needs) and the ones it makes use of when they are there (media_wants: known bits only), and its diet's foods */
+    uint8_t     n_loco;
+    loco_t      loco[SPECIES_LOCO_MAX];
+    caps_t      media_needs, media_wants;
     uint32_t    uid;                /* the pack's identity for good: FNV-1a-32 of its uid string (docs/ptpk.md) - what a save stores */
     uint32_t    habitats;           /* bit (1u << habitat id): the habitats it can live in (habitat.h; ids 1..31). Derived from
                                        habitat_uid[] by the registry whenever a pack is added: never read from a file */
@@ -117,7 +130,7 @@ typedef struct {
     float       sleep_hunger_per_h, sleep_energy_per_h;
     float       sleep_stress_per_h; /* a MAGNITUDE: stress falls by this an hour asleep (the doc's -2.0) */
 
-    /* how it walks (P2b, a terrarium pack's: tank.c THE WALK; an aquarium pack swims and leaves them 0): its pace
+    /* how it walks (the WALK entry of LOCOMOTION - tank.c THE WALK; a pack that does not walk leaves them 0): its pace
      * by stage (px/s at the 1.8's scale), the stop-and-go - a bout of walking, then a pause, each drawn lo..hi
      * seconds - and the seconds a turn about on the spot takes (it stands meanwhile) */
     float       walk_px_s[4];
@@ -143,8 +156,10 @@ typedef struct {
     morph_t     morphs[SPECIES_MORPHS_MAX]; uint8_t n_morphs;
     pattern_t   pattern[4];         /* per stage: the gecko banded as a hatchling, spotted as an adult */
 
-    uint16_t    goals;              /* the goals its reflex performs, a bit per goal of its world's set: LZ_* bits for a
-                                       terrarium pack, the fish's eight (FISH_SCHEMA_GOALS) for an aquarium one */
+    /* the goals its reflex performs, by word (the GOALS record): species_check holds each to the words of a model's manifest
+       (manifest.h), packs_compatible to the words of the model this build runs. No bit, no id: an id would depend on a model's order */
+    uint8_t     n_goals;
+    char        goal[SPECIES_GOALS_MAX][GOAL_NAME_MAX];
 } species_t;
 
 /* the built-in packs' one-byte ids: the ones old saves hold - each const species_t's `.id`, and its file's LEGACY_ID record */
@@ -162,7 +177,7 @@ typedef struct {
  * of these loads the built-in ones if nothing has (the firmware calls packs_init at boot, before its tasks). */
 const species_t *species_get(uint8_t id);   /* by the one-byte handle; NULL: no such pack */
 const species_t *species_by_uid(uint32_t uid);   /* by the pack's uid; NULL: not loaded */
-int  species_count(void);                   /* the packs loaded (a release image: its world's; the simulator: both worlds') */
+int  species_count(void);                   /* the packs loaded (a release image: those its firmware links; the simulator: both worlds') */
 const species_t *species_at(int i);         /* in registry order: built-in packs, then the others in the order they came */
 /* what the loader (common/packs/ptpk.c) fills it with. species_slot: the next free pool slot, zeroed (NULL: the pool is
  * full); the loader reads a pack's records into it and calls species_commit, which gives it its id (a built-in pack its
@@ -186,7 +201,9 @@ float species_heat_of(const species_t *p, float body_c);
 /* the model's phase under the pack's schedule: lit = the light is on, since_s
  * = seconds since the light last switched (either way) */
 int  species_phase(const species_t *p, bool lit, float since_s);
-/* docs/species-pack.md "Validation" for one pack; false with the first broken
- * rule in why */
+/* docs/species-pack.md "Validation" for one pack; false with the first broken rule in why. The rules a pack keeps whatever its
+ * world: the heat, the rates, the stages ..., and the capability ones - a movement mode this firmware has (caps.h firmware_caps),
+ * the walk's numbers if it walks, the humid hide if it sheds, goals that some manifest this build carries lists
+ * (manifest.h manifests_know_goal). Whether the pack can run with a habitat and the model of this build is packs_compatible's */
 bool species_check(const species_t *p, char *why, size_t n);
 #endif

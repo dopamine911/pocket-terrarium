@@ -74,10 +74,6 @@ void habitat_drop_loaded(void) {
     species_relink();                                      /* ... and a species that lived in one that is gone loses its bit */
 }
 
-bool habitat_fits(const habitat_t *h, const species_t *s) {
-    return h && s && h->id >= 1 && h->id <= 31 && ((s->habitats >> h->id) & 1u) && s->world == h->world;
-}
-
 /* two hides this far apart along the floor: two HIDE_R (tank.h) on the narrowest floor, the watch's ~280 px */
 #define HIDE_GAP_U 0.2f
 
@@ -92,9 +88,13 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
     if (!h->name[0]) REFUSE("no name");
     if (h->id < 1 || h->id > 31) REFUSE("id %d is outside 1..31 (species_t.habitats has a bit per id)", h->id);
-    if (h->world != WORLD_AQUARIUM && h->world != WORLD_TERRARIUM) REFUSE("world %d is no world", (int)h->world);
-    const bool terr = h->world == WORLD_TERRARIUM;           /* a terrarium's thermoregulation needs a gradient, a lamp and the hides */
-    if (terr ? !(h->floor_warm_c > h->floor_cool_c) : !(h->floor_warm_c >= h->floor_cool_c))
+    /* what it provides (AREAS, PROVIDES): somewhere to be, of kinds that exist (the fields it says it has are held to below) */
+    if (!(h->areas & (CAP_WATER | CAP_LAND))) REFUSE("it has neither WATER nor LAND among its areas (%08x)", (unsigned)h->areas);
+    if (h->areas & ~CAPS_AREAS) REFUSE("areas %08x lists more than areas", (unsigned)h->areas);
+    if (h->provides & ~CAPS_PROVIDED) REFUSE("provides %08x lists more than a lamp, hides and foods", (unsigned)h->provides);
+    if ((h->areas & CAP_SHORE) && (h->areas & (CAP_WATER | CAP_LAND)) != (CAP_WATER | CAP_LAND)) REFUSE("a SHORE is where WATER meets LAND, and it has not both");
+    const bool land = (h->areas & CAP_LAND) != 0;            /* land's thermoregulation needs a gradient, a lamp and the hides (the terrarium's) */
+    if (land ? !(h->floor_warm_c > h->floor_cool_c) : !(h->floor_warm_c >= h->floor_cool_c))
         REFUSE("the floor's warm end (%.1f C) is not warmer than its cool end (%.1f C)", h->floor_warm_c, h->floor_cool_c);
     if (!(h->night_drop_c >= 0)) REFUSE("the night warms the floor (drop %.1f C)", h->night_drop_c);
     if (!(h->rise_c >= 0)) REFUSE("the air cools toward the lamp (rise %.1f C)", h->rise_c);
@@ -117,9 +117,17 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
     }
     if (h->bask_surf > h->n_rocks || !on_surface(h, h->bask_surf, h->bask_u))
         REFUSE("the basking spot at %.2f is off its surface (%d)", h->bask_u, h->bask_surf);
-    const bool lamp = terr || h->bask_r_px != 0;            /* a lamp: the terrarium's always, an aquarium's if it has one */
+    const bool lamp = land || h->bask_r_px != 0;            /* a lamp: land's always, a water habitat's if it has one */
     if (lamp && !(h->bask_r_px > 0)) REFUSE("the lamp's pool has no size (%.0f px)", h->bask_r_px);
-    if (h->n_hides < (terr ? 1 : 0) || h->n_hides > HABITAT_HIDES_MAX) REFUSE("%d hides, not %d..%d", h->n_hides, terr ? 1 : 0, HABITAT_HIDES_MAX);
+    if (h->n_hides < (land ? 1 : 0) || h->n_hides > HABITAT_HIDES_MAX) REFUSE("%d hides, not %d..%d", h->n_hides, land ? 1 : 0, HABITAT_HIDES_MAX);
+    /* what it says it provides is what it has (docs/ptpk.md "Capabilities"): a basking spot and a lamp where the lamp has a pool, hides
+       where there are hides, mealworms where there is a dish; its crickets and mealworms need land, its pellets water */
+    if (((h->areas & CAP_BASK) != 0) != lamp) REFUSE("BASK %s its areas, and its lamp's pool is %.0f px", (h->areas & CAP_BASK) ? "is among" : "is not among", h->bask_r_px);
+    if (((h->provides & CAP_LAMP) != 0) != lamp) REFUSE("LAMP %s what it provides, and its lamp's pool is %.0f px", (h->provides & CAP_LAMP) ? "is among" : "is not among", h->bask_r_px);
+    if (((h->provides & CAP_HIDES) != 0) != (h->n_hides > 0)) REFUSE("HIDES %s what it provides, and it has %d hides", (h->provides & CAP_HIDES) ? "is among" : "is not among", h->n_hides);
+    if (((h->provides & CAP_MEALWORM) != 0) != h->dish) REFUSE("MEALWORM %s what it provides, and it has %s dish", (h->provides & CAP_MEALWORM) ? "is among" : "is not among", h->dish ? "a" : "no");
+    if ((h->provides & (CAP_CRICKET | CAP_MEALWORM)) && !land) REFUSE("crickets and mealworms need LAND");
+    if ((h->provides & CAP_PELLET) && !(h->areas & CAP_WATER)) REFUSE("pellets need WATER");
     int humid = 0;
     for (int k = 0; k < h->n_hides; k++) {
         const hide_t *d = &h->hides[k];
@@ -132,7 +140,7 @@ bool habitat_check(const habitat_t *h, char *why, size_t n) {
         }
         humid += d->kind == HIDE_HUMID;
     }
-    if (terr && !humid) REFUSE("no humid hide: a lizard needs one to shed (docs/shed.md)");
+    if (land && !humid) REFUSE("no humid hide: a lizard needs one to shed (docs/shed.md)");
     if (humid) {                                             /* (a habitat without a humid hide has no moisture to keep) */
         if (!(h->moist_start >= 0 && h->moist_start <= 1)) REFUSE("a new humid hide's moisture %.2f is outside 0..1", h->moist_start);
         if (!(h->moist_dry_per_s > 0)) REFUSE("a humid hide never dries (%g a second)", h->moist_dry_per_s);

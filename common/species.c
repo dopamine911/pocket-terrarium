@@ -4,12 +4,21 @@
 #include "tank.h"                          /* POP_CAP */
 #include "packs/builtin.h"                 /* PTPK_BUILTIN_SPECIES: how many packs this build ships */
 #include "packs/ptpk.h"                    /* packs_init, PACKS_SPARE */
+#include "packs/ptpk_write.h"              /* ptpk_goal_ok */
+#include "packs/compat.h"                  /* species_needs */
+#include "packs/manifest.h"                /* manifests_know_goal */
 #include <stdio.h>
 #include <string.h>
 
-/* (LZ_GOAL_NAMES and FISH_GOAL_NAMES, the words a pack names its goals by, are packs/ptpk_write.c's: the host emitter links
+/* (LZ_GOAL_NAMES and FISH_GOAL_NAMES, the words a model's manifest lists its goals by, are packs/models.c's: the host emitter links
    them without this registry) */
 const char *const PHASE_NAMES[PHASE_N] = { "active", "settle", "sleep" };
+
+/* whether any of the floats has a bit set (a -0 counts: as the loader's and the encoder's zero test) */
+static bool any_set(const float *f, int n) {
+    for (int k = 0; k < n; k++) { uint32_t u; memcpy(&u, &f[k], 4); if (u) return true; }
+    return false;
+}
 
 /* THE POOL (docs/ptpk.md "The loader"): this build's built-in packs and PACKS_SPARE slots for the ones found at run time,
  * in .bss - nothing is malloc'd on the device path. The loader fills it a slot at a time (species_slot, species_commit);
@@ -50,6 +59,14 @@ species_t *species_slot(void) {
     memset(&s_pool[s_n], 0, sizeof s_pool[s_n]);
     return &s_pool[s_n];
 }
+/* a movement mode of the species that this firmware has no module for (caps.h firmware_caps): the one thing the loader refuses for
+   what the firmware can never meet, naming the capability - before anything about habitats, which could never help */
+static bool lacks_module(const species_t *p, char *why, size_t n) {
+    const caps_t no_module = species_moves(p) & ~firmware_caps();
+    if (!no_module) return false;
+    if (why && n) { char l[64]; caps_list(no_module, l, sizeof l); snprintf(why, n, "it moves by %s, and this firmware has no such module", l); }
+    return true;
+}
 
 bool species_commit(species_t *p, bool builtin, uint8_t legacy_id, uint32_t crc, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
@@ -67,6 +84,7 @@ bool species_commit(species_t *p, bool builtin, uint8_t legacy_id, uint32_t crc,
         p->id = (uint8_t)id;
     }
     p->builtin = builtin;
+    if (lacks_module(p, why, n)) return false;             /* what this firmware can NEVER meet is said first, whichever habitats are loaded */
     relink(p);
     if (!p->habitats) REFUSE("it lists %d habitat(s) and none is loaded", p->n_habitat_uids);
     if (!species_check(p, why, n)) return false;
@@ -110,13 +128,29 @@ int species_phase(const species_t *p, bool lit, float since_s) {
     return since_s < p->settle_s ? PHASE_SETTLE : PHASE_SLEEP;
 }
 
-/* the rules every pack keeps, its world's on top: a terrarium pack walks (THE WALK's pace and stop-and-go), one that
- * sheds keeps the shed cycle's (shed_every_s ...), and every pack's goals are of its own world's set */
+/* the rules every pack keeps (docs/species-pack.md "Validation"): the heat, the rates, the stages - and by what the pack can do, not
+ * by the world it came from: the movement modes the firmware has, the walk's pace and stop-and-go if it walks, the humid hide if it
+ * sheds, a goal no model lacks (some manifest lists each word) */
 bool species_check(const species_t *p, char *why, size_t n) {
     #define REFUSE(...) do { if (why && n) snprintf(why, n, __VA_ARGS__); return false; } while (0)
     if (!p->name[0]) REFUSE("no name");
-    if (p->world != WORLD_AQUARIUM && p->world != WORLD_TERRARIUM) REFUSE("world %d is no world", (int)p->world);
     if (!p->habitats || (p->habitats & 1u)) REFUSE("habitats %08x: it must live somewhere, and habitat ids start at 1", (unsigned)p->habitats);
+    /* how it moves, and what it needs of its surroundings (packs/compat.h adds the needs up) */
+    if (p->n_loco < 1 || p->n_loco > SPECIES_LOCO_MAX) REFUSE("%d ways of moving, not 1..%d", p->n_loco, SPECIES_LOCO_MAX);
+    caps_t moves = 0;
+    for (int k = 0; k < p->n_loco; k++) {
+        const loco_t *l = &p->loco[k];
+        if (caps_index(l->mode) < 0 || !(l->mode & CAPS_MOVES)) REFUSE("way of moving %d (%08x) is not one movement mode", k, (unsigned)l->mode);
+        if (caps_index(l->area) < 0 || !(l->area & CAPS_AREAS)) REFUSE("way of moving %d is in %08x, not one area", k, (unsigned)l->area);
+        if (moves & l->mode) REFUSE("it moves by %s twice", caps_name((unsigned)caps_index(l->mode)));
+        moves |= l->mode;
+    }
+    if (lacks_module(p, why, n)) return false;             /* a mode this firmware has no module for: no habitat could ever help */
+    if (p->media_needs & ~CAPS_MEDIA) REFUSE("media_needs %08x lists more than areas and fittings (movement belongs to its locomotion, foods to its diet)", (unsigned)p->media_needs);
+    if (p->media_wants & ~CAPS_KNOWN) REFUSE("media_wants %08x names a capability nobody has", (unsigned)p->media_wants);
+    if (p->diet & ~(DIET_CRICKET | DIET_MEALWORM | DIET_GREENS | DIET_PELLET)) REFUSE("diet %02x names a food nobody has", p->diet);
+    if (p->sheds && !(p->media_needs & CAP_HIDES)) REFUSE("it sheds and does not need HIDES (the humid hide of docs/shed.md)");
+    if ((species_needs(p) & CAP_SHORE) && (species_needs(p) & (CAP_WATER | CAP_LAND)) != (CAP_WATER | CAP_LAND)) REFUSE("it needs a SHORE and not both WATER and LAND");
     if (!(p->t_cold < p->t_lo && p->t_lo < p->t_hi && p->t_hi < p->t_hot))
         REFUSE("the heat band is out of order (%.1f / %.1f / %.1f / %.1f)", p->t_cold, p->t_lo, p->t_hi, p->t_hot);
     if (p->t_hi - p->t_lo < 2.0f) REFUSE("the comfort band is %.1f C wide, under 2", p->t_hi - p->t_lo);
@@ -139,8 +173,8 @@ bool species_check(const species_t *p, char *why, size_t n) {
         for (size_t k = 0; k < sizeof SHED / sizeof SHED[0]; k++)
             if (!(SHED[k].v > 0)) REFUSE("%s is %g, not > 0 (it sheds)", SHED[k].what, SHED[k].v);
     }
-    if (p->world == WORLD_TERRARIUM) {                    /* it walks (tank.c THE WALK) */
-        for (int s = 0; s < 4; s++) if (!(p->walk_px_s[s] > 0)) REFUSE("walk_px_s[%d] is %g, not > 0 (a terrarium pack walks)", s, p->walk_px_s[s]);
+    if (moves & CAP_WALK) {                               /* it walks (tank.c THE WALK) */
+        for (int s = 0; s < 4; s++) if (!(p->walk_px_s[s] > 0)) REFUSE("walk_px_s[%d] is %g, not > 0 (it walks)", s, p->walk_px_s[s]);
         if (!(p->bout_s[0] > 0 && p->bout_s[0] <= p->bout_s[1])) REFUSE("bout_s %.2f..%.2f is no span of seconds", p->bout_s[0], p->bout_s[1]);
         if (!(p->pause_s[0] > 0 && p->pause_s[0] <= p->pause_s[1])) REFUSE("pause_s %.2f..%.2f is no span of seconds", p->pause_s[0], p->pause_s[1]);
         if (!(p->turn_s > 0)) REFUSE("turn_s is %g, not > 0", p->turn_s);
@@ -149,7 +183,8 @@ bool species_check(const species_t *p, char *why, size_t n) {
             if (!(p->geom.length_px > 0) || most > TERRAIN_LINK_IN_PX)
                 REFUSE("geom.length_px %g: its biggest elder's half length %.1f px passes TERRAIN_LINK_IN_PX %.0f (a ramp's end out of its reach)", p->geom.length_px, most, TERRAIN_LINK_IN_PX);
         }
-    }
+    } else if (any_set(p->walk_px_s, 4) || any_set(p->bout_s, 2) || any_set(p->pause_s, 2) || any_set(&p->turn_s, 1))
+        REFUSE("it has walk numbers and no walk among its ways of moving");
     if (!(p->stage_s[0] < p->stage_s[1] && p->stage_s[1] < p->stage_s[2]))
         REFUSE("stage_s is not strictly increasing (%.0f / %.0f / %.0f)", p->stage_s[0], p->stage_s[1], p->stage_s[2]);
     for (int s = 0; s < 4 && p->sheds; s++)
@@ -159,9 +194,14 @@ bool species_check(const species_t *p, char *why, size_t n) {
     if (p->n_morphs < 1 || p->n_morphs > SPECIES_MORPHS_MAX) REFUSE("%d morphs, not 1..%d", p->n_morphs, SPECIES_MORPHS_MAX);
     for (int s = 0; s < 4; s++) if (!p->pattern[s].name[0]) REFUSE("no pattern for stage %d", s);
     if (p->schedule != SCHED_DAY) REFUSE("schedule %d needs the clock-based day (P5+): only SCHED_DAY runs", (int)p->schedule);
-    if (!p->goals) REFUSE("no goals");
-    const unsigned own = p->world == WORLD_TERRARIUM ? LZ_SCHEMA_GOALS : FISH_SCHEMA_GOALS;   /* its world's schema */
-    if (p->goals & ~own) REFUSE("goals %03x need a goal its world's schema does not have (a climber): refused until the schema grows one", p->goals);
+    if (p->n_goals < 1 || p->n_goals > SPECIES_GOALS_MAX) REFUSE("%d goals, not 1..%d", p->n_goals, SPECIES_GOALS_MAX);
+    for (int k = 0; k < p->n_goals; k++) {                /* its goals are words, and some model's manifest must list each (manifest.h): one no model has is refused until a model is trained on it */
+        size_t l = 0;
+        while (l < GOAL_NAME_MAX && p->goal[k][l]) l++;
+        if (l >= GOAL_NAME_MAX || !ptpk_goal_ok((const uint8_t *)p->goal[k], l)) REFUSE("goal %d is not a word of 1..%d characters of [a-z0-9_], a letter first", k, GOAL_NAME_MAX - 1);
+        for (int j = 0; j < k; j++) if (strcmp(p->goal[j], p->goal[k]) == 0) REFUSE("the goal \"%s\" is listed twice", p->goal[k]);
+        if (!manifests_know_goal(p->goal[k])) REFUSE("the goal \"%s\" is in no model's goal list (a climber needs a model trained on it)", p->goal[k]);
+    }
     /* the heat map: monotonic, 5.0 at t_lo and 7.0 at t_hi (and 0 / 10 past the ends). A band is a few tens of degrees: one far outside
        any body's (a file's hostile float - 1e19 C, where a step of 0.01 changes nothing) would walk this loop for ever, so it is refused first */
     if (!(p->t_cold > -100.0f && p->t_hot < 200.0f)) REFUSE("the heat band %.1f..%.1f C is outside -100..200 C", p->t_cold, p->t_hot);

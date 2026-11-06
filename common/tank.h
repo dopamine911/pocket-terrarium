@@ -1125,10 +1125,11 @@ typedef struct tank {
      * uids too: progression.c). moist: each of the habitat's hides' moisture 0..1 (by its index; only a humid hide's is
      * read: docs/shed.md "Moisture"), the habitat's moist_start for a new tank; saved. light_s: seconds since the light
      * last switched, either way (the species' phase, tank_phase_now); not saved. packs_missing (docs/ptpk.md "A tank and
-     * its packs"): the save named a pair this build cannot hold - a pack that is not loaded, a pair that does not fit,
-     * another world's - so the tank holds the defaults only to be drawn and is PAUSED: tank_tick and tank_tick_sleep do
-     * nothing, the hand does nothing on the glass, progression ages nothing, and progression.c keeps the saved pair (its
-     * uids and every animal's tail as loaded) for every save until the pack comes (progression_tick looks for it); not saved */
+     * its packs"): the save named a pair this build cannot hold - a pack that is not loaded, or a pair whose needs are not
+     * met (a species that needs BASK in a habitat without one, another world's pair) - so the tank holds the defaults only to
+     * be drawn and is PAUSED: tank_tick and tank_tick_sleep do nothing, the hand does nothing on the glass, progression ages
+     * nothing, and progression.c keeps the saved pair (its uids and every animal's tail as loaded) for every save until the
+     * pack comes or the need is met (progression_tick looks for it); not saved */
     uint8_t  pack_id, habitat_id;
     bool     packs_missing;
     float    moist[HABITAT_HIDES_MAX];
@@ -1262,8 +1263,9 @@ void  tank_tick_sleep(tank_t *t, float seconds);
 
 /* ---- the packs' world: places, heat, shed (pocket-terrarium P2a; world-neutral names, one core for both builds) ----
  * The species (species.h) and its habitat (habitat.h) are the tank's two packs (tank_t.pack_id, habitat_id):
- * tank_set_packs takes a pair only when it fits (habitat_fits) and is of this build's world (PT_WORLD_ID) - false
- * otherwise, the tank as it was.
+ * tank_set_packs takes a pair only when the species lists the habitat and everything it needs is provided by the habitat,
+ * this firmware and the model (packs/compat.h packs_compatible: issue #4 phase 2; the world decides none of it) - false
+ * and a reason otherwise, the tank as it was.
  * PLACES: the habitat's hides stand on the floor, laid out on every board from TANK_BOT and the glass at the floor:
  * the floor's span is the glass at PLACE_Y inset PLACE_MARGIN, a hide's fraction u runs along it from the warm (left,
  * 0) end to the cool (right, 1) end, at PLACE_Y (an animal's middle standing on the sand). The basking spot is on its
@@ -1278,7 +1280,8 @@ void  tank_tick_sleep(tank_t *t, float seconds);
 const species_t *tank_species(const tank_t *t);           /* the tank's species pack (SPECIES_DEFAULT's for an unknown id) */
 const habitat_t *tank_habitat(const tank_t *t);           /* ... and its habitat (HABITAT_DEFAULT's for an unknown id) */
 const terrain_t *tank_terrain(const tank_t *t);           /* ... its ground on this board (terrain_lay on glass_here; laid out once a habitat) */
-bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id);   /* a new pair: both known, it fits and it is this world's, else false */
+bool  tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id, char *why, size_t why_n);   /* a new pair: both known, the species lists the habitat, and
+                                                           everything it needs is provided (packs/compat.h); else false and why says why (NULL, 0: no reason wanted) */
 float tank_floor_x(float u);                              /* the x a floor fraction stands at on this board */
 void  tank_hide_point(const tank_t *t, int k, float *x, float *y);      /* the habitat's hide k */
 void  tank_bask_point(const tank_t *t, float *x, float *y);             /* its basking spot (on its rock: terrain_t.bask_*) */

@@ -9,6 +9,7 @@
 #include "version.h"
 #include "shelf.h"
 #include "tank_link.h"
+#include "packs/compat.h"                 /* packs_check: what a pair that cannot run lacks */
 #include <stddef.h>
 #include <string.h>
 #include <math.h>
@@ -569,6 +570,7 @@ static struct {
     uint32_t species_uid, habitat_uid;
     uint8_t  pack_id, habitat_id;
     char     species_name[PACK_NAME_MAX], habitat_name[PACK_NAME_MAX];
+    char     need[24];                    /* both packs loaded, the pair not held: what it lacks in a few words (packs_check's `need`); "" if a pack is not here */
 } s_want;
 static float s_resume_in;
 #define PACKS_RESUME_S 1.0f
@@ -1710,11 +1712,11 @@ static void relayout(tank_t *t, save_t *sv) {
 }
 
 /* THE PACKS A TANK WAITS FOR (tank.h packs_missing; docs/ptpk.md "A tank and its packs"). A save names its pair by uid (an
- * older one by the one-byte ids). When this build cannot hold that pair - a pack that is not loaded, a pair that does not
- * fit, another world's - the tank is paused with the defaults drawn in their place, and the save's own words stay in
- * s_want: every save while it waits writes them back (the uids, the ids, the names), never the defaults', and
- * progression_tick looks for the pack once a second (the simulator's folder is read again; the card will be) and resumes
- * the tank. */
+ * older one by the one-byte ids). When this build cannot hold that pair - a pack that is not loaded, or both loaded but a need
+ * of the species not met by the habitat, the firmware or the model (issue #4 phase 2) - the tank is paused with the defaults
+ * drawn in their place, and the save's own words stay in s_want: every save while it waits writes them back (the uids, the
+ * ids, the names), never the defaults', and progression_tick looks again once a second (the simulator's folder is read again;
+ * the card will be) and resumes the tank when the pair can run. */
 static void want_name(char *dst, const char *src) {          /* a save's text: printable, terminated */
     size_t i = 0;
     for (; i < PACK_NAME_MAX - 1 && src[i]; i++) dst[i] = src[i] >= 0x20 && src[i] <= 0x7e ? src[i] : '?';
@@ -1737,12 +1739,17 @@ const char *progression_packs_missing_name(const tank_t *t) {
     if (!want_habitat()) return hn[0] ? hn : sn;
     return sn[0] ? sn : hn;                                   /* both are loaded, but not a pair this build holds */
 }
+/* what the pair the tank waits for lacks, in a few words ("BASK", "GOAL CLIMB", "ANOTHER HABITAT"): "" when it is the pack itself that is
+   not here (the card says PACK MISSING then; PACK NEEDS <this> otherwise) */
+const char *progression_packs_need(const tank_t *t) { return t->packs_missing ? s_want.need : ""; }
 /* the pair has come (a pack was added to the registry): the tank takes it up where it stopped. The animals' tail was loaded
    as saved; what depended on the pack (the heat the body's temperature reads as, a dish this habitat lacks, the moisture of a
    hide that is not damp) is made its own now */
 static bool packs_resume(tank_t *t) {
     const species_t *sp = want_species(); const habitat_t *hb = want_habitat();
-    if (!sp || !hb || !tank_set_packs(t, hb->id, sp->id)) return false;   /* (a pair that fits and is this world's: it clears packs_missing) */
+    s_want.need[0] = 0;
+    if (!sp || !hb) return false;                                          /* a pack that is not here */
+    if (!tank_set_packs(t, hb->id, sp->id, NULL, 0)) { packs_check(sp, hb, s_want.need, sizeof s_want.need, NULL, 0); return false; }   /* both here, a need unmet: said again as it stands now */
     for (int i = 0; i < t->n_fish; i++) t->fish[i].heat = species_heat_of(sp, t->fish[i].body_c);
     for (int k = 0; k < HABITAT_HIDES_MAX; k++) if (!(k < hb->n_hides && hb->hides[k].kind == HIDE_HUMID)) t->moist[k] = 0;
     if (!tank_dish_here(t)) { t->dish_worms = 0; t->dish_farm = false; }
@@ -1788,10 +1795,12 @@ static bool load_save(tank_t *t, int64_t *saved_unix) {
         sp0 = sv.species_uid ? species_by_uid(sv.species_uid) : species_get(sv.pack_id);
         hb0 = sv.habitat_uid ? habitat_by_uid(sv.habitat_uid) : habitat_get(sv.habitat_id);
     }
-    const bool packs_ok = sp0 && hb0 && tank_set_packs(t, hb0->id, sp0->id);
+    const bool packs_ok = sp0 && hb0 && tank_set_packs(t, hb0->id, sp0->id, NULL, 0);
+    char need[sizeof s_want.need] = "";       /* both packs are here but the pair cannot run (a need the habitat, the firmware or the model does not meet): what it lacks, for the card */
+    if (sp0 && hb0 && !packs_ok) packs_check(sp0, hb0, need, sizeof need, NULL, 0);
     if (!packs_ok) { t->habitat_id = HABITAT_DEFAULT; t->pack_id = SPECIES_DEFAULT; }
     t->packs_missing = sv.pack_v && !packs_ok;
-    if (t->packs_missing) want_keep(&sv); else memset(&s_want, 0, sizeof s_want);
+    if (t->packs_missing) { want_keep(&sv); memcpy(s_want.need, need, sizeof need); } else memset(&s_want, 0, sizeof s_want);
     const bool tail_ok = packs_ok || t->packs_missing;       /* (the packs tail is there: pack_v) */
     bool upgraded = false;                    /* a fish from before 0.4: its genes / IDs made up at this load */
     uint32_t tail_used = 0, pack_used = 0; bool any_away = false;

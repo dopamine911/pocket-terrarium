@@ -6,7 +6,8 @@
  * the registry below (habitat.c: a fixed pool), the same pattern as the species packs (species.h); a built-in habitat's
  * source is a const habitat_t in C (common/habitat/<name>.c) that the firmware encodes into such a file at boot. A
  * terrarium stores both ids (tank_t.habitat_id, tank_t.pack_id; the save adds the packs'
- * uids), and holds only a pair that fits: the species lists the habitat (species_t.habitats) - tank_set_packs refuses
+ * uids), and holds only a pair that works: the species lists the habitat (species_t.habitats) and everything the species
+ * needs is provided by the habitat, the firmware and the model (packs/compat.h packs_compatible) - tank_set_packs refuses
  * anything else. --selftest-packs checks every habitat (habitat_check, its ground on all four boards: terrain.h THE
  * RULES) and that every habitat's lit ground reaches each fitting species' comfort band somewhere.
  *
@@ -53,7 +54,11 @@ typedef struct {
     uint8_t     id;                     /* the registry's one-byte handle (tank_t.habitat_id): a built-in habitat's is the one old saves hold,
                                            never reused, 1..31 (species_t.habitats is a bit per id); any other is given a free 3..30 when loaded */
     bool        builtin;                /* shipped in the firmware (see species_t.builtin) */
-    world_t     world;                  /* the build it belongs to: only a species of the same world lives in it */
+    uint8_t     worlds;                 /* the WORLDS record: the worlds whose menus offer it (world.h PT_WORLD bits; 0: all). A filter, nothing more */
+    /* what it provides (packs/caps.h; the AREAS and PROVIDES records): areas - water to swim in, land to walk on, a basking
+       spot, a shore - and a lamp, hides and foods (the dish's mealworms; crickets on land, pellets in water). A species runs
+       here only if everything it needs is among them (packs/compat.h habitat_provides adds the movement its areas carry) */
+    caps_t      areas, provides;
     bool        test_only;              /* compiled in for the tests (A16's warm desert), never offered to a keeper */
     uint32_t    uid;                    /* the pack's identity for good: FNV-1a-32 of its uid string (docs/ptpk.md) - what a save stores */
     /* the air while lit: the floor from its warm end to its cool end, straight across (an aquarium's may be even), and
@@ -104,11 +109,11 @@ bool habitat_commit(habitat_t *slot, bool builtin, uint8_t legacy_id, uint32_t c
 pack_seen_t habitat_seen(uint32_t uid, uint32_t crc, const char **by);
 void habitat_drop_loaded(void);
 uint32_t habitat_generation(void);             /* counts every habitat added or dropped: what a cache of a habitat's layout must be laid again on (tank.c tank_terrain) */
-/* a habitat's own rules (--selftest-packs), its world's: a terrarium's - an ordered, positive layout, a warm end warmer
- * than its cool end, a lamp that warms its spot, at least one humid hide; an aquarium's - the floor may be even, a lamp
- * and hides are its own business (none in freshwater); every one's moisture and humidity in 0..1, and its ground well
- * formed and walkable on all four boards (terrain.h THE RULES). false with the first broken rule in why */
+/* a habitat's own rules (--selftest-packs). By its AREAS: with land - a terrarium's - an ordered, positive layout, a warm end
+ * warmer than its cool end, a lamp that warms its spot, at least one humid hide; without - water's - the floor may be even,
+ * and a lamp and hides are its own business (none in freshwater); every one's moisture and humidity in 0..1, its ground well
+ * formed and walkable on all four boards (terrain.h THE RULES), and what it says it provides (AREAS, PROVIDES) agreeing with
+ * what it has: a lamp, hides, a dish. false with the first broken rule in why. Whether a species can live in it is
+ * packs/compat.h packs_compatible's */
 bool habitat_check(const habitat_t *h, char *why, size_t n);
-/* the species may live in the habitat: it lists the habitat's id (species_t.habitats) and they share a world */
-bool habitat_fits(const habitat_t *h, const species_t *s);
 #endif

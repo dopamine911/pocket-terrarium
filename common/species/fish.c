@@ -21,7 +21,9 @@
 
 const species_t SPECIES_PACK_FISH = {
     .name = "FISH", .id = SPECIES_FISH, .uid = SPECIES_UID_FISH, .test_only = false,
-    .world = WORLD_AQUARIUM,
+    .worlds = PT_WORLD_AQUARIUM,                               /* the shop's and the menus' filter: nothing else */
+    .n_loco = 1, .loco = { { CAP_SWIM, CAP_WATER } },          /* it swims, in water (the swim runs on tank.h's constants: no numbers) */
+    .media_needs = CAP_WATER,                                  /* and needs nothing else of the water: no lamp, no hides - it does not shed */
     .n_habitat_uids = 1, .habitat_uid = { HABITAT_UID_FRESHWATER },
     .schedule = SCHED_DAY, .settle_s = 600,                   /* (the fish model sees day / night, not the phase) */
     .t_cold = 18, .t_lo = 22, .t_hi = 28, .t_hot = 32,         /* a tropical fish: the water's 25 C is heat 6 */
@@ -36,5 +38,5 @@ const species_t SPECIES_PACK_FISH = {
     .plan = PLAN_FISH,
     .morphs = { { "ROSTER", 0x38dcc7, 0xffd166 } }, .n_morphs = 1,   /* (looks are the roster's and the genes', 0.4: one here for the rules) */
     .pattern = { { "PLAIN" }, { "BARS" }, { "BARS" }, { "BARS" } },   /* a fry is plain; the pattern comes in at juvenile */
-    .goals = FISH_SCHEMA_GOALS,                                /* all eight */
+    .goal = { FISH_GOAL_WORDS }, .n_goals = FISH_GOALS,        /* all eight: the fish model's words (packs/models.c) */
 };

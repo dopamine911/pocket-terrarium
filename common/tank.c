@@ -4,8 +4,10 @@
 #include "tank.h"
 #include "tank_events.h"
 #include "pt_util.h"
+#include "packs/compat.h"                 /* packs_compatible: tank_set_packs */
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -3716,10 +3718,18 @@ const habitat_t *tank_habitat(const tank_t *t) {
     const habitat_t *h = habitat_get(t->habitat_id);
     return h ? h : habitat_get(HABITAT_DEFAULT);
 }
-bool tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id) {
+/* a new pair (tank.h): both known, the species lists the habitat, and everything the species needs is provided by the habitat, this
+   firmware and the model (packs/compat.h) - else false, the tank as it was, and why says why ("LEOPARD GECKO needs BASK; FRESHWATER
+   has none"). The world no longer decides: a pair of another world's is refused for what it needs (the other world's model has not
+   the goals, its firmware not the modules), as any pair is */
+bool tank_set_packs(tank_t *t, uint8_t habitat_id, uint8_t pack_id, char *why, size_t why_n) {
     const habitat_t *h = habitat_get(habitat_id);
     const species_t *s = species_get(pack_id);
-    if (!habitat_fits(h, s) || s->world != PT_WORLD_ID) return false;   /* (an unknown id fits nothing; another world's pair is another bin's) */
+    if (!h || !s) {
+        if (why && why_n) snprintf(why, why_n, "no %s with id %d", s ? "habitat" : "species", s ? habitat_id : pack_id);
+        return false;
+    }
+    if (!packs_compatible(s, h, why, why_n)) return false;
     t->habitat_id = habitat_id; t->pack_id = pack_id; t->packs_missing = false;
     tank_terrain(t);                                    /* (its ground laid out now, on the tank's own task) */
     return true;

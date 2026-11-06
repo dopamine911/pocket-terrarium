@@ -7,7 +7,7 @@
  *   cc -O2 -DPT_WORLD=1 -I../../common -I../../common/llm -Wl,-undefined,dynamic_lookup -o decide_host decide_host.c \
  *     ../../common/llm/advisor_core.c ../../common/llm/q4_model.c ../../common/llm/word_tok.c -lm
  * (macOS; on Linux `-no-pie -Wl,--unresolved-symbols=ignore-all` for `-Wl,-undefined,dynamic_lookup`. advisor_core_encode's
- *  tank and species calls are never made here: the link leaves them unresolved; the data it reads - tank.c's, packs/ptpk_write.c's
+ *  tank and species calls are never made here: the link leaves them unresolved; the data it reads - tank.c's, packs/models.c's
  *  and species.c's name lists - is defined below)
  *   ./decide_host ../../model/out/model_q4.bin ../../model/out/tokenizer.bin */
 #include "advisor_core.h"
@@ -27,8 +27,8 @@ const char *const GOAL_NAMES[GOAL_COUNT] = {
 #define GOALS GOAL_NAMES
 const char *const STAGE_NAMES[4] = { "fry", "juv", "adult", "elder" };
 #define STAGES STAGE_NAMES
-/* packs/ptpk_write.c's and species.c's lists, likewise: advisor_core_init reads LZ_GOAL_NAMES (an L1 tokenizer), the L1 encoder PHASE_NAMES */
-const char *const LZ_GOAL_NAMES[LZ_GOALS] = { "hunt", "bask", "hide", "explore", "investigate", "dig", "rest" };
+/* packs/models.c's and species.c's lists, likewise: advisor_core_init reads LZ_GOAL_NAMES (an L1 tokenizer), the L1 encoder PHASE_NAMES */
+const char *const LZ_GOAL_NAMES[LZ_GOALS] = { LZ_GOAL_WORDS };
 const char *const PHASE_NAMES[PHASE_N] = { "active", "settle", "sleep" };
 static const char *SIGHT[] = { "none", "near 3", "near 11", "mid 6", "mid 1", "far 9", "far 12" };
 static const char *WALL[] = { "clear", "near 9", "mid 3", "near 12" };

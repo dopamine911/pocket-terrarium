@@ -3,8 +3,9 @@
  *
  *   ptpk_emit OUTDIR     OUTDIR/<uid_ns>.ptpk for every built-in pack - the test packs and the other world's too
  *
- * Each file is what common/packs/ptpk_write.c makes of the const species_t / habitat_t that common/packs/builtin.c lists
- * (common/species and common/habitat): no registry, no loader - this links the encoder, the table and those definitions
+ * Each file is what common/packs/ptpk_write.c makes of the const species_t / habitat_t / model_manifest_t that
+ * common/packs/builtin.c lists (common/species, common/habitat, common/packs/models.c): no registry, no loader - this links the
+ * encoder, the table and those definitions
  * alone. A file that already holds the bytes is left alone (its mtime, and git, stay quiet); one line a file. sim/Makefile
  * builds and runs it with ../packs (`make packs`) on every `make` and `make check`, so the .ptpk files in packs/ - what a card
  * gets - cannot go stale against the built-ins.
@@ -26,7 +27,7 @@ int main(int argc, char **argv) {
     const char *dir = argv[1];
     mkdir(dir, 0777);                                          /* (it is there: the repo's packs/; a fresh place for a test) */
     int rc = 0;
-    for (int i = 0; i < PTPK_BUILTIN_HABITATS + PTPK_BUILTIN_SPECIES; i++) {
+    for (int i = 0; i < PTPK_BUILTIN_N; i++) {
         const builtin_pack_t *b = &PTPK_BUILTIN[i];
         static uint8_t made[PTPK_FILE_MAX], held[PTPK_FILE_MAX + 1];
         const char *why = "";

@@ -35,7 +35,9 @@
 #include "packs/builtin.h"
 
 #define DESERT_PACK(NAME, ID, UID, TEST, WARMER) {                                             \
-    .name = NAME, .id = ID, .uid = UID, .world = WORLD_TERRARIUM, .test_only = TEST,           \
+    .name = NAME, .id = ID, .uid = UID, .worlds = PT_WORLD_TERRARIUM, .test_only = TEST,      \
+    .areas = CAP_LAND | CAP_BASK,                              /* ground to walk on, with a basking spot under the lamp (bask_r_px 70) */ \
+    .provides = CAP_LAMP | CAP_HIDES | CAP_CRICKET | CAP_MEALWORM,   /* the lamp, the three hides, crickets on the sand and the mealworm dish */ \
     .floor_warm_c = 31 + (WARMER), .floor_cool_c = 25 + (WARMER), .night_drop_c = 5, .rise_c = 4, \
     .bask_surf = 3, .bask_u = 0.20f, .bask_c = 35 + (WARMER), .bask_r_px = 70,                \
     .hides = {                                                                                 \

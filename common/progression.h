@@ -171,6 +171,11 @@ void progression_woke(tank_t *t);
  * (an older one) or nothing is missing. progression_tick looks for the pack once a second and resumes the tank when it is
  * there; every save in between writes the saved pair back unchanged */
 const char *progression_packs_missing_name(const tank_t *t);
+/* ... and when both packs are here but the species needs what its habitat, this firmware or the model does not provide (a
+ * species that needs BASK in freshwater, a goal the model lacks): what is lacking in a few words, upper case ("BASK", "GOAL
+ * CLIMB", "ANOTHER HABITAT") - the card then says PACK NEEDS <it> instead of PACK MISSING. "" when a pack is not here, or the
+ * tank is not waiting. The tank resumes the moment the need is met */
+const char *progression_packs_need(const tank_t *t);
 bool progression_arrival_pending(void);
 float progression_age_s(const tank_t *t, int idx);        /* grown seconds */
 /* director/debug: put a fish's tended clock at `seconds` and apply the stage

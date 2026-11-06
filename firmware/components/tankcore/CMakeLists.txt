@@ -13,8 +13,10 @@ set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON
          "${COMMON}/audio.c" "${COMMON}/notice.c" "${COMMON}/sounds.c" "${COMMON}/battery.c" "${COMMON}/advanced.c" "${COMMON}/shelf.c" "${COMMON}/boot_show.c"
          "${COMMON}/species.c" "${COMMON}/habitat.c" "${COMMON}/terrain.c"
          "${COMMON}/packs/ptpk.c" "${COMMON}/packs/ptpk_write.c" "${COMMON}/packs/builtin.c"
+         "${COMMON}/packs/caps.c" "${COMMON}/packs/manifest.c" "${COMMON}/packs/models.c" "${COMMON}/packs/compat.c"
          "persist_port_esp.c" "rtc_port_pcf85063.c")
-# THE PACKS (docs/ptpk.md): the built-in packs' source is a const species_t / habitat_t in C (common/species, common/habitat);
+# THE PACKS (docs/ptpk.md): the built-in packs' source is a const species_t / habitat_t / model_manifest_t in C (common/species,
+# common/habitat, packs/models.c; capabilities and the pair check: packs/caps.c, compat.c, the registry of the model manifests: manifest.c);
 # packs_load_builtin encodes each (packs/ptpk_write.c) into a PTPK file on the main task's stack at boot and loads it through
 # the one loader (packs/ptpk.c, packs_add), as a file from a card would be. The table of them (packs/builtin.c) names only what
 # this image links: a release image carries its own world's pair, test-only packs left out - the simulator carries them all

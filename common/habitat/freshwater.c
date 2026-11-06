@@ -12,7 +12,8 @@
 #include "packs/builtin.h"
 
 const habitat_t HABITAT_PACK_FRESHWATER = {
-    .name = "FRESHWATER", .id = HABITAT_FRESHWATER, .uid = HABITAT_UID_FRESHWATER, .world = WORLD_AQUARIUM,
+    .name = "FRESHWATER", .id = HABITAT_FRESHWATER, .uid = HABITAT_UID_FRESHWATER, .worlds = PT_WORLD_AQUARIUM,
+    .areas = CAP_WATER, .provides = CAP_PELLET,                /* water to swim in and the pellets that sink in it: no lamp, no hides, no dish */
     .floor_warm_c = 25, .floor_cool_c = 25, .night_drop_c = 0,
     .bask_u = 0.5f, .bask_c = 25, .bask_r_px = 0,              /* no lamp */
     .n_hides = 0,

@@ -1683,7 +1683,8 @@ static int terrarium_census(advisor_fn brain, uint8_t habitat, uint8_t pack, boo
     tank_t *t = &s_t;
     const char *seed_env = getenv("PT_CENSUS_SEED");   /* another terrarium: the same run, other starts and other dice */
     fresh(t, seed_env ? (uint32_t)strtoul(seed_env, NULL, 10) : 501, 3, true);   /* the founding pair and one more, the tank's own trickle on */
-    if ((habitat != t->habitat_id || pack != t->pack_id) && !tank_set_packs(t, habitat, pack)) WF("a tank refused habitat %d with pack %d", habitat, pack);
+    char why[200] = "";
+    if ((habitat != t->habitat_id || pack != t->pack_id) && !tank_set_packs(t, habitat, pack, why, sizeof why)) WF("a tank refused habitat %d with pack %d: %s", habitat, pack, why);
     /* (another pair: the same lizards take its rates and band from the next tick, the same rocks - selftest-heat's test pack
        does; the warm desert's ground is the desert's, so where they stand stays ground) */
     const species_t *sp = tank_species(t);

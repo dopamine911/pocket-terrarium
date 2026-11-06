@@ -100,6 +100,7 @@
 #include "touch_gate.h"
 #include "sim_tmp.h"   /* the run's scratch directory: every save, shelf and frame of a selftest is in it (P2c) */
 #include "packs_dir.h" /* the simulator's folder of packs: POCKET_PACKS_DIR (issue #4 phase 1, docs/ptpk.md) */
+#include "packs/compat.h"   /* packs_compatible: a saved pair is held when its species' needs are met (issue #4 phase 2) */
 #if PT_NET   /* the networked bin's (version.h PT_NET; sim/Makefile NET=1): selftest_link.c, selftest_coll.c, net_port_sim.c */
 int selftest_link(void);   /* selftest_link.c: the tank link engine under a hostile radio */
 int selftest_doors(void);  /* selftest_link.c: two real tanks, fish through the doors */
@@ -114,6 +115,7 @@ int coll_shot(const char *prefix);      /* selftest_coll.c: --coll-shot, the pag
 #endif
 int selftest_packs(void);               /* selftest_packs.c (pocket-terrarium P2a): every species and habitat pack, and the pairs a tank can hold */
 int selftest_ptpk(void);                /* selftest_ptpk.c (issue #4 phase 1): the PTPK format and loader, a folder of packs, a tank whose pack is missing */
+int selftest_caps(void);                /* selftest_caps.c (issue #4 phase 2): capabilities, the pair check, the model manifests, a tank whose pair cannot run */
 int selftest_heat(void);                /* ... the heat field and the body's heat */
 int selftest_shed(void);                /* ... the shed cycle, growth sheds, the humid hide's moisture (docs/shed.md "Tests") */
 int selftest_mister(void);              /* ... the third tool */
@@ -2400,7 +2402,7 @@ static int saves_check(const char *what, const uint8_t *e, float bubble_default)
         const uint32_t su = sv_u32(e, 2104), hu = sv_u32(e, 2108);
         const species_t *ps = pv ? (su ? species_by_uid(su) : species_get(e[1957])) : NULL;
         const habitat_t *ph = pv ? (hu ? habitat_by_uid(hu) : habitat_get(e[1958])) : NULL;
-        const bool held = ps && ph && habitat_fits(ph, ps) && ps->world == PT_WORLD_ID, missing = pv && !held, tail = held || missing;
+        const bool held = ps && ph && packs_compatible(ps, ph, NULL, 0), missing = pv && !held, tail = held || missing;
         if (tank.packs_missing != missing) SV_FAIL("packs_missing %d, want %d", tank.packs_missing, missing);
         const uint8_t pid = held ? ps->id : SPECIES_DEFAULT, hid = held ? ph->id : HABITAT_DEFAULT;
         if (tank.pack_id != pid || tank.habitat_id != hid) SV_FAIL("species %d in habitat %d, want %d in %d", tank.pack_id, tank.habitat_id, pid, hid);
@@ -2623,7 +2625,7 @@ static int selftest_saves(void) {
         remove(getenv("POCKET_TANK_SAVE"));
         tank_init(&tank, 24); progression_wake(&tank, 0);
         while (tank.n_fish < 3) tank_add_fish(&tank, 0, 1);
-        if (!tank_set_packs(&tank, own_h, own_p)) { printf("FAIL: the %s refused its own pair, species %d in habitat %d\n", PT_WORLD_NAME, own_p, own_h); return 1; }
+        { char why[200] = ""; if (!tank_set_packs(&tank, own_h, own_p, why, sizeof why)) { printf("FAIL: the %s refused its own pair, species %d in habitat %d: %s\n", PT_WORLD_NAME, own_p, own_h, why); return 1; } }
         const int humid = tank_humid_hide(&tank);                       /* (-1: freshwater keeps no hide damp) */
         static const uint8_t ST[3] = { SHED_STUCK, SHED_SOON, SHED_SHEDDING };
         for (int i = 0; i < 3; i++) {
@@ -13444,6 +13446,7 @@ int main(int argc, char **argv) {
 #endif
         if (strcmp(argv[a], "--selftest-packs") == 0) return selftest_packs();
         if (strcmp(argv[a], "--selftest-ptpk") == 0) return selftest_ptpk();
+        if (strcmp(argv[a], "--selftest-caps") == 0) return selftest_caps();
         if (strcmp(argv[a], "--selftest-heat") == 0) return selftest_heat();
         if (strcmp(argv[a], "--selftest-shed") == 0) return selftest_shed();
         if (strcmp(argv[a], "--selftest-mister") == 0) return selftest_mister();

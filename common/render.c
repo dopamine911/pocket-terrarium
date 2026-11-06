@@ -9812,10 +9812,16 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
     const icon_t *ic = NULL;
     const fish_t *f = fish >= 0 && fish < t->n_fish ? &t->fish[fish] : NULL;
     if (kind == 6 || kind == 7 || kind == 8) {                /* NOTICE_MODEL_DAMAGED (2026-10-21): the AI model is damaged; */
-        if (kind == 8) {                                      /* NOTICE_PACK_MISSING (issue #4 phase 1): the tank's save names a pack this build does not have */
-            const char *w = progression_packs_missing_name(t);
-            snprintf(title, sizeof title, "PACK MISSING");
-            snprintf(caption, sizeof caption, "%s", w[0] ? w : "A PACK THIS TANK USES");
+        if (kind == 8) {                                      /* NOTICE_PACK_MISSING (issue #4): the tank's save names a pack this build does not have (phase 1) - or both are here and the species needs what the habitat, the firmware or the model lacks (phase 2) */
+            const char *w = progression_packs_missing_name(t), *need = progression_packs_need(t);
+            if (need[0]) {                                    /* PACK NEEDS BASK: the title when it fits the modal; a longer need (a goal's word) goes to the caption under a bare PACK NEEDS */
+                snprintf(title, sizeof title, "PACK NEEDS %s", need);
+                if (text_w(title, 3) > W - 12) { snprintf(title, sizeof title, "PACK NEEDS"); snprintf(caption, sizeof caption, "%s", need); }
+                else snprintf(caption, sizeof caption, "%s", w[0] ? w : "A PACK THIS TANK USES");
+            } else {
+                snprintf(title, sizeof title, "PACK MISSING");
+                snprintf(caption, sizeof caption, "%s", w[0] ? w : "A PACK THIS TANK USES");
+            }
             caption2 = WORLD_STR("THE TANK WAITS FOR IT", "THE TERRARIUM WAITS FOR IT");
         } else if (kind == 7) {                               /* NOTICE_WRONG_BOARD (0.3.9.3): this version is another board's */
             const char *w = pt_board_words(board_port_hw());

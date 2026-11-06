@@ -1,26 +1,30 @@
 #define _DEFAULT_SOURCE   /* mkdir, setenv under -std=c11 (glibc) */
-/* selftest_ptpk.c - issue #4 phase 1: the PTPK pack format (docs/ptpk.md), its encoder (common/packs/ptpk_write.c) and its loader
- * (common/packs/ptpk.c), the registry (species.c, habitat.c), the simulator's folder of packs (packs_dir.c) and a tank whose pack is
- * missing, through the real calls:
+/* selftest_ptpk.c - issue #4 phases 1 and 2: the PTPK pack format (docs/ptpk.md), its encoder (common/packs/ptpk_write.c) and its loader
+ * (common/packs/ptpk.c), the registries (species.c, habitat.c, packs/manifest.c), the simulator's folder of packs (packs_dir.c) and a tank whose
+ * pack is missing, through the real calls. This is the FORMAT suite: what a file may say and how the loader answers it. What the capabilities
+ * MEAN - a pair the tank holds or refuses for what it needs, the firmware's and the model's providers, the model manifests' own rules - is
+ * --selftest-caps:
  *
  *   ./fishsim --selftest-ptpk
  *
  *   1  known answers: CRC-32 and FNV-1a-32
- *   2  every built-in pack's file - what the encoder makes of its const species_t / habitat_t, the bytes the firmware loads at boot -
- *      is exactly what the contract says (the 20-byte header, the CRC, the uid of its UID_NS and the constant the table holds,
- *      habitats first), is the one the registry holds, and is the file under ../packs/ (`make packs` writes it) when that is there
- *   3  the round trip: every built-in pack encoded, read back (ptpk_read_*) and found in the registry equals its const struct, field
- *      for field (morphs and patterns inline); and the encoder refuses what the format cannot hold, with its reason
- *   4  the fish pack's drives and goals are tank.h's and tank.c's (the swim runs on those constants)
- *   5  every bit flip and every cut of every built-in file is refused, whatever the registry holds, and a flipped or cut
- *      file never changes it
- *   6  hostile bodies behind a good header (the CRC fixed up, so the record parser sees the damage): every bit, byte values,
- *      every cut, stray bytes, garbage, several bytes at once - never a crash, and what loads passes its rules
- *   7  records one at a time: an unknown optional one is skipped, an unknown REQUIRED one, a duplicate, a wrong size, a NaN, a bad
- *      goal, bad text, a bad header, a body of 2049 bytes, a missing record, a species with no habitat, the other world's pack
- *   8  uid collisions, the pool's size, the ids a pack from a file is given
- *   9  a folder of packs: a new pack is available, a corrupt, a short, an empty, a huge and a foreign file are refused, the built-in
- *      pack's own file is dropped quietly
+ *   2  every built-in pack's file - what the encoder makes of its const species_t / habitat_t / model_manifest_t, the bytes the firmware loads at boot -
+ *      is exactly what the contract says (the 20-byte header, the CRC, the uid of its UID_NS and the constant the table holds, the model manifests
+ *      first, then the habitats, then the species), is the one the registry holds, and is the file under ../packs/ (`make packs` writes it) when that is there
+ *   3  the round trip: every built-in pack encoded, read back (ptpk_read_*) and found in its registry equals its const struct, field for field (goal
+ *      words, locomotion, needs, worlds, areas and provisions, morphs and patterns inline; a manifest's tag and goals); and the encoder refuses what
+ *      the format cannot hold, with its reason
+ *   4  the fish pack's and the gecko's goal words, drives, way of moving and needs are tank.h's and tank.c's and the contract's (the swim runs on those constants)
+ *   5  every bit flip and every cut of every built-in file is refused, whatever the registry holds, and a flipped or cut file never changes it
+ *   6  hostile bodies behind a good header (the CRC fixed up, so the record parser sees the damage): every bit, byte values, every cut, stray bytes,
+ *      garbage, several bytes at once, tags and lengths from the dice behind a species', a habitat's and a manifest's header - never a crash, and what
+ *      loads passes its rules
+ *   7  records one at a time: an unknown optional one is skipped, an unknown REQUIRED one (the retired WORLD and WALK ids too), a duplicate, a wrong
+ *      size, a NaN, a bad goal word, LOCOMOTION, MEDIA_NEEDS, AREAS, PROVIDES and WORLDS - what is refused, what is dropped, what is kept - bad text,
+ *      a bad header, a body of 2049 bytes, a missing record, a species with no habitat, the other world's pack (loaded: a world is a filter)
+ *   8  uid collisions, the pool's size (species, habitats, model manifests), a model's tag held by one manifest, the ids a pack from a file is given
+ *   9  a folder of packs: a new pack, a new habitat and a new model manifest are available, a corrupt, a short, an empty, a huge and a foreign file
+ *      are refused, the built-in packs' own files (a species' and the model's manifest) are dropped quietly
  *  10  a tank whose pack is missing: it pauses, keeps its uids and its tail through a save and a reload, says so, ignores the
  *      hand, and resumes when the pack comes (the folder read again, or the pack added) */
 #include <stdio.h>
@@ -37,6 +41,9 @@
 #include "packs/ptpk.h"
 #include "packs/ptpk_write.h"
 #include "packs/builtin.h"
+#include "packs/compat.h"
+#include "packs/manifest.h"
+#include "version.h"
 #include "packs_dir.h"
 #include "sim_tmp.h"
 
@@ -63,7 +70,7 @@ static uint32_t bits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 static void dump_species(const species_t *p, bool runtime) {
     emit("species %d\n", p->id);
     emit("  name %s\n", p->name);
-    I(p, id); I(p, test_only); I(p, world); emit("  uid %08x\n", (unsigned)p->uid);
+    I(p, id); I(p, test_only); I(p, worlds); emit("  uid %08x\n", (unsigned)p->uid);
     I(p, n_habitat_uids);
     for (int k = 0; k < SPECIES_HABITATS_MAX; k++) emit("  habitat_uid[%d] %08x\n", k, (unsigned)p->habitat_uid[k]);
     if (runtime) { I(p, builtin); emit("  habitats %08x\n", (unsigned)p->habitats); }
@@ -72,18 +79,23 @@ static void dump_species(const species_t *p, bool runtime) {
     F(p, hunger_per_s); F(p, energy_per_s); F(p, energy_rest_per_s); F(p, curiosity_per_s); F(p, hunger_per_cricket);
     F(p, sleep_hunger_per_h); F(p, sleep_energy_per_h); F(p, sleep_stress_per_h);
     FA(p, walk_px_s, 4); FA(p, bout_s, 2); FA(p, pause_s, 2); F(p, turn_s);
+    I(p, n_loco);
+    for (int k = 0; k < SPECIES_LOCO_MAX; k++) emit("  loco[%d] mode %08x area %08x\n", k, (unsigned)p->loco[k].mode, (unsigned)p->loco[k].area);
+    emit("  media_needs %08x media_wants %08x\n", (unsigned)p->media_needs, (unsigned)p->media_wants);
     FA(p, stage_s, 3); I(p, pop_cap); I(p, sheds); FA(p, shed_every_s, 4); F(p, shed_soon_s); F(p, shed_window_s);
     I(p, shed_style); I(p, diet); I(p, plan);
     F(&p->geom, length_px); F(&p->geom, head_w); F(&p->geom, limb_len); F(&p->geom, tail_fat); F(&p->geom, eye_r); I(&p->geom, eyelids);
     I(p, n_morphs);
     for (int i = 0; i < SPECIES_MORPHS_MAX; i++) emit("  morph[%d] %s %06x %06x\n", i, p->morphs[i].name, (unsigned)p->morphs[i].body, (unsigned)p->morphs[i].accent);
     for (int s = 0; s < 4; s++) emit("  pattern[%d] %s\n", s, p->pattern[s].name);
-    emit("  goals %04x\n", (unsigned)p->goals);
+    I(p, n_goals);
+    for (int k = 0; k < SPECIES_GOALS_MAX; k++) emit("  goal[%d] %.*s\n", k, GOAL_NAME_MAX - 1, p->goal[k]);
 }
 static void dump_habitat(const habitat_t *h, bool runtime) {
     emit("habitat %d\n", h->id);
     emit("  name %s\n", h->name);
-    I(h, id); I(h, world); I(h, test_only); emit("  uid %08x\n", (unsigned)h->uid);
+    I(h, id); I(h, worlds); I(h, test_only); emit("  uid %08x\n", (unsigned)h->uid);
+    emit("  areas %08x provides %08x\n", (unsigned)h->areas, (unsigned)h->provides);
     if (runtime) I(h, builtin);
     F(h, floor_warm_c); F(h, floor_cool_c); F(h, night_drop_c); F(h, rise_c);
     I(h, bask_surf); F(h, bask_u); F(h, bask_c); F(h, bask_r_px);
@@ -102,6 +114,15 @@ static void dump_habitat(const habitat_t *h, bool runtime) {
         emit("  ramp[%d] lo %d hi %d u_lo %08x u_hi %08x\n", k, h->ramps[k].lo, h->ramps[k].hi, bits(h->ramps[k].u_lo), bits(h->ramps[k].u_hi));
     F(h, moist_start); F(h, moist_dry_per_s); F(h, humidity);
     I(h, dish); F(h, dish_u);
+}
+static void dump_manifest(const model_manifest_t *m, bool runtime) {
+    emit("manifest %s\n", m->tag);
+    emit("  name %s\n", m->name);
+    emit("  uid %08x\n", (unsigned)m->uid);
+    emit("  tag %s\n", m->tag);
+    if (runtime) I(m, builtin);
+    I(m, n_goals);
+    for (int k = 0; k < SPECIES_GOALS_MAX; k++) emit("  goal[%d] %.*s\n", k, GOAL_NAME_MAX - 1, m->goal[k]);
 }
 
 /* ================================================================ files as bytes, edited in place */
@@ -147,18 +168,24 @@ static void rec_set(blob_t *k, unsigned id, const void *v, size_t l) {      /* t
     if (l) memcpy(k->b + at + 4, v, l);
     k->n = k->n - ol + l;
 }
-/* a new pack made of a built-in's file: UID_NS and NAME get new last characters (the length stays); the header is made good */
+/* a new pack made of a built-in's file: UID_NS and NAME get new last characters (the length stays); a model manifest's MODEL_TAG too - its last character
+   becomes ns_tail's FIRST (a model's tag is one manifest's: the variant needs a tag of its own, so no tail of a manifest may start with the tag's last character);
+   the header is made good */
 static void blob_variant(blob_t *k, const uint8_t *b, size_t n, const char *ns_tail, const char *name_tail) {
     blob_copy(k, b, n);
     size_t at, l;
     if (rec_find(k, 2, &at, &l)) memcpy(k->b + at + 4 + l - strlen(ns_tail), ns_tail, strlen(ns_tail));
     if (rec_find(k, 1, &at, &l)) memcpy(k->b + at + 4 + l - strlen(name_tail), name_tail, strlen(name_tail));
+    if (k->b[5] == PTPK_KIND_MODEL && rec_find(k, 0x301, &at, &l) && l) k->b[at + 4 + l - 1] = (uint8_t)ns_tail[0];
     blob_fix(k);
 }
-/* the built-in packs as files: what the firmware loads at boot, encoded from the const structs (builtin_encode) once for the whole test, in the table's order */
-#define N_BUILTIN (PTPK_BUILTIN_HABITATS + PTPK_BUILTIN_SPECIES)
+/* the built-in packs as files: what the firmware loads at boot, encoded from the const structs (builtin_encode) once for the whole test, in the table's order:
+   the model manifests, then the habitats, then the species (a species lists habitats by uid and names goals the manifests list) */
+#define N_BUILTIN PTPK_BUILTIN_N
 typedef struct { const builtin_pack_t *def; uint8_t blob[PTPK_FILE_MAX]; size_t len; } enc_t;
 static enc_t s_enc[N_BUILTIN];
+static bool is_manifest(int i) { return i < PTPK_BUILTIN_MODELS; }
+static bool is_habitat(int i) { return i >= PTPK_BUILTIN_MODELS && i < PTPK_BUILTIN_MODELS + PTPK_BUILTIN_HABITATS; }
 static int enc_all(void) {
     for (int i = 0; i < N_BUILTIN; i++) {
         const char *why = "";
@@ -171,6 +198,10 @@ static int enc_all(void) {
 static const enc_t *builtin_with_uid(uint32_t uid) {
     for (int i = 0; i < N_BUILTIN; i++) if (rd32(s_enc[i].blob + 8) == uid) return &s_enc[i];
     return NULL;
+}
+/* the first built-in file of a kind (PTPK_KIND_*): a model manifest, a habitat and a species are always there */
+static const enc_t *enc_first(int kind) {
+    return &s_enc[kind == PTPK_KIND_MODEL ? 0 : kind == PTPK_KIND_HABITAT ? PTPK_BUILTIN_MODELS : PTPK_BUILTIN_MODELS + PTPK_BUILTIN_HABITATS];
 }
 /* offered to the loader the way a file read from a folder is: from an exact-size heap copy (a read past its end is a bug a checker sees) */
 static packs_result_t offer(const uint8_t *b, size_t n, packs_info_t *info, char *why, size_t why_n) {
@@ -186,9 +217,9 @@ static uint32_t s_rng = 0x2545f491u;
 static uint32_t rnd(void) { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5; return s_rng; }
 
 /* the registry's own state, to see a refusal changed nothing */
-typedef struct { int ns, nh; uint32_t gen; } reg_t;
-static reg_t reg_now(void) { reg_t r = { species_count(), habitat_count(), habitat_generation() }; return r; }
-static bool reg_same(reg_t a, reg_t b) { return a.ns == b.ns && a.nh == b.nh && a.gen == b.gen; }
+typedef struct { int ns, nh, nm; uint32_t gen; } reg_t;
+static reg_t reg_now(void) { reg_t r = { species_count(), habitat_count(), manifest_count(), habitat_generation() }; return r; }
+static bool reg_same(reg_t a, reg_t b) { return a.ns == b.ns && a.nh == b.nh && a.nm == b.nm && a.gen == b.gen; }
 
 /* ================================================================ 1: known answers */
 static int t_known(void) {
@@ -208,7 +239,7 @@ static int t_builtin(void) {
         const enc_t *e = &s_enc[i];
         const uint8_t *b = e->blob; const size_t n = e->len;
         const char *ns = e->def->uid_ns;
-        const uint32_t own = e->def->species ? e->def->species->uid : e->def->habitat->uid;
+        const uint32_t own = e->def->species ? e->def->species->uid : e->def->habitat ? e->def->habitat->uid : e->def->manifest->uid;
         blob_t k; blob_copy(&k, b, n);
         size_t at, l;
         if (!rec_find(&k, 2, &at, &l)) PF("built-in pack %d has no UID_NS", i);
@@ -221,11 +252,17 @@ static int t_builtin(void) {
         if (rd32(b + 8) != ptpk_fnv1a(k.b + at + 4, l) || !rd32(b + 8)) PF("%s: uid %08x is not the hash of its name", ns, (unsigned)rd32(b + 8));
         if (e->def->uid != rd32(b + 8) || own != rd32(b + 8))     /* (the name's hash, as the file has it, is the uid constant: in the table and in the struct) */
             PF("%s: the uid constant (the table's %08x, the struct's %08x) is not the hash of its name, %08x", ns, (unsigned)e->def->uid, (unsigned)own, (unsigned)rd32(b + 8));
-        const bool hab = i < PTPK_BUILTIN_HABITATS;
-        if (b[5] != (hab ? PTPK_KIND_HABITAT : PTPK_KIND_SPECIES) || hab != (e->def->habitat != NULL)) PF("%s: kind %d: the habitats come first (a species lists them by uid)", ns, b[5]);
+        const int kind = is_manifest(i) ? PTPK_KIND_MODEL : is_habitat(i) ? PTPK_KIND_HABITAT : PTPK_KIND_SPECIES;
+        const int defs = (e->def->manifest != NULL) + (e->def->habitat != NULL) + (e->def->species != NULL);
+        const bool def_ok = defs == 1 && (kind == PTPK_KIND_MODEL ? e->def->manifest != NULL : kind == PTPK_KIND_HABITAT ? e->def->habitat != NULL : e->def->species != NULL);
+        if (b[5] != kind || !def_ok) PF("%s: kind %d: the table lists the model manifests first, then the habitats, then the species (a species lists habitats by uid and names goals the manifests list)", ns, b[5]);
         packs_info_t info;
         if (packs_add(b, n, PACKS_BUILTIN, &info, why, sizeof why) != PACKS_SAME) PF("%s: the registry does not hold this file (%s)", ns, why);
-        (void)info;
+        if (info.kind != kind || info.uid != own) PF("%s: the registry reports it as kind %d uid %08x", ns, info.kind, (unsigned)info.uid);
+        if (is_manifest(i)) {                                         /* a manifest: built in, the registry's own i-th, found by its tag too */
+            const model_manifest_t *m = manifest_by_uid(own);
+            if (!m || !m->builtin || m != manifest_at(i) || manifest_by_tag(m->tag) != m) PF("%s: the registry's manifest is not this built-in one (or not found by its tag)", ns);
+        }
         /* the file under packs/ (`make packs` writes it; the simulator runs from sim/) is this one, when it is there */
         char path[300]; snprintf(path, sizeof path, "../packs/%s.ptpk", ns);
         FILE *f = fopen(path, "rb");
@@ -236,20 +273,28 @@ static int t_builtin(void) {
             on_disk++;
         }
     }
-    if (species_count() < PTPK_BUILTIN_SPECIES || habitat_count() < PTPK_BUILTIN_HABITATS) PF("the registry holds %d species and %d habitats, the build ships %d and %d", species_count(), habitat_count(), PTPK_BUILTIN_SPECIES, PTPK_BUILTIN_HABITATS);
+    if (species_count() < PTPK_BUILTIN_SPECIES || habitat_count() < PTPK_BUILTIN_HABITATS || manifest_count() < PTPK_BUILTIN_MODELS)
+        PF("the registry holds %d species, %d habitats and %d manifests, the build ships %d, %d and %d", species_count(), habitat_count(), manifest_count(), PTPK_BUILTIN_SPECIES, PTPK_BUILTIN_HABITATS, PTPK_BUILTIN_MODELS);
     for (int i = 0; i < species_count(); i++) {
         const species_t *p = species_at(i);
         if (i < PTPK_BUILTIN_SPECIES && !p->builtin) PF("%s is not marked built in", p->name);
         if (species_by_uid(p->uid) != p || species_get(p->id) != p) PF("%s: the lookups by uid and id do not find it", p->name);
     }
-    printf("selftest-ptpk: %d built-in packs (%d habitats, then %d species), each encoded from its const struct: 20-byte headers, CRCs and uids exact (every uid constant is its name's hash), "
-           "each the one the registry holds; %d of them equal the file in packs/ (`make packs` writes those)\n", N_BUILTIN, PTPK_BUILTIN_HABITATS, PTPK_BUILTIN_SPECIES, on_disk);
+    for (int i = 0; i < manifest_count(); i++) {
+        const model_manifest_t *m = manifest_at(i);
+        if (i < PTPK_BUILTIN_MODELS && !m->builtin) PF("%s is not marked built in", m->name);
+        if (manifest_by_uid(m->uid) != m || manifest_by_tag(m->tag) != m) PF("%s: the lookups by uid and tag do not find it", m->name);
+    }
+    if (!model_provides()) PF("the manifest of the model this build runs (tag %s) is not loaded", PT_MODEL_TAG);
+    printf("selftest-ptpk: %d built-in packs (%d model manifests, then %d habitats, then %d species), each encoded from its const struct: 20-byte headers, CRCs and uids exact (every uid constant is its name's hash), "
+           "each the one the registry holds; %d of them equal the file in packs/ (`make packs` writes those)\n", N_BUILTIN, PTPK_BUILTIN_MODELS, PTPK_BUILTIN_HABITATS, PTPK_BUILTIN_SPECIES, on_disk);
     return 0;
 }
 
 /* ================================================================ 3: encoded, read back, equal field for field */
 static const char *species_text(const species_t *p, bool runtime) { s_len = 0; s_out[0] = 0; dump_species(p, runtime); return s_out; }
 static const char *habitat_text(const habitat_t *h, bool runtime) { s_len = 0; s_out[0] = 0; dump_habitat(h, runtime); return s_out; }
+static const char *manifest_text(const model_manifest_t *m, bool runtime) { s_len = 0; s_out[0] = 0; dump_manifest(m, runtime); return s_out; }
 static int lines_of(const char *s) { int n = 0; for (; *s; s++) n += *s == '\n'; return n; }
 static int dumps_differ(const char *pack, const char *what, const char *want, const char *got) {   /* 0: the same text; else the FAIL, with the first line that differs */
     if (strcmp(want, got) == 0) return 0;
@@ -283,7 +328,7 @@ static int t_roundtrip(void) {
             uint32_t mask = 0;                                     /* the runtime's own fields: built in, and the habitats it lists as bits of their ids */
             for (int k = 0; k < d->species->n_habitat_uids; k++) { const habitat_t *hb = habitat_by_uid(d->species->habitat_uid[k]); if (hb) mask |= 1u << hb->id; }
             if (!r->builtin || !mask || r->habitats != mask) PF("%s: the registry has it built in %d with habitats %08x; the habitats it lists, loaded, are %08x", d->uid_ns, r->builtin, (unsigned)r->habitats, (unsigned)mask);
-        } else {
+        } else if (d->habitat) {
             static habitat_t got;
             if (!ptpk_read_habitat(&h, &got, &legacy, why, sizeof why)) PF("%s: the encoder's file is not read back: %s", d->uid_ns, why);
             got.id = legacy;
@@ -293,12 +338,22 @@ static int t_roundtrip(void) {
             if (!r) PF("%s: it is not in the registry", d->uid_ns);
             if (dumps_differ(d->uid_ns, "as the registry holds it,", want, habitat_text(r, false))) return 1;
             if (!r->builtin) PF("%s: the registry does not have it built in", d->uid_ns);
+        } else {
+            static model_manifest_t got;
+            if (h.kind != PTPK_KIND_MODEL || e->blob[5] != 3) PF("%s: a model manifest's file is of kind %d, not 3", d->uid_ns, h.kind);
+            if (!ptpk_read_manifest(&h, &got, why, sizeof why)) PF("%s: the encoder's file is not read back: %s", d->uid_ns, why);
+            snprintf(want, sizeof want, "%s", manifest_text(d->manifest, false));
+            if (dumps_differ(d->uid_ns, "read back,", want, manifest_text(&got, false))) return 1;
+            const model_manifest_t *r = manifest_by_uid(d->manifest->uid);
+            if (!r) PF("%s: it is not in the registry", d->uid_ns);
+            if (dumps_differ(d->uid_ns, "as the registry holds it,", want, manifest_text(r, false))) return 1;
+            if (!r->builtin || manifest_by_tag(d->manifest->tag) != r) PF("%s: the registry does not have it built in, or does not find it by its tag %s", d->uid_ns, d->manifest->tag);
         }
         lines += lines_of(want);
     }
     /* what the encoder will not write: each refused with its reason, and no file */
     static uint8_t buf[PTPK_FILE_MAX];
-    const builtin_pack_t *sd = &PTPK_BUILTIN[PTPK_BUILTIN_HABITATS], *hd = &PTPK_BUILTIN[0];       /* the first species and the first habitat */
+    const builtin_pack_t *sd = builtin_with_uid(SPECIES_UID_GECKO)->def, *hd = builtin_with_uid(HABITAT_UID_DESERT)->def;       /* the gecko (it walks: its numbers are the walk's) and the desert */
     species_t p; habitat_t hb;
     const char *w;
     int cases = 0;
@@ -315,8 +370,12 @@ static int t_roundtrip(void) {
     NOT_S(memcpy(&p.t_cold, &NAN_BITS, 4), "NaN", "a NaN");
     NOT_S(memcpy(&p.settle_s, &INF_BITS, 4), "infinity", "an infinity");
     NOT_S(p.uid ^= 1, "hash of uid_ns", "a uid that is not the name's hash");
-    NOT_S(p.goals |= 1u << 15, "no word for", "a goal the world's list has no word for");
-    NOT_S(p.goals = 0, "no goal", "no goals");
+    NOT_S(memset(p.goal[0], 'a', GOAL_NAME_MAX), "goal's word", "a goal word of 16 characters");
+    NOT_S(p.goal[0][0] = 'H', "goal's word", "a goal word with an uppercase letter");
+    NOT_S(p.goal[0][0] = '7', "goal's word", "a goal word that starts with a digit");
+    NOT_S(p.n_goals = 0, "no goal", "no goals");
+    NOT_S(p.n_goals = 9, "more than eight", "nine goals");
+    NOT_S(memcpy(p.goal[1], p.goal[0], GOAL_NAME_MAX), "twice", "a goal listed twice");
     NOT_S(p.n_habitat_uids = 0, "no habitat", "no habitat");
     NOT_S((p.n_habitat_uids = 2, p.habitat_uid[1] = p.habitat_uid[0]), "twice", "a habitat listed twice");
     NOT_S(memset(p.name, 'A', sizeof p.name), "name", "a name with no end");
@@ -325,7 +384,17 @@ static int t_roundtrip(void) {
     NOT_S(p.plan = (body_plan_t)2, "body plan", "body plan 2");
     NOT_S(p.diet = 16, "diet", "a diet bit that is nobody's");
     NOT_S(p.pattern[2].name[0] = 0, "pattern", "three of the four stages' patterns");
-    NOT_S(p.world = (world_t)5, "world", "world 5");
+    NOT_S(p.n_loco = 0, "no way", "no way of moving");
+    NOT_S(p.n_loco = 4, "more than three", "four ways of moving");
+    NOT_S(p.loco[0].mode = CAP_WALK | CAP_SWIM, "mode is not one movement mode", "a mode that is two bits");
+    NOT_S(p.loco[0].mode = CAP_LAND, "mode is not one movement mode", "a mode that is an area");
+    NOT_S(p.loco[0].area = CAP_WALK, "area is not one area", "an area that is a mode");
+    NOT_S(p.loco[0].area = CAP_WATER | CAP_LAND, "area is not one area", "an area that is two bits");
+    NOT_S((p.n_loco = 2, p.loco[1] = p.loco[0]), "listed twice", "a mode listed twice");
+    NOT_S(p.loco[0].mode = CAP_SWIM, "walk numbers", "walk numbers and no walk among the modes");
+    NOT_S(p.media_needs |= CAP_WALK, "not an area", "a movement mode among the needs");
+    NOT_S(p.media_needs |= CAP_CRICKET, "not an area", "a food among the needs");
+    NOT_S(p.media_wants |= 1u << 20, "nobody has", "a want that is nobody's");
     NOT_H(hb.n_hides = 5, "four hides", "five hides");
     NOT_H(hb.hides[0].kind = (hide_kind_t)3, "hide's kind", "a hide of kind 3");
     NOT_H(hb.n_rocks = 5, "four rocks", "five rocks");
@@ -334,14 +403,34 @@ static int t_roundtrip(void) {
     NOT_H(memcpy(&hb.floor_warm_c, &NAN_BITS, 4), "NaN", "a NaN in a habitat");
     NOT_H(hb.id = 32, "legacy id", "legacy id 32");
     NOT_H(hb.uid ^= 1, "hash of uid_ns", "a habitat uid that is not the name's hash");
-    NOT_H(hb.world = (world_t)3, "world", "a habitat of world 3");
+    NOT_H(hb.areas |= 1u << 20, "nobody's", "an area that is nobody's");
+    NOT_H(hb.areas |= CAP_LAMP, "nobody's", "a lamp among the areas");
+    NOT_H(hb.provides |= 1u << 20, "provision", "a provision that is nobody's");
+    NOT_H(hb.provides |= CAP_WATER, "provision", "an area among the provisions");
     p = *sd->species; w = "";                                      /* the name's own limits, the buffer's, and a pack with no legacy id */
     if (ptpk_encode_species(&p, "Pt.Bad", buf, sizeof buf, &w) != 0 || !strstr(w, "uid_ns")) PF("uid_ns \"Pt.Bad\" (an uppercase letter) was written or refused for \"%s\"", w);
     if (ptpk_encode_species(&p, "pt.fish.rosters", buf, sizeof buf, &w) != 0 || !strstr(w, "hash")) PF("a uid_ns that is not the uid's name was written or refused for \"%s\"", w);
-    if (ptpk_encode_species(&p, sd->uid_ns, buf, s_enc[PTPK_BUILTIN_HABITATS].len - 1, &w) != 0 || !strstr(w, "too small")) PF("a buffer one byte short for the pack got a file (or the reason \"%s\")", w);
+    if (ptpk_encode_species(&p, sd->uid_ns, buf, builtin_with_uid(sd->uid)->len - 1, &w) != 0 || !strstr(w, "too small")) PF("a buffer one byte short for the pack got a file (or the reason \"%s\")", w);
     if (ptpk_encode_species(&p, sd->uid_ns, buf, PTPK_HEADER_BYTES - 1, &w) != 0 || !strstr(w, "20-byte header")) PF("a buffer without room for the header got a file (or the reason \"%s\")", w);
     if (ptpk_encode_species(&p, sd->uid_ns, buf, 0, &w) != 0) PF("a buffer of nothing got a file");
     cases += 5;
+    {                                                              /* what it does write: all three modes, the walk's numbers on the walk's own entry, a goal word of the longest length (15) */
+        p = *sd->species; w = "";
+        p.n_loco = 3;
+        p.loco[0].mode = CAP_SWIM;    p.loco[0].area = CAP_WATER;
+        p.loco[1].mode = CAP_WALK;    p.loco[1].area = CAP_LAND;
+        p.loco[2].mode = CAP_SLITHER; p.loco[2].area = CAP_SHORE;
+        memset(p.goal[6], 0, GOAL_NAME_MAX); memset(p.goal[6], 'b', GOAL_NAME_MAX - 1);
+        const size_t n = ptpk_encode_species(&p, sd->uid_ns, buf, sizeof buf, &w);
+        ptpk_header_t h; uint8_t legacy = 0; static species_t got;
+        if (!n) PF("a species of three modes and a 15-character goal word was not written: %s", w);
+        if (!ptpk_open(buf, n, &h, why, sizeof why) || !ptpk_read_species(&h, &got, &legacy, why, sizeof why)) PF("a species of three modes is not read back: %s", why);
+        if (got.n_loco != 3 || got.n_goals != p.n_goals || strcmp(got.goal[6], p.goal[6]) != 0) PF("a species of three modes was read back with %d modes and the goal \"%s\"", got.n_loco, got.goal[6]);
+        for (int j = 0; j < 3; j++) if (got.loco[j].mode != p.loco[j].mode || got.loco[j].area != p.loco[j].area) PF("mode %d was read back as %08x in %08x", j, (unsigned)got.loco[j].mode, (unsigned)got.loco[j].area);
+        if (memcmp(got.walk_px_s, p.walk_px_s, sizeof got.walk_px_s) || memcmp(got.bout_s, p.bout_s, sizeof got.bout_s) || memcmp(got.pause_s, p.pause_s, sizeof got.pause_s) || bits(got.turn_s) != bits(p.turn_s))
+            PF("the walk's numbers were not read back as written");
+        p = *sd->species; p.id = 0;                              /* (back to the pack the next block writes) */
+    }
     p.id = 0;
     {
         const size_t n = ptpk_encode_species(&p, sd->uid_ns, buf, sizeof buf, &w);
@@ -350,9 +439,10 @@ static int t_roundtrip(void) {
         if (!n || rec_find(&k, 4, &at, &l)) PF("a pack with no legacy id: %zu bytes, a LEGACY_ID record there: %d", n, n ? rec_find(&k, 4, &at, &l) : 0);
         if (!ptpk_open(buf, n, &h, why, sizeof why) || !ptpk_read_species(&h, &got, &legacy, why, sizeof why) || legacy != 0) PF("a pack with no legacy id is not read back as one (%s, legacy %d)", why, legacy);
     }
-    printf("selftest-ptpk: %d built-in packs encoded, read back (ptpk_read_*) and found in the registry equal to their const structs, field for field - names, morphs and patterns inline, "
-           "floats as bits, the habitats by uid, the legacy id (%d dump lines); the encoder refuses %d things the format cannot hold - a long text, a NaN, a stale uid, an unlisted goal, "
-           "too many of a list, a buffer too small - each with its reason\n", N_BUILTIN, lines, cases);
+    printf("selftest-ptpk: %d built-in packs (%d model manifests, %d habitats, %d species) encoded, read back (ptpk_read_*) and found in the registry equal to their const structs, field for field - names, goal words, locomotion, needs, worlds, "
+           "areas, provisions, morphs and patterns inline, floats as bits, the habitats by uid, the legacy id (%d dump lines); the encoder refuses %d things the format cannot hold - a long text, a NaN, a stale uid, a bad or doubled goal word, "
+           "no goals or nine, no way of moving or four, a bad, doubled or numberless mode, a need or a want that is nobody's, an area or a provision that is nobody's, too many of a list, a buffer too small - each with its reason; "
+           "and it writes three modes with a walk's numbers and a 15-character goal word, read back\n", N_BUILTIN, PTPK_BUILTIN_MODELS, PTPK_BUILTIN_HABITATS, PTPK_BUILTIN_SPECIES, lines, cases);
     return 0;
 }
 
@@ -365,10 +455,28 @@ static int t_fish_numbers(void) {
         PF("the fish pack's drives are not tank.h's THE FISH'S DRIVES (hunger %g/%g, energy %g/%g, rest %g/%g, curiosity %g/%g, pellet %g/%g)", p->hunger_per_s, HUNGER_PER_S, p->energy_per_s,
            FISH_ENERGY_PER_S, p->energy_rest_per_s, FISH_ENERGY_REST_PER_S, p->curiosity_per_s, FISH_CURIOSITY_PER_S, p->hunger_per_cricket, FISH_HUNGER_PER_PELLET);
     if (p->pop_cap != POP_CAP) PF("the fish pack's pop_cap %d is not POP_CAP %d", p->pop_cap, POP_CAP);
-    if (p->goals != FISH_SCHEMA_GOALS) PF("the fish pack's goals %03x are not the fish's eight", p->goals);
-    for (int k = 0; k < FISH_GOALS; k++) if (strcmp(FISH_GOAL_NAMES[k], GOAL_NAMES[GOAL_FISH_FIRST + k]) != 0) PF("goal %d: species.c says %s, tank.c %s", k, FISH_GOAL_NAMES[k], GOAL_NAMES[GOAL_FISH_FIRST + k]);
+    if (p->n_goals != FISH_GOALS) PF("the fish pack names %d goals, the fish model has %d", p->n_goals, FISH_GOALS);
+    for (int k = 0; k < FISH_GOALS; k++) {
+        if (strcmp(p->goal[k], FISH_GOAL_NAMES[k]) != 0) PF("the fish pack's goal %d is \"%s\", the fish model's word is \"%s\"", k, p->goal[k], FISH_GOAL_NAMES[k]);
+        if (strcmp(FISH_GOAL_NAMES[k], GOAL_NAMES[GOAL_FISH_FIRST + k]) != 0) PF("goal %d: species.c says %s, tank.c %s", k, FISH_GOAL_NAMES[k], GOAL_NAMES[GOAL_FISH_FIRST + k]);
+    }
     for (int k = 0; k < LZ_GOALS; k++) if (strcmp(LZ_GOAL_NAMES[k], GOAL_NAMES[GOAL_LZ_FIRST + k]) != 0) PF("lizard goal %d: species.c says %s, tank.c %s", k, LZ_GOAL_NAMES[k], GOAL_NAMES[GOAL_LZ_FIRST + k]);
-    printf("selftest-ptpk: the fish pack's drives, its cap (%d) and its eight goals are tank.h's and tank.c's; the lizard's seven are tank.c's too\n", POP_CAP);
+    const species_t *g = species_get(SPECIES_GECKO);
+    if (!g) PF("no gecko pack");
+    if (g->n_goals != LZ_GOALS) PF("the gecko pack names %d goals, the lizard model has %d", g->n_goals, LZ_GOALS);
+    for (int k = 0; k < LZ_GOALS; k++) if (strcmp(g->goal[k], LZ_GOAL_NAMES[k]) != 0) PF("the gecko pack's goal %d is \"%s\", the lizard model's word is \"%s\"", k, g->goal[k], LZ_GOAL_NAMES[k]);
+    /* how each moves and what it needs: the fish swims in water (on tank.h's constants: no numbers in its file), the gecko walks on land with a walk's numbers */
+    if (p->n_loco != 1 || p->loco[0].mode != CAP_SWIM || p->loco[0].area != CAP_WATER || p->media_needs != CAP_WATER || p->media_wants != 0 || p->worlds != PT_WORLD_AQUARIUM)
+        PF("the fish pack moves %d ways (%08x in %08x), needs %08x, wants %08x, worlds %d", p->n_loco, (unsigned)p->loco[0].mode, (unsigned)p->loco[0].area, (unsigned)p->media_needs, (unsigned)p->media_wants, p->worlds);
+    for (int q = 0; q < 4; q++) if (bits(p->walk_px_s[q])) PF("the fish pack has a walk's pace %d (%g)", q, p->walk_px_s[q]);
+    if (bits(p->bout_s[0]) || bits(p->bout_s[1]) || bits(p->pause_s[0]) || bits(p->pause_s[1]) || bits(p->turn_s)) PF("the fish pack has a walk's numbers");
+    if (species_needs(p) != (CAP_SWIM | CAP_WATER | CAP_PELLET)) PF("the fish needs %08x, want SWIM WATER PELLET (%08x)", (unsigned)species_needs(p), (unsigned)(CAP_SWIM | CAP_WATER | CAP_PELLET));
+    if (g->n_loco != 1 || g->loco[0].mode != CAP_WALK || g->loco[0].area != CAP_LAND || g->media_needs != (CAP_LAND | CAP_BASK | CAP_HIDES) || g->media_wants != 0 || g->worlds != PT_WORLD_TERRARIUM)
+        PF("the gecko pack moves %d ways (%08x in %08x), needs %08x, wants %08x, worlds %d", g->n_loco, (unsigned)g->loco[0].mode, (unsigned)g->loco[0].area, (unsigned)g->media_needs, (unsigned)g->media_wants, g->worlds);
+    for (int q = 0; q < 4; q++) if (!(g->walk_px_s[q] > 0)) PF("the gecko pack's walk pace %d is %g", q, g->walk_px_s[q]);
+    if (species_needs(g) != (CAP_WALK | CAP_LAND | CAP_BASK | CAP_HIDES | CAP_CRICKET | CAP_MEALWORM)) PF("the gecko needs %08x, want WALK LAND BASK HIDES CRICKET MEALWORM", (unsigned)species_needs(g));
+    printf("selftest-ptpk: the fish pack's drives, its cap (%d), its eight goal words (the fish model's, tank.c's) and its way of moving (SWIM in WATER, no numbers, needs SWIM WATER PELLET) are tank.h's and tank.c's; "
+           "the gecko's seven goal words are the lizard model's and tank.c's, it walks on LAND and needs WALK LAND BASK HIDES CRICKET MEALWORM\n", POP_CAP);
     return 0;
 }
 
@@ -398,8 +506,8 @@ static int t_flips(void) {
         free(g);
     }
     if (offer(NULL, 0, NULL, why, sizeof why) != PACKS_REFUSED) PF("no bytes at all were not refused");
-    if (!reg_same(before, reg_now())) PF("a refused file changed the registry (%d/%d species, %d/%d habitats)", species_count(), before.ns, habitat_count(), before.nh);
-    printf("selftest-ptpk: %ld bit flips and %ld cuts of the built-in files (and stray bytes after them): every one refused, the registry never moved\n", flips, cuts);
+    if (!reg_same(before, reg_now())) PF("a refused file changed the registry (%d/%d species, %d/%d habitats, %d/%d manifests)", species_count(), before.ns, habitat_count(), before.nh, manifest_count(), before.nm);
+    printf("selftest-ptpk: %ld bit flips and %ld cuts of the %d built-in files (manifests, habitats, species), and stray bytes after them: every one refused, the registry never moved\n", flips, cuts, N_BUILTIN);
     return 0;
 }
 
@@ -413,11 +521,18 @@ static int fuzz_check_loaded(const packs_info_t *info, const char *what) {      
         if (strnlen(p->name, PACK_NAME_MAX) >= PACK_NAME_MAX || p->n_morphs > SPECIES_MORPHS_MAX || p->n_habitat_uids > SPECIES_HABITATS_MAX || !p->habitats) PF("%s: a species with a bad shape was loaded", what);
         for (int s = 0; s < 4; s++) if (strnlen(p->pattern[s].name, PATTERN_NAME_MAX) >= PATTERN_NAME_MAX) PF("%s: an unterminated pattern name", what);
         for (int m = 0; m < p->n_morphs; m++) if (strnlen(p->morphs[m].name, MORPH_NAME_MAX) >= MORPH_NAME_MAX) PF("%s: an unterminated morph name", what);
-    } else {
+    } else if (info->kind == PTPK_KIND_HABITAT) {
         const habitat_t *h = habitat_by_uid(info->uid);
         if (!h) PF("%s: loaded but not found by uid (kind %d, uid %08x, id %d, \"%s\")", what, info->kind, (unsigned)info->uid, info->id, info->name);
         if (!habitat_check(h, why, sizeof why)) PF("%s: a habitat that fails its rules was loaded: %s", what, why);
         if (strnlen(h->name, PACK_NAME_MAX) >= PACK_NAME_MAX || h->n_hides > HABITAT_HIDES_MAX || h->n_rocks > HABITAT_ROCKS_MAX || h->n_ramps > HABITAT_RAMPS_MAX) PF("%s: a habitat with a bad shape was loaded", what);
+    } else {
+        const model_manifest_t *m = manifest_by_uid(info->uid);
+        if (!m) PF("%s: loaded but not found by uid (kind %d, uid %08x, \"%s\")", what, info->kind, (unsigned)info->uid, info->name);
+        if (!manifest_check(m, why, sizeof why)) PF("%s: a manifest that fails its rules was loaded: %s", what, why);
+        if (strnlen(m->name, PACK_NAME_MAX) >= PACK_NAME_MAX || strnlen(m->tag, MODEL_TAG_MAX) >= MODEL_TAG_MAX || m->n_goals < 1 || m->n_goals > SPECIES_GOALS_MAX || manifest_by_tag(m->tag) != m)
+            PF("%s: a manifest with a bad shape was loaded", what);
+        for (int g = 0; g < m->n_goals; g++) if (strnlen(m->goal[g], GOAL_NAME_MAX) >= GOAL_NAME_MAX) PF("%s: an unterminated goal word", what);
     }
     return 0;
 }
@@ -435,12 +550,14 @@ static int fuzz_offer(const blob_t *m, tally_t *t, const char *what, reg_t base)
         t->refused++;
         break;
     }
-    if (species_count() != base.ns || habitat_count() != base.nh) PF("%s: the registry holds %d species and %d habitats, it held %d and %d", what, species_count(), habitat_count(), base.ns, base.nh);
+    if (species_count() != base.ns || habitat_count() != base.nh || manifest_count() != base.nm)
+        PF("%s: the registry holds %d species, %d habitats and %d manifests, it held %d, %d and %d", what, species_count(), habitat_count(), manifest_count(), base.ns, base.nh, base.nm);
     return 0;
 }
 static int t_body_fuzz(void) {
     tally_t tot = { 0, 0 };
     long tried = 0;
+    static const int KINDS[3] = { PTPK_KIND_SPECIES, PTPK_KIND_HABITAT, PTPK_KIND_MODEL };
     const reg_t base = reg_now();
     for (int i = 0; i < N_BUILTIN; i++) {
         blob_t v; blob_variant(&v, s_enc[i].blob, s_enc[i].len, "v0", "V0");                    /* (a pack of a new uid: the dedupe by uid does not hide the parser) */
@@ -483,7 +600,7 @@ static int t_body_fuzz(void) {
         tot.refused += t.refused; tot.loaded += t.loaded;
     }
     for (int it = 0; it < 6000; it++) {                                                         /* garbage behind a good header */
-        blob_t m; memcpy(m.b, s_enc[0].blob, PTPK_HEADER_BYTES);
+        blob_t m; memcpy(m.b, enc_first(KINDS[it % 3])->blob, PTPK_HEADER_BYTES);
         const size_t l = 1 + rnd() % 600;
         for (size_t k = 0; k < l; k++) m.b[PTPK_HEADER_BYTES + k] = (uint8_t)rnd();
         m.n = PTPK_HEADER_BYTES + l; blob_fix(&m);
@@ -491,10 +608,10 @@ static int t_body_fuzz(void) {
         tried++;
     }
     for (int it = 0; it < 3000; it++) {                                                         /* records that are all headers: tags and lengths from the dice */
-        blob_t m; memcpy(m.b, s_enc[PTPK_BUILTIN_HABITATS].blob, PTPK_HEADER_BYTES);              /* (a species' header) */
+        blob_t m; memcpy(m.b, enc_first(KINDS[it % 3])->blob, PTPK_HEADER_BYTES);                 /* (a species' header, a habitat's, a manifest's, in turn) */
         size_t o = PTPK_HEADER_BYTES;
         while (o + 4 < 500) {
-            const unsigned tags[] = { 1, 2, 3, 4, 5, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108, 0x109, 0x10a, 0x10b, 0x10c, 0x201, 0x203, 0x999 };
+            const unsigned tags[] = { 1, 2, 4, 5, 0x10, 0x101, 0x102, 0x103, 0x104, 0x106, 0x107, 0x108, 0x109, 0x10a, 0x10b, 0x10c, 0x110, 0x111, 0x201, 0x203, 0x210, 0x211, 0x301, 0x302, 0x999 };
             unsigned tag = tags[rnd() % (sizeof tags / sizeof tags[0])] | (rnd() & 1 ? 0x8000u : 0), l = rnd() % 48;
             wr16(m.b + o, tag); wr16(m.b + o + 2, l);
             for (unsigned k = 0; k < l; k++) m.b[o + 4 + k] = (uint8_t)(rnd() % 5 ? rnd() % 0x80 : rnd());
@@ -504,9 +621,10 @@ static int t_body_fuzz(void) {
         if (fuzz_offer(&m, &tot, "tags and lengths", base)) return 1;
         tried++;
     }
-    if (species_count() != base.ns || habitat_count() != base.nh) PF("the registry moved over the fuzz (%d/%d species, %d/%d habitats)", species_count(), base.ns, habitat_count(), base.nh);
-    printf("selftest-ptpk: %ld hostile bodies behind good headers (every bit, byte values, every cut, stray bytes, garbage, tags and lengths from the dice): %ld refused, %ld loaded - and each of those passed species_check / habitat_check\n",
-           tried, tot.refused, tot.loaded);
+    if (species_count() != base.ns || habitat_count() != base.nh || manifest_count() != base.nm) PF("the registry moved over the fuzz (%d/%d species, %d/%d habitats, %d/%d manifests)", species_count(), base.ns, habitat_count(), base.nh, manifest_count(), base.nm);
+    printf("selftest-ptpk: %ld hostile bodies behind good headers (every bit, byte values, every cut, stray bytes, garbage, tags and lengths from the dice - behind a species', a habitat's and a manifest's header - of every built-in file: "
+           "%d manifests, %d habitats, %d species): %ld refused, %ld loaded - and each of those passed species_check / habitat_check / manifest_check\n",
+           tried, PTPK_BUILTIN_MODELS, PTPK_BUILTIN_HABITATS, PTPK_BUILTIN_SPECIES, tot.refused, tot.loaded);
     return 0;
 }
 
@@ -528,6 +646,14 @@ static int expect(const blob_t *k, packs_result_t want, const char *word, const 
 }
 #define EXPECT(k, want, word, what) do { if (expect(&(k), want, word, what)) return 1; } while (0)
 #define EXPECT_ADDED(k, what) do { if (expect(&(k), PACKS_ADDED, NULL, what)) return 1; packs_drop_loaded(); } while (0)
+/* the capabilities' bit indexes a LOCOMOTION entry names (caps.h) */
+enum { I_SWIM = 0, I_WALK = 1, I_SLITHER = 2, I_WATER = 4, I_LAND = 5, I_SHORE = 7 };
+/* entry j of a LOCOMOTION value: a mode's index, an area's index and the nine numbers (36 bytes; NULL: all zero) - the count v[0] is the caller's */
+static void loco_entry(uint8_t *v, int j, unsigned mode, unsigned area, const uint8_t *nums) {
+    uint8_t *e = v + 1 + 38 * j;
+    e[0] = (uint8_t)mode; e[1] = (uint8_t)area;
+    if (nums) memcpy(e + 2, nums, 36); else memset(e + 2, 0, 36);
+}
 
 static int t_records(void) {
     blob_t G, D, k;
@@ -536,6 +662,8 @@ static int t_records(void) {
     blob_variant(&G, gb->blob, gb->len, "r0", "R0");
     blob_variant(&D, db->blob, db->len, "r0", "R0");
     packs_info_t info; char why[300];
+    const caps_t gneeds = species_get(SPECIES_GECKO)->media_needs;
+    const caps_t dareas = habitat_get(HABITAT_DESERT)->areas, dprov = habitat_get(HABITAT_DESERT)->provides;
     char base[8192];
     if (offer_blob(&G, &info, why, sizeof why) != PACKS_ADDED) PF("the gecko variant does not load: %s", why);
     s_len = 0; dump_species(species_by_uid(info.uid), true); memcpy(base, s_out, s_len + 1);
@@ -551,6 +679,13 @@ static int t_records(void) {
     k = G; rec_append(&k, 0x8555, "abc", 3); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "an unknown REQUIRED record");
     k = G; rec_append(&k, 0x8203, "\x01", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "a habitat's record, REQUIRED, in a species");
     k = G; rec_append(&k, 0x0203, "\x00", 1); blob_fix(&k); EXPECT_ADDED(k, "a habitat's record, optional, in a species (skipped)");
+    k = G; rec_append(&k, 0x0003, "\x02", 1); blob_fix(&k); EXPECT_ADDED(k, "the retired WORLD record, optional (unknown now: skipped)");
+    k = G; rec_append(&k, 0x8003, "\x02", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "the retired WORLD record, REQUIRED (unknown now)");
+    k = G; { const uint8_t wv[36] = { 0 }; rec_append(&k, 0x0105, wv, sizeof wv); blob_fix(&k); EXPECT_ADDED(k, "the retired WALK record, optional (unknown now: skipped)"); }
+    k = G; { const uint8_t wv[36] = { 0 }; rec_append(&k, 0x8105, wv, sizeof wv); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "the retired WALK record, REQUIRED (unknown now)"); }
+    k = G; rec_append(&k, 0x8301, "x", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "a model manifest's record, REQUIRED, in a species");
+    k = D; rec_append(&k, 0x8110, "x", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "REQUIRED", "a species' record, REQUIRED, in a habitat");
+    k = D; rec_append(&k, 0x0110, "x", 1); blob_fix(&k); EXPECT_ADDED(k, "a species' record, optional, in a habitat (skipped)");
     /* records that are not what they say */
     size_t at, l;
     k = G; if (!rec_find(&k, 0x103, &at, &l)) PF("no HEAT"); { uint8_t rec[4 + 64]; memcpy(rec, k.b + at, 4 + l); rec_append(&k, rd16(rec), rec + 4, l); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "HEAT twice"); }
@@ -560,12 +695,24 @@ static int t_records(void) {
     k = G; rec_find(&k, 0x103, &at, &l); wr32(k.b + at + 8, 0xff800000u); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "infinity", "an infinity in HEAT");
     k = G; rec_find(&k, 0x103, &at, &l); wr32(k.b + at + 4, bits(40.0f)); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "heat band", "t_cold over t_lo (the rules refuse it, with their words)");
     k = G; rec_find(&k, 0x101, &at, &l); wr16(k.b + at + 2, 0x7000); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "past the end", "a record that runs past the body");
-    k = G; rec_find(&k, 0x10c, &at, &l); memcpy(k.b + at + 4 + 3, "k", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal", "a goal that is nobody's (hunk)");
-    k = G; { const uint8_t v[] = { 1, 9, 's', 'e', 'e', 'k', '_', 'f', 'o', 'o', 'd' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "terrarium's goal list", "the fish's goal in a lizard"); }
+    k = G; rec_find(&k, 0x10c, &at, &l); memcpy(k.b + at + 4 + 5, "k", 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no model's goal list", "a goal that is nobody's (hunk: the word is in no manifest)");
+    k = G; { const uint8_t v[] = { 1, 9, 's', 'e', 'e', 'k', '_', 'f', 'o', 'o', 'd' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k);
+             if (expect(&k, PACKS_ADDED, NULL, "a goal word of another model (the simulator carries both models' manifests)")) return 1;
+             const species_t *sp = species_by_uid(rd32(k.b + 8));
+             if (!sp || sp->n_goals != 1 || strcmp(sp->goal[0], "seek_food") != 0) PF("a species of the goal seek_food was loaded as %d goals, the first \"%s\"", sp ? sp->n_goals : -1, sp ? sp->goal[0] : "");
+             packs_drop_loaded(); }
+    k = G; { const uint8_t v[] = { 1, 5, 'c', 'l', 'i', 'm', 'b' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no model's goal list", "a goal no model has (climb)"); }
     k = G; { const uint8_t v[] = { 2, 4, 'h', 'u', 'n', 't', 4, 'h', 'u', 'n', 't' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "a goal listed twice"); }
     k = G; { const uint8_t v[] = { 0 }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "no goals"); }
     k = G; { const uint8_t v[] = { 1, 4, 'h', 'u', 'n' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "a goal cut short"); }
     k = G; { const uint8_t v[] = { 1, 4, 'h', 'u', 'n', 't', 0 }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "a byte after the goals"); }
+    k = G; { const uint8_t v[] = { 1, 4, 'H', 'u', 'n', 't' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal's word", "a goal word with an uppercase letter"); }
+    k = G; { const uint8_t v[] = { 1, 4, '7', 'u', 'n', 't' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal's word", "a goal word that starts with a digit"); }
+    k = G; { const uint8_t v[] = { 1, 4, 'h', 'u', '-', 't' }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal's word", "a goal word with a dash"); }
+    k = G; { const uint8_t v[] = { 1, 0 }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal's word", "a goal word of no characters"); }
+    k = G; { uint8_t v[2 + 16] = { 1, 16 }; memset(v + 2, 'a', 16); rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "goal's word", "a goal word of 16 characters"); }
+    k = G; { uint8_t v[2 + 15] = { 1, 15 }; memset(v + 2, 'a', 15); rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no model's goal list", "a goal word of 15 characters (the reader takes it, no manifest lists it)"); }
+    k = G; { const uint8_t v[] = { 9 }; rec_set(&k, 0x10c, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "nine goals"); }
     /* text and enums */
     k = G; rec_find(&k, 1, &at, &l); k.b[at + 4] = 0x07; blob_fix(&k); EXPECT(k, PACKS_REFUSED, "NAME", "a control character in the name");
     k = G; rec_find(&k, 1, &at, &l); k.b[at + 4] = ' '; blob_fix(&k); EXPECT(k, PACKS_REFUSED, "NAME", "a name that starts with a space");
@@ -574,7 +721,23 @@ static int t_records(void) {
     k = G; rec_set(&k, 1, "", 0); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "NAME", "a name of nothing");
     k = G; rec_find(&k, 2, &at, &l); k.b[at + 4] = 'P'; blob_fix(&k); EXPECT(k, PACKS_REFUSED, "UID_NS", "an uppercase letter in UID_NS");
     k = G; rec_set(&k, 2, "pt", 2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "UID_NS", "a UID_NS of two characters");
-    k = G; { uint8_t w = 0; rec_set(&k, 3, &w, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "world 0"); w = 3; rec_set(&k, 3, &w, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "world 3"); }
+    k = G; rec_delete(&k, 0x10); blob_fix(&k);
+    if (expect(&k, PACKS_ADDED, NULL, "a gecko with no WORLDS record")) return 1;
+    if (species_by_uid(rd32(k.b + 8))->worlds != 0) PF("a pack with no WORLDS record has worlds %d (0: every world)", species_by_uid(rd32(k.b + 8))->worlds);
+    packs_drop_loaded();
+    {
+        const uint8_t ws[] = { 1, 2, 3, 255 };                     /* a filter: any mask loads, whichever world this is, and a bit nobody knows is kept */
+        for (size_t m = 0; m < sizeof ws; m++) {
+            k = G; rec_delete(&k, 0x10); rec_append(&k, 0x0010, &ws[m], 1); blob_fix(&k);
+            if (expect(&k, PACKS_ADDED, NULL, "a gecko with a WORLDS mask")) return 1;
+            if (species_by_uid(rd32(k.b + 8))->worlds != ws[m]) PF("WORLDS %d was loaded as %d", ws[m], species_by_uid(rd32(k.b + 8))->worlds);
+            packs_drop_loaded();
+        }
+    }
+    k = G; { const uint8_t w = 0; rec_delete(&k, 0x10); rec_append(&k, 0x0010, &w, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "WORLDS 0"); }
+    k = G; { const uint8_t w[2] = { 2, 0 }; rec_delete(&k, 0x10); rec_append(&k, 0x0010, w, 2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "WORLDS of two bytes"); }
+    k = G; rec_delete(&k, 0x10); rec_append(&k, 0x0010, NULL, 0); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "WORLDS of nothing");
+    k = G; { const uint8_t w = 2; rec_append(&k, 0x0010, &w, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "WORLDS twice"); }
     k = G; { uint8_t v = 0; rec_set(&k, 4, &v, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "legacy id 0"); }
     k = G; { uint8_t v = 0x10; rec_set(&k, 0x108, &v, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "a diet bit that is nobody's"); }
     k = G; rec_find(&k, 0x102, &at, &l); k.b[at + 4] = 3; blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "schedule 3");
@@ -589,15 +752,16 @@ static int t_records(void) {
     k = D; { uint8_t v[1 + 7 * 10] = { 7 }; rec_set(&k, 0x205, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "seven ramps"); }
     k = D; { uint8_t v[1 + 13] = { 1, 3 }; rec_set(&k, 0x203, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "a hide of kind 3"); }
     k = D; { uint8_t v[1 + 2 + 5 * 8] = { 1, 5, 0 }; rec_set(&k, 0x204, v, sizeof v); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "a rock of five points"); }
-    k = D; rec_delete(&k, 0x207); blob_fix(&k);
-    if (expect(&k, PACKS_ADDED, NULL, "a desert without its DISH record")) return 1;
-    if (habitat_by_uid(rd32(k.b + 8))->dish) PF("a desert without a DISH record has a dish");
-    packs_drop_loaded();
+    k = D; rec_delete(&k, 0x207); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "MEALWORM", "a desert without its DISH record that still provides MEALWORM (the rules: the declaration agrees with the fields)");
+    k = D; { uint8_t pv[4]; rec_delete(&k, 0x207); wr32(pv, dprov & ~CAP_MEALWORM); rec_set(&k, 0x211, pv, 4); blob_fix(&k);
+             if (expect(&k, PACKS_ADDED, NULL, "a desert without its DISH record, and without MEALWORM")) return 1;
+             if (habitat_by_uid(rd32(k.b + 8))->dish) PF("a desert without a DISH record has a dish");
+             packs_drop_loaded(); }
     k = D; rec_delete(&k, 0x205); rec_delete(&k, 0x204); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "basking spot", "a desert without rocks or ramps (the basking spot is on rock 3)");
     k = D; rec_find(&k, 0x201, &at, &l); wr32(k.b + at + 4, bits(20.0f)); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "warm end", "a desert whose warm end is cooler (the rules)");
     /* the records a pack cannot do without */
-    static const struct { unsigned id; const char *name; } MUST[] = { { 1, "NAME" }, { 2, "UID_NS" }, { 3, "WORLD" }, { 0x101, "HABITATS" }, { 0x102, "ACTIVITY" }, { 0x103, "HEAT" },
-        { 0x104, "DRIVES" }, { 0x106, "LIFE" }, { 0x108, "DIET" }, { 0x109, "BODY" }, { 0x10c, "GOALS" } };
+    static const struct { unsigned id; const char *name; } MUST[] = { { 1, "NAME" }, { 2, "UID_NS" }, { 0x101, "HABITATS" }, { 0x102, "ACTIVITY" }, { 0x103, "HEAT" },
+        { 0x104, "DRIVES" }, { 0x106, "LIFE" }, { 0x108, "DIET" }, { 0x109, "BODY" }, { 0x10c, "GOALS" }, { 0x110, "LOCOMOTION" }, { 0x111, "MEDIA_NEEDS" } };
     for (size_t m = 0; m < sizeof MUST / sizeof MUST[0]; m++) {
         char need[16], what[64]; snprintf(need, sizeof need, "no %s", MUST[m].name); snprintf(what, sizeof what, "a species without %s", MUST[m].name);
         k = G; rec_delete(&k, MUST[m].id); blob_fix(&k); EXPECT(k, PACKS_REFUSED, need, what);
@@ -605,15 +769,118 @@ static int t_records(void) {
     k = D; rec_delete(&k, 0x201); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no CLIMATE", "a habitat without CLIMATE");
     k = D; rec_delete(&k, 0x202); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no BASK", "a habitat without BASK");
     k = D; rec_delete(&k, 0x206); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no MOISTURE", "a habitat without MOISTURE");
-    k = G; rec_delete(&k, 0x105); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "walk_px_s", "a terrarium pack without WALK (the rules: it walks)");
+    k = D; rec_delete(&k, 0x210); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no AREAS", "a habitat without AREAS");
+    k = D; rec_delete(&k, 0x211); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no PROVIDES", "a habitat without PROVIDES");
+    k = D; rec_delete(&k, 0x1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no NAME", "a habitat without NAME");
+    k = D; rec_delete(&k, 0x2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no UID_NS", "a habitat without UID_NS");
+    /* what it provides: AREAS and PROVIDES are a u32 each - a bit nobody names is dropped (a habitat may offer more than this firmware can use), a known bit of the wrong kind is refused */
+    uint8_t av[5] = { 0 };
+    wr32(av, dareas | 1u << 20 | 1u << 3);
+    k = D; rec_set(&k, 0x210, av, 4); blob_fix(&k);
+    if (expect(&k, PACKS_ADDED, NULL, "areas and two bits nobody names (dropped)")) return 1;
+    if (habitat_by_uid(rd32(k.b + 8))->areas != dareas) PF("areas + bits nobody names were loaded as %08x, want %08x", (unsigned)habitat_by_uid(rd32(k.b + 8))->areas, (unsigned)dareas);
+    packs_drop_loaded();
+    wr32(av, dprov | 1u << 20 | 1u << 14);
+    k = D; rec_set(&k, 0x211, av, 4); blob_fix(&k);
+    if (expect(&k, PACKS_ADDED, NULL, "provisions and two bits nobody names (dropped)")) return 1;
+    if (habitat_by_uid(rd32(k.b + 8))->provides != dprov) PF("provisions + bits nobody names were loaded as %08x, want %08x", (unsigned)habitat_by_uid(rd32(k.b + 8))->provides, (unsigned)dprov);
+    packs_drop_loaded();
+    const struct { unsigned id; caps_t v; const char *word, *what; } BADHAB[] = {
+        { 0x210, dareas | CAP_LAMP, "which is not an area", "a lamp among the areas" },
+        { 0x210, 0, "neither WATER nor LAND", "no areas at all (the rules)" },
+        { 0x210, dareas & ~CAP_BASK, "BASK", "a lamp's pool and no BASK among the areas (the rules: the declaration agrees with the fields)" },
+        { 0x211, dprov | CAP_WATER, "which is not a lamp, hides or a food", "an area among the provisions" },
+        { 0x211, dprov & ~CAP_MEALWORM, "MEALWORM", "a dish and no MEALWORM among the provisions (the rules)" },
+        { 0x211, dprov & ~CAP_LAMP, "LAMP", "a lamp's pool and no LAMP among the provisions (the rules)" },
+        { 0x211, dprov & ~CAP_HIDES, "HIDES", "hides and no HIDES among the provisions (the rules)" },
+        { 0x211, dprov | CAP_PELLET, "need WATER", "pellets in a habitat with no water (the rules)" } };
+    for (size_t m = 0; m < sizeof BADHAB / sizeof BADHAB[0]; m++) {
+        k = D; wr32(av, BADHAB[m].v); rec_set(&k, BADHAB[m].id, av, 4); blob_fix(&k);
+        EXPECT(k, PACKS_REFUSED, BADHAB[m].word, BADHAB[m].what);
+    }
+    wr32(av, dareas);
+    k = D; rec_set(&k, 0x210, av, 3); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "AREAS one byte short");
+    k = D; rec_set(&k, 0x210, av, 5); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "AREAS a byte long");
+    k = D; rec_append(&k, 0x8210, av, 4); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "AREAS twice");
+    wr32(av, dprov);
+    k = D; rec_set(&k, 0x211, av, 3); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "PROVIDES one byte short");
+    k = D; rec_set(&k, 0x211, av, 5); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "PROVIDES a byte long");
+    k = D; rec_append(&k, 0x8211, av, 4); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "PROVIDES twice");
+    k = D; { const uint8_t w = 0; rec_delete(&k, 0x10); rec_append(&k, 0x0010, &w, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "a habitat's WORLDS 0"); }
+    k = D; { const uint8_t w = 1; rec_delete(&k, 0x10); rec_append(&k, 0x0010, &w, 1); blob_fix(&k);
+             if (expect(&k, PACKS_ADDED, NULL, "a habitat of the aquarium's world only (a filter)")) return 1;
+             if (habitat_by_uid(rd32(k.b + 8))->worlds != 1) PF("a habitat's WORLDS 1 was loaded as %d", habitat_by_uid(rd32(k.b + 8))->worlds);
+             packs_drop_loaded(); }
+    k = G; { uint8_t zv[1 + 38] = { 1, I_WALK, I_LAND }; rec_set(&k, 0x110, zv, sizeof zv); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "walk_px_s", "a gecko whose WALK entry has no numbers (the rules: it walks)"); }
     k = G; rec_delete(&k, 0x107); blob_fix(&k);
     if (expect(&k, PACKS_ADDED, NULL, "a gecko without SHED")) return 1;
     if (species_by_uid(rd32(k.b + 8))->sheds) PF("a pack without SHED sheds");
     packs_drop_loaded();
+    /* how it moves: LOCOMOTION is a count of 1..3 and, per entry, a mode's bit index, an area's bit index and nine numbers (a walk's: four paces, bout, pause, turn) */
+    uint8_t walk[36] = { 0 }, orig[40] = { 0 };                    /* the gecko's own WALK numbers and its whole record */
+    size_t lat = 0, ll = 0;
+    if (!rec_find(&G, 0x110, &lat, &ll) || ll != 1 + 38) PF("the gecko's LOCOMOTION record is %zu bytes, the format says 1 + 38 for one entry", ll);
+    memcpy(orig, G.b + lat + 4, ll); memcpy(walk, orig + 3, 36);
+    uint8_t lv[1 + 38 * 3];
+    k = G; lv[0] = 0; rec_set(&k, 0x110, lv, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "no way of moving");
+    k = G; lv[0] = 4; rec_set(&k, 0x110, lv, 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "four ways of moving");
+    static const struct { unsigned mode, area; const char *word, *what; } BADLOCO[] = {
+        { 3, I_LAND, "does not know", "a movement mode that is capability bit 3 (nobody's)" },
+        { 40, I_LAND, "does not know", "a movement mode of bit index 40" },
+        { I_WATER, I_LAND, "not a movement mode", "an area where a mode goes" },
+        { I_WALK, 3, "does not know", "an area that is capability bit 3" },
+        { I_WALK, I_WALK, "not an area", "a mode where an area goes" } };
+    for (size_t m = 0; m < sizeof BADLOCO / sizeof BADLOCO[0]; m++) {
+        k = G; lv[0] = 1; loco_entry(lv, 0, BADLOCO[m].mode, BADLOCO[m].area, walk); rec_set(&k, 0x110, lv, 1 + 38); blob_fix(&k);
+        EXPECT(k, PACKS_REFUSED, BADLOCO[m].word, BADLOCO[m].what);
+    }
+    k = G; lv[0] = 2; loco_entry(lv, 0, I_WALK, I_LAND, walk); loco_entry(lv, 1, I_WALK, I_LAND, walk); rec_set(&k, 0x110, lv, 1 + 38 * 2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "WALK listed twice");
+    k = G; lv[0] = 2; loco_entry(lv, 0, I_WALK, I_LAND, walk); loco_entry(lv, 1, I_SWIM, I_WATER, walk); rec_set(&k, 0x110, lv, 1 + 38 * 2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "carries numbers", "a swim entry that carries the walk's numbers");
+    k = G; lv[0] = 2; loco_entry(lv, 0, I_WALK, I_LAND, walk); loco_entry(lv, 1, I_SLITHER, I_SHORE, NULL); rec_set(&k, 0x110, lv, 1 + 38 * 2); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "no such module", "a slither (no firmware has the module)");
+    k = G; lv[0] = 2; loco_entry(lv, 0, I_WALK, I_LAND, walk); loco_entry(lv, 1, I_SWIM, I_WATER, NULL); rec_set(&k, 0x110, lv, 1 + 38 * 2); blob_fix(&k);
+    if (expect(&k, PACKS_ADDED, NULL, "a walk and a swim (the simulator's firmware has both modules)")) return 1;
+    {
+        const species_t *sp = species_by_uid(rd32(k.b + 8));
+        if (!sp || sp->n_loco != 2 || sp->loco[0].mode != CAP_WALK || sp->loco[0].area != CAP_LAND || sp->loco[1].mode != CAP_SWIM || sp->loco[1].area != CAP_WATER)
+            PF("a walk and a swim were loaded as %d entries, the first %08x in %08x", sp ? sp->n_loco : -1, sp ? (unsigned)sp->loco[0].mode : 0u, sp ? (unsigned)sp->loco[0].area : 0u);
+        for (int q = 0; q < 4; q++) if (bits(sp->walk_px_s[q]) != rd32(walk + 4 * q)) PF("the walk's pace %d is not the WALK entry's", q);
+    }
+    packs_drop_loaded();
+    k = G; rec_find(&k, 0x110, &at, &l); wr32(k.b + at + 4 + 3, 0x7fc00000u); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "NaN", "a NaN in the walk's pace");
+    k = G; rec_find(&k, 0x110, &at, &l); wr32(k.b + at + 4 + 3 + 32, 0); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "turn_s", "a walk that takes no time to turn (the rules)");
+    k = G; rec_set(&k, 0x110, orig, ll - 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "a LOCOMOTION entry one byte short");
+    k = G; rec_set(&k, 0x110, orig, ll + 1); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "a byte after the entries");
+    k = G; rec_append(&k, 0x8110, orig, ll); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "LOCOMOTION twice");
+    /* what it needs: MEDIA_NEEDS is two u32, the needs (a bit nobody names is refused, a movement or a food is refused) and the wants (a bit nobody names is dropped) */
+    uint8_t mv[9] = { 0 };
+    const struct { caps_t needs, wants; const char *word, *what; } BADNEED[] = {
+        { 1u << 20, 0, "does not know", "a need that is capability bit 20 (nobody's)" },
+        { 1u << 3, 0, "does not know", "a need that is capability bit 3" },
+        { gneeds | CAP_WALK, 0, "belongs in LOCOMOTION", "a movement mode among the needs" },
+        { gneeds | CAP_CRICKET, 0, "belongs in LOCOMOTION", "a food among the needs" },
+        { gneeds & ~CAP_HIDES, 0, "does not need HIDES", "a shedding pack that needs no hides (the humid hide: the rules)" } };
+    for (size_t m = 0; m < sizeof BADNEED / sizeof BADNEED[0]; m++) {
+        k = G; wr32(mv, BADNEED[m].needs); wr32(mv + 4, BADNEED[m].wants); rec_set(&k, 0x111, mv, 8); blob_fix(&k);
+        EXPECT(k, PACKS_REFUSED, BADNEED[m].word, BADNEED[m].what);
+    }
+    k = G; wr32(mv, gneeds); wr32(mv + 4, CAP_LAMP | 1u << 20 | 1u << 3); rec_set(&k, 0x111, mv, 8); blob_fix(&k);
+    if (expect(&k, PACKS_ADDED, NULL, "a known want and two bits nobody names (skipped)")) return 1;
+    {
+        const species_t *sp = species_by_uid(rd32(k.b + 8));
+        if (!sp || sp->media_wants != CAP_LAMP || sp->media_needs != gneeds) PF("wants LAMP + bits nobody names were loaded as wants %08x, needs %08x (want %08x, %08x)", sp ? (unsigned)sp->media_wants : 0u, sp ? (unsigned)sp->media_needs : 0u, (unsigned)CAP_LAMP, (unsigned)gneeds);
+    }
+    packs_drop_loaded();
+    wr32(mv, gneeds); wr32(mv + 4, 0);
+    k = G; rec_set(&k, 0x111, mv, 7); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "shorter", "MEDIA_NEEDS one byte short");
+    k = G; rec_set(&k, 0x111, mv, 9); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "bytes", "MEDIA_NEEDS a byte long");
+    k = G; rec_append(&k, 0x8111, mv, 8); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "twice", "MEDIA_NEEDS twice");
     /* the header */
     k = G; k.b[4] = 2; EXPECT(k, PACKS_REFUSED, "newer", "fmt 2");
     k = G; k.b[4] = 0; EXPECT(k, PACKS_REFUSED, "fmt 0", "fmt 0");
-    k = G; k.b[5] = 3; EXPECT(k, PACKS_REFUSED, "manifest", "a model manifest");
+    k = G; k.b[5] = 3; EXPECT(k, PACKS_REFUSED, "REQUIRED", "a species' file called a model manifest (its HABITATS record is a stranger there)");
+    k = D; k.b[5] = 3; EXPECT(k, PACKS_REFUSED, "REQUIRED", "a habitat's file called a model manifest");
+    k = D; k.b[5] = 1; EXPECT(k, PACKS_REFUSED, "REQUIRED", "a habitat's file called a species");
+    k = G; k.b[5] = 0; EXPECT(k, PACKS_REFUSED, "no pack kind", "kind 0");
     k = G; k.b[5] = 9; EXPECT(k, PACKS_REFUSED, "no pack kind", "kind 9");
     k = G; k.b[5] = 2; EXPECT(k, PACKS_REFUSED, "", "a species' file called a habitat");
     k = G; wr16(k.b + 6, 1); EXPECT(k, PACKS_REFUSED, "flags", "a flag set");
@@ -631,19 +898,17 @@ static int t_records(void) {
     k = G; { uint8_t v[5] = { 1, 0x78, 0x56, 0x34, 0x12 }; rec_set(&k, 0x101, v, 5); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "none is loaded", "a species whose habitat is not loaded"); }
     k = G; { uint8_t v[9] = { 2, 1, 0, 0, 0, 1, 0, 0, 0 }; rec_set(&k, 0x101, v, 9); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "a habitat listed twice"); }
     k = G; { uint8_t v[5] = { 1, 0, 0, 0, 0 }; rec_set(&k, 0x101, v, 5); blob_fix(&k); EXPECT(k, PACKS_REFUSED, "range", "habitat uid 0"); }
-    /* the other world's pack: refused by a release image, kept by the simulator */
+    /* the world is a filter, not a gate: the other world's pack loads where it can be loaded (the simulator carries both worlds' packs and each model's manifest);
+       what it needs decides at the tank (--selftest-caps) */
     {
-        const bool other_terr = !PT_TERRARIUM;                           /* the world this build is not: a lizard in the aquarium's bin, a fish in the terrarium's */
-        const enc_t *ob = builtin_with_uid(species_get(other_terr ? SPECIES_GECKO : SPECIES_FISH)->uid);
+        const enc_t *ob = builtin_with_uid(PT_TERRARIUM ? SPECIES_UID_FISH : SPECIES_UID_GECKO);     /* the world this build is not: a lizard in the aquarium's, a fish in the terrarium's */
+        if (!ob) PF("the other world's species is not built in");
         blob_variant(&k, ob->blob, ob->len, "r1", "R1");
-        packs_world_filter(true);
-        const int r = expect(&k, PACKS_REFUSED, "firmware", "another world's pack, in a release image's filter");
-        packs_world_filter(PT_ALL_PACKS ? false : true);
-        if (r) return 1;
-        EXPECT_ADDED(k, "another world's pack, in the simulator");
+        EXPECT_ADDED(k, "another world's species (the world is a filter, not a gate)");
     }
-    printf("selftest-ptpk: %d single-record cases: an unknown optional record skipped (the pack loads as it did), an unknown REQUIRED one refused; a duplicate, a wrong size, a NaN, "
-           "a bad goal, bad text, a bad header, bodies of 2048 / 2049 bytes, every record a pack cannot do without, a species with no habitat, another world's pack - each its own refusal\n", s_cases);
+    printf("selftest-ptpk: %d single-record cases: an unknown optional record skipped (the pack loads as it did), an unknown REQUIRED one refused, the retired WORLD and WALK ids unknown now; a duplicate, a wrong size, a NaN, "
+           "a bad goal word (another model's loads, a word no model has is refused), bad text, a bad header, bodies of 2048 / 2049 bytes, every record a pack cannot do without (LOCOMOTION, MEDIA_NEEDS, AREAS, PROVIDES too); "
+           "LOCOMOTION's counts, modes, areas and numbers, MEDIA_NEEDS' unknown and misplaced bits, AREAS' and PROVIDES' dropped and refused bits, WORLDS as a filter, a species with no habitat, the other world's pack - each its own refusal or its own load\n", s_cases);
     return 0;
 }
 
@@ -688,7 +953,29 @@ static int t_collision_pool(void) {
         else if (r != PACKS_REFUSED || !strstr(why, "no room")) PF("the habitat past the pool was not refused for room (%d: %s)", (int)r, why);
     }
     packs_drop_loaded();
-    if (habitat_count() != PTPK_BUILTIN_HABITATS || species_count() != PTPK_BUILTIN_SPECIES) PF("the pools did not come back to the built-in packs (%d, %d)", species_count(), habitat_count());
+    if (habitat_count() != PTPK_BUILTIN_HABITATS || species_count() != PTPK_BUILTIN_SPECIES || manifest_count() != PTPK_BUILTIN_MODELS) PF("the pools did not come back to the built-in packs (%d species, %d habitats, %d manifests)", species_count(), habitat_count(), manifest_count());
+    /* the manifests: MANIFEST_SPARE slots past the built-in ones, each a tag of its own (blob_variant: the tag's last character is the tail's first), then no room */
+    const enc_t *mb = enc_first(PTPK_KIND_MODEL);
+    for (int i = 0; i < MANIFEST_SPARE + 1; i++) {
+        const char tail[3] = { (char)('a' + i), '0', 0 }, name[3] = { (char)('A' + i), '0', 0 };
+        blob_variant(&k, mb->blob, mb->len, tail, name);
+        const packs_result_t r = offer_blob(&k, &info, why, sizeof why);
+        if (i < MANIFEST_SPARE) { if (r != PACKS_ADDED) PF("manifest %d of the spare %d was refused: %s", i, MANIFEST_SPARE, why); if (info.kind != PTPK_KIND_MODEL || info.id != 0) PF("a manifest was reported as kind %d id %d", info.kind, info.id); }
+        else if (r != PACKS_REFUSED || !strstr(why, "no room")) PF("the manifest past the pool was not refused for room (%d: %s)", (int)r, why);
+    }
+    if (manifest_count() != PTPK_BUILTIN_MODELS + MANIFEST_SPARE) PF("%d manifests held, the pool is %d + %d", manifest_count(), PTPK_BUILTIN_MODELS, MANIFEST_SPARE);
+    packs_drop_loaded();
+    if (manifest_count() != PTPK_BUILTIN_MODELS) PF("the dropped manifests are still in the registry (%d)", manifest_count());
+    /* a tag is one manifest's: the same file twice is the same, another uid with the tag of a manifest held is refused and changes nothing */
+    blob_variant(&A, mb->blob, mb->len, "t0", "T0");
+    blob_variant(&B, mb->blob, mb->len, "t1", "T1");               /* (another uid_ns, the same tag: its last character is the tail's first, t) */
+    if (offer_blob(&A, &info, why, sizeof why) != PACKS_ADDED) PF("a manifest of a tag of its own does not load: %s", why);
+    if (offer_blob(&A, &info, why, sizeof why) != PACKS_SAME) PF("the same manifest file twice was not called the same");
+    const reg_t held = reg_now();
+    if (offer_blob(&B, NULL, why, sizeof why) != PACKS_REFUSED || !strstr(why, "has a manifest already")) PF("a second manifest for one model's tag was not refused for it (%s)", why);
+    if (!reg_same(held, reg_now()) || !manifest_by_uid(rd32(A.b + 8)) || manifest_by_uid(rd32(B.b + 8))) PF("a manifest refused for its tag changed the registry");
+    packs_drop_loaded();
+    if (manifest_count() != PTPK_BUILTIN_MODELS) PF("a manifest loaded from a file is still in the registry (%d)", manifest_count());
     /* a species and the habitat it lists: the mask follows the habitat in and out */
     blob_variant(&k, db->blob, db->len, "h1", "H1");
     if (offer_blob(&k, &info, why, sizeof why) != PACKS_ADDED) PF("a habitat from a file: %s", why);
@@ -697,10 +984,11 @@ static int t_collision_pool(void) {
     { uint8_t v[9] = { 2 }; wr32(v + 1, habitat_get(HABITAT_DESERT)->uid); wr32(v + 5, huid); rec_set(&A, 0x101, v, 9); blob_fix(&A); }
     if (offer_blob(&A, &info, why, sizeof why) != PACKS_ADDED) PF("a species that lists a habitat from a file: %s", why);
     const species_t *s1 = species_by_uid(info.uid);
-    if (!((s1->habitats >> h1->id) & 1u) || !((s1->habitats >> HABITAT_DESERT) & 1u) || !habitat_fits(h1, s1)) PF("the species' habitats mask %08x does not hold the habitat %d it lists", (unsigned)s1->habitats, h1->id);
+    if (!((s1->habitats >> h1->id) & 1u) || !((s1->habitats >> HABITAT_DESERT) & 1u)) PF("the species' habitats mask %08x does not hold the habitat %d it lists", (unsigned)s1->habitats, h1->id);
     packs_drop_loaded();
-    printf("selftest-ptpk: two names with one uid (0ee0ff1a): the second refused, the same file twice dropped quietly; ids 3..249 / 3..30 given to files (a LEGACY_ID record is not theirs); the pool takes %d + %d species and %d + %d habitats and then says no room; the species' mask follows its habitats\n",
-           PTPK_BUILTIN_SPECIES, PACKS_SPARE, PTPK_BUILTIN_HABITATS, PACKS_SPARE);
+    printf("selftest-ptpk: two names with one uid (0ee0ff1a): the second refused, the same file twice dropped quietly; ids 3..249 / 3..30 given to files (a LEGACY_ID record is not theirs); the pool takes %d + %d species, %d + %d habitats "
+           "and %d + %d model manifests and then says no room; a model's tag is held by one manifest (a second uid with the same tag refused, the first untouched); the species' mask follows its habitats\n",
+           PTPK_BUILTIN_SPECIES, PACKS_SPARE, PTPK_BUILTIN_HABITATS, PACKS_SPARE, PTPK_BUILTIN_MODELS, MANIFEST_SPARE);
     return 0;
 }
 
@@ -711,10 +999,14 @@ static int t_folder(void) {
     char dir[600]; snprintf(dir, sizeof dir, "%s", sim_tmp("packs-folder"));
     mkdir(dir, 0700);
     char path[700];
-    blob_t H, S, bad, cut;
+    blob_t H, S, M, bad, cut;
     const enc_t *sb = builtin_with_uid(s_ws->uid), *hb = builtin_with_uid(s_wh->uid);
+    const model_manifest_t *model = model_provides();                      /* the manifest of the model this build runs ... */
+    const enc_t *mb = model ? builtin_with_uid(model->uid) : NULL;         /* ... and its file */
+    if (!sb || !hb || !mb) PF("the world's default packs, or its model's manifest, are not built in");
     blob_variant(&H, hb->blob, hb->len, "f1", "F1");
     blob_variant(&S, sb->blob, sb->len, "f1", "F1");
+    blob_variant(&M, mb->blob, mb->len, "f1", "F1");                        /* a model of another name and another tag (blob_variant: the tag's last character is the tail's first, f) */
     { uint8_t v[9] = { 2 }; wr32(v + 1, s_wh->uid); wr32(v + 5, rd32(H.b + 8)); rec_set(&S, 0x101, v, 9); blob_fix(&S); }      /* lives in the world's habitat and in the new one */
     blob_variant(&bad, sb->blob, sb->len, "f2", "F2"); bad.b[PTPK_HEADER_BYTES + 40] ^= 0x10;                             /* a bit flipped, the CRC not fixed */
     blob_variant(&cut, sb->blob, sb->len, "f3", "F3"); cut.n -= 10;                                                       /* a file cut short */
@@ -726,25 +1018,33 @@ static int t_folder(void) {
     { static uint8_t huge[5000]; memset(huge, 0xaa, sizeof huge); snprintf(path, sizeof path, "%s/f-huge.ptpk", dir); put_file(path, huge, sizeof huge); }
     snprintf(path, sizeof path, "%s/g-builtin.ptpk", dir);   put_file(path, sb->blob, sb->len);                          /* the built-in pack's own file */
     snprintf(path, sizeof path, "%s/h-notapack.ptpk", dir);  put_file(path, "hello, this is not a pack", 25);
+    snprintf(path, sizeof path, "%s/i-model.ptpk", dir);     put_file(path, M.b, M.n);                                    /* a model manifest of a tag of its own: loads into a spare slot */
+    snprintf(path, sizeof path, "%s/j-model-builtin.ptpk", dir); put_file(path, mb->blob, mb->len);                       /* the built-in manifest's own file */
     snprintf(path, sizeof path, "%s/ignored.txt", dir);      put_file(path, H.b, H.n);
     const reg_t before = reg_now();
     printf("selftest-ptpk: the folder (the loader's own words follow):\n");
     const int added = sim_packs_scan(dir, true);
-    if (added != 2) PF("the folder added %d packs, want the new habitat and the new species", added);
+    if (added != 3) PF("the folder added %d packs, want the new habitat, the new species and the new model manifest", added);
     const habitat_t *h = habitat_by_uid(rd32(H.b + 8)); const species_t *s = species_by_uid(rd32(S.b + 8));
-    if (!h || !s) PF("the folder's new packs are not in the registry");
-    if (h->builtin || s->builtin || h->id < 3 || s->id < 3) PF("a pack from the folder carries a built-in id (%d, %d)", h->id, s->id);
-    if (species_count() != before.ns + 1 || habitat_count() != before.nh + 1) PF("the folder left %d species and %d habitats (had %d and %d, and two new packs)", species_count(), habitat_count(), before.ns, before.nh);
-    if (!((s->habitats >> h->id) & 1u) || !habitat_fits(h, s) || !habitat_fits(s_wh, s)) PF("the folder's species and habitat do not fit (mask %08x)", (unsigned)s->habitats);
+    const model_manifest_t *mf = manifest_by_uid(rd32(M.b + 8));
+    if (!h || !s || !mf) PF("the folder's new packs are not in the registry");
+    char mtag[MODEL_TAG_MAX]; snprintf(mtag, sizeof mtag, "%s", mf->tag);
+    if (h->builtin || s->builtin || mf->builtin || h->id < 3 || s->id < 3) PF("a pack from the folder carries a built-in id or mark (%d, %d, built in %d)", h->id, s->id, mf->builtin);
+    if (manifest_by_tag(mf->tag) != mf || strcmp(mf->tag, model->tag) == 0 || mf->n_goals != model->n_goals) PF("the folder's model manifest (tag %s) is not a manifest of its own tag with the model's goals", mf->tag);
+    if (species_count() != before.ns + 1 || habitat_count() != before.nh + 1 || manifest_count() != before.nm + 1)
+        PF("the folder left %d species, %d habitats and %d manifests (had %d, %d and %d, and three new packs)", species_count(), habitat_count(), manifest_count(), before.ns, before.nh, before.nm);
+    if (!((s->habitats >> h->id) & 1u) || !((s->habitats >> s_wh->id) & 1u)) PF("the folder's species does not list its habitats (mask %08x)", (unsigned)s->habitats);
     tank_init(&s_t, 5);
-    if (!tank_set_packs(&s_t, h->id, s->id) || tank_species(&s_t) != s || tank_habitat(&s_t) != h) PF("a tank refused the pair the folder brought");
+    char why[300] = "";
+    if (!tank_set_packs(&s_t, h->id, s->id, why, sizeof why) || tank_species(&s_t) != s || tank_habitat(&s_t) != h) PF("a tank refused the pair the folder brought: %s", why);
     tank_tick(&s_t, 0.1f, NULL);
-    if (sim_packs_scan(dir, false) != 0 || species_count() != before.ns + 1) PF("a second scan of the folder added packs");
+    if (sim_packs_scan(dir, false) != 0 || species_count() != before.ns + 1 || manifest_count() != before.nm + 1) PF("a second scan of the folder added packs");
     packs_drop_loaded();
     tank_init(&s_t, 5);
     if (tank_species(&s_t)->id != SPECIES_DEFAULT) PF("a tank still holds a pack that was dropped");
-    printf("selftest-ptpk: the folder: the new habitat and the new species loaded (ids %d and %d, available to a tank); the corrupt, the short, the empty, the huge and the foreign files refused, "
-           "the built-in pack's own file dropped quietly, the .txt ignored; a second scan changes nothing\n", h->id, s->id);
+    if (manifest_by_uid(rd32(M.b + 8)) || manifest_by_tag(mtag) || manifest_count() != before.nm) PF("the folder's model manifest is still there after the drop (%d manifests, had %d)", manifest_count(), before.nm);
+    printf("selftest-ptpk: the folder: the new habitat, the new species and the new model manifest (tag of its own) loaded (ids %d and %d, available to a tank); the corrupt, the short, the empty, the huge and the foreign files refused, "
+           "the built-in packs' own files (a species' and the model's manifest) dropped quietly, the .txt ignored; a second scan changes nothing; the manifest goes with the drop, as the packs\n", h->id, s->id);
     return 0;
 }
 
@@ -779,7 +1079,7 @@ static int t_missing(void) {
     const uint8_t sid = info.id;
     /* a tank on it, in its own state, saved */
     tank_init(&s_t, 24); progression_wake(&s_t, 0);
-    if (!tank_set_packs(&s_t, s_wh->id, sid)) PF("a tank refused the pack from a file");
+    if (!tank_set_packs(&s_t, s_wh->id, sid, why, sizeof why)) PF("a tank refused the pack from a file: %s", why);
     for (int i = 0; i < s_t.n_fish; i++) {
         fish_t *f = &s_t.fish[i];
         f->hunger = 3.25f + i; f->energy = 6.5f - i; f->stress = 1.5f + i; f->curiosity = 4.75f; f->body_c = (s_ws->t_lo + s_ws->t_hi) * 0.5f - 0.75f * i;

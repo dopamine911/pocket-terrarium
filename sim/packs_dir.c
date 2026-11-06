@@ -50,7 +50,7 @@ int sim_packs_scan(const char *dir, bool log) {
     closedir(d);
     qsort(names, (size_t)n, NAME_MAX_, name_cmp);            /* the same order every run */
     int added = 0;
-    for (int pass = 0; pass < 2; pass++) {                   /* habitats first: a species lists its habitats by uid */
+    for (int pass = 0; pass < 2; pass++) {                   /* manifests and habitats first: a species lists its habitats by uid and names goals the manifests list */
         for (int i = 0; i < n; i++) {
             char path[768]; snprintf(path, sizeof path, "%.400s/%.200s", dir, names[i]);
             struct stat st;
@@ -65,14 +65,14 @@ int sim_packs_scan(const char *dir, bool log) {
                 if (!f) snprintf(why, sizeof why, "cannot be read");
                 else { got = fread(buf, 1, sizeof buf, f); fclose(f); if (got != (size_t)st.st_size) { snprintf(why, sizeof why, "short read (%zu of %ld bytes)", got, (long)st.st_size); got = 0; } }
             }
-            const bool habitat = !why[0] && got > 5 && memcmp(buf, "PTPK", 4) == 0 && buf[5] == PTPK_KIND_HABITAT;
-            if ((pass == 0) != habitat) continue;            /* (a file that cannot be told goes with the species: refused there) */
+            const bool first = !why[0] && got > 5 && memcmp(buf, "PTPK", 4) == 0 && (buf[5] == PTPK_KIND_HABITAT || buf[5] == PTPK_KIND_MODEL);   /* manifests and habitats first: a species lists habitats and names goals they list */
+            if ((pass == 0) != first) continue;              /* (a file that cannot be told goes with the species: refused there) */
             if (!why[0]) {
                 packs_info_t info;
                 switch (packs_add(buf, got, PACKS_FILE, &info, why, sizeof why)) {
                 case PACKS_ADDED:
                     added++;
-                    if (log) printf("packs: %s: loaded %s %s (uid %08x, id %d)\n", names[i], info.kind == PTPK_KIND_HABITAT ? "habitat" : "species", info.name, (unsigned)info.uid, info.id);
+                    if (log) printf("packs: %s: loaded %s %s (uid %08x, id %d)\n", names[i], info.kind == PTPK_KIND_HABITAT ? "habitat" : info.kind == PTPK_KIND_MODEL ? "model manifest" : "species", info.name, (unsigned)info.uid, info.id);
                     continue;
                 case PACKS_SAME:                             /* the built-in pack's own file, or one read before: nothing to say */
                     continue;

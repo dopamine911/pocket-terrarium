@@ -1,8 +1,10 @@
 # Habitat packs
 
 The enclosure is a pack too, separate from the species (`docs/species-pack.md`).
-A tank holds one habitat and one species, the species must list the habitat
-as compatible, and both must be of the bin's world. The engine reads both;
+A tank holds one habitat and one species; the species must list the habitat,
+and the pair must pass the capability check: what the species needs (its
+movement, areas, fittings, food, goals) must be provided by the habitat, the
+firmware and the model (`docs/ptpk.md` "Capabilities"). The engine reads both;
 neither the engine nor the model names a habitat.
 
 ## Where they live
@@ -14,8 +16,8 @@ A habitat is a **PTPK file** too (`docs/ptpk.md`: the format and the loader; the
 - `common/habitat/<name>.c`: one `const habitat_t` per habitat, the **source** of the built-in packs: `desert.c` (id 1, the
   terrarium's, and `pt.test.desert-warm`, id 31, A16's warm desert, tests only) and `freshwater.c` (id 2, the aquarium's, P2b).
   `common/packs/ptpk_write.c` encodes each into a PTPK file at boot and the loader takes it like any other pack;
-  `tools/ptpk_emit.c` writes them as `packs/<uid_ns>.ptpk` (`docs/ptpk.md` "Authoring"). A release image carries its world's;
-  a tank holds its world's.
+  `tools/ptpk_emit.c` writes them as `packs/<uid_ns>.ptpk` (`docs/ptpk.md` "Authoring"). A release image carries its world's
+  (the firmware links only those); a tank holds a pair whose needs are met.
 - `common/terrain.h`: a habitat's ground laid out on a glass (P2c) - the walk, the heat field, the scene and the rules all read it
   from there.
 - The save stores the habitat's uid (and its one-byte `habitat_id` when it is built in) beside the species', and each humid hide's moisture.
@@ -34,6 +36,9 @@ A habitat is a **PTPK file** too (`docs/ptpk.md`: the format and the loader; the
 | backdrop, substrate, plants (P3) | sand, sandstone terraces, flagstone ramps, succulents | the engine's grass, decor and critters, as they always were | |
 | upkeep chores (P5) | glass, latrine, humid hide | glass, grass | a jungle mists the whole enclosure instead |
 | climbing surfaces (later) | none | none | branches arrive with the jungle and the climbers (glass and branches are not the ground) |
+| `areas` (issue #4 phase 2) | LAND, BASK | WATER | what it offers to move on: WATER, LAND, BASK, SHORE (`AREAS`) |
+| `provides` (issue #4 phase 2) | LAMP, HIDES, CRICKET, MEALWORM (the mealworm dish) | PELLET | fittings and foods (`PROVIDES`): LAMP, HIDES, CRICKET, MEALWORM, GREENS, PELLET |
+| `worlds` (filter) | terrarium | aquarium | the `WORLDS` filter of the shop and menus only; it decides no pair |
 
 ## The ground (P2c)
 
@@ -79,11 +84,17 @@ the high rock, the humid box under the low ledge's end, the cool cave under the 
 
 ## Rules (`--selftest-packs`, `habitat_check`)
 
-- Every habitat: a name, an id in 1..31, a world, a basking spot on its surface, hides on the floor, hides at least 0.2
+- Every habitat: a name, an id in 1..31, a basking spot on its surface, hides on the floor, hides at least 0.2
   of the floor apart and never warmer dark than lit, moisture and humidity in 0..1, no air cooler toward the lamp.
-- A terrarium's: the floor's warm end warmer than its cool end, a lamp that warms its spot over the air there (on every
-  board), at least one hide and a humid one among them (a lizard needs it to shed) - thermoregulation is possible. An
-  aquarium's floor may be even, and a lamp and hides are its own business (freshwater has neither).
+- **Capabilities** (`habitat_check`): `areas` non-empty and a subset of the area bits (WATER LAND BASK SHORE), WATER or LAND
+  among them, SHORE needing both; `provides` a subset of the fittings and foods. The declaration agrees with the fields:
+  BASK in `areas` exactly when `bask_r_px > 0`; LAMP exactly when `bask_r_px > 0`; HIDES exactly when `n_hides > 0`; MEALWORM
+  exactly when there is a dish; CRICKET and MEALWORM need LAND; PELLET needs WATER. A bit this firmware does not know is
+  dropped at load, not refused.
+- A habitat with **LAND** keeps the terrarium's rules: the floor's warm end warmer than its cool end, a lamp that warms its
+  spot over the air there (on every board), at least one hide and a humid one among them (a lizard needs it to shed) -
+  thermoregulation is possible. Without LAND the floor may be even, and a lamp and hides are the habitat's own business
+  (freshwater has neither).
 - **Its ground, on all four boards** (`terrain_check`): rocks' points on the glass with u rising; ramps joining two
   surfaces at points on them; no slope past `TERRAIN_SLOPE_MAX` (40°; steeper is a step, not walkable); every path inside
   the glass (`TERRAIN_MARGIN`) with a lizard's height (`TERRAIN_HEAD_PX`) under the glass above it; a ramp's ends
@@ -93,32 +104,36 @@ the high rock, the humid box under the low ledge's end, the cool cave under the 
   floor; the basking spot the highest ground within the lamp's pool, with `TERRAIN_LAMP_PX` (100) of glass over it; no
   rock or ramp lower than `TERRAIN_HIDE_CLEAR_PX` (44) over the floor within `TERRAIN_HIDE_HW` (36) of a hide.
 - Every habitat's lit ground (the floor, its rocks, its ramps) reaches each compatible species' comfort band (`t_lo`..`t_hi`) somewhere.
-- A tank never holds an incompatible (habitat, species) pair, nor another world's: `tank_set_packs` refuses both, and a
-  save of such a pair no longer loads as the world's defaults - the tank keeps the saved pair, shows PACK MISSING and holds still
-  until the pack comes (`docs/ptpk.md` "A tank and its packs").
+- A tank never holds an incompatible (habitat, species) pair: `tank_set_packs` refuses it with the reason (the species does
+  not list the habitat, the species needs a capability the firmware or the habitat lacks, or a goal the model lacks:
+  `docs/ptpk.md` "Capabilities"), and a save of such a pair no longer loads as the world's defaults - the tank keeps the
+  saved pair, shows PACK MISSING or PACK NEEDS and holds still until the pack comes or the need is met (`docs/ptpk.md` "A
+  tank and its packs").
 - The scene (`--lizard-sheet`): every point of every rock's and ramp's walking line stands on that piece's own drawn top,
   on all four glasses.
 
 ## Planned habitats
 
-| Habitat | Species | Needs |
+| Habitat | Species | Needs (capability words) |
 |---|---|---|
-| desert | leopard gecko, bearded dragon, monitor | v1 (now) |
-| freshwater (aquarium) | pocket-tank's fish | P2b (now): today's fish tank as a pack |
-| jungle | crested gecko, chameleon | climbing (`climb` goal: schema change + retrain), branches, whole-enclosure misting |
+| desert | leopard gecko, bearded dragon, monitor | provides LAND, BASK, LAMP, HIDES, CRICKET, MEALWORM; v1 (now) |
+| freshwater (aquarium) | pocket-tank's fish | provides WATER, PELLET; P2b (now): today's fish tank as a pack |
+| jungle | crested gecko, chameleon | the `climb` goal (a model with the word: schema change + retrain), branches, whole-enclosure misting |
 
 ## Worlds: one core, a bin per world (PLAN.md D11)
 
-Every habitat and species carries a `world`: `WORLD_AQUARIUM` or
-`WORLD_TERRARIUM`, and a compatible pair shares one. The code base is one
-reusable core; a build picks its world (`PT_WORLD` in `common/world.h`, P2b,
-set when the bin is built - never at run time), and with it the model and
-tokenizer (world.h THE BRAIN), the packs a tank may hold and a new tank's pair,
-the goal set (`tank.h` THE GOALS: the fish's eight or the lizard's seven), the
-locomotion (the swim, or `tank.h` THE WALK on the habitat's ground), the toolbox (sponge
-and scissors, or those and the mister) and the selftest list. One firmware
-cannot carry both brains: the model partition is 8 MB (`firmware/partitions.csv`,
-`model` at 0x290000, size 0x800000) and a model is 7.56 MB.
+A world is a **preset** and a **filter**, not a gate. The code base is one reusable core; a build picks its world
+(`PT_WORLD` in `common/world.h`, P2b, set when the bin is built - never at run time) and with it the preset: the model and
+tokenizer (world.h THE BRAIN), the firmware modules (the swim, or `tank.h` THE WALK on the habitat's ground), the toolbox
+(sponge and scissors, or those and the mister), a new tank's default pair and the selftest list. The `WORLDS` record of a
+pack is the filter: the shop and the menus offer a pack when its mask includes the build's world (`packs_offered`).
+
+The **capability check, not the world, decides a pair** (`docs/ptpk.md` "Capabilities"): a tank runs it when the species'
+needs are met by the habitat, the firmware and the model, so a crossover habitat (WATER and LAND, SHORE) can host both
+kinds of species once a firmware has both modules. What a build still decides: the model (one firmware cannot carry both
+brains: the model partition is 8 MB (`firmware/partitions.csv`, `model` at 0x290000, size 0x800000) and a model is 7.56 MB),
+the modules (`firmware_caps()`), and the default packs. The simulator keeps both worlds' packs loaded, so a cross-world pair
+there is refused at the tank by the model leg (the gecko's goal `hunt` is not in the fish model's manifest).
 
 | World | Bin | Model | Habitats |
 |---|---|---|---|
