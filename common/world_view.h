@@ -14,15 +14,43 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "render_core.h"
+#include "body.h"
 #include "tank.h"
+
+/* a badge of the keeper page: the bit that earns it (MS_* of an animal's, TMS_* of the tank's) and its art */
+typedef struct { uint32_t bit; const icon_t *icon; } badge_t;
+/* the colours of the loading screen: the water or the dusk behind it (top, bottom) and its ring of bubbles or pebbles (the bright one,
+   its trail), shaded toward rim_dark */
+typedef struct { uint32_t bg[2]; uint32_t rim[4]; uint32_t rim_dark; } world_look_t;
 
 typedef struct world_view_s {
     const char *name;                                           /* "aquarium" / "terrarium" */
+    const body_ops_t *const *bodies; int n_bodies;              /* the body types this world draws (body.h): body_of picks the one of a species' plan, the first when none is */
 
     /* ---- the scene ---- */
     void (*render)(const tank_t *t, uint16_t *fb, int stride);  /* render_tank: the whole tank frame - scene, animals, what lives on the glass */
     void (*scene_reset)(uint16_t *scene);                       /* render_set_scene_cache: the scene cache is a new one - the world's own caches start again (NULL: none) */
     const uint16_t *(*scene_alt)(unsigned *epoch);              /* render_scene_buf: the world's own cache of the scene when it is the current one (the aquarium's grass cache), with its epoch; NULL: none */
+
+    /* ---- the glass and the tools ---- */
+    uint32_t algae_rgb[2];                                      /* the film on the glass: the two greens (a terrarium's: dusty smudges) of a blob, by its hash's bit 2 */
+    const int *tools; int n_tools;                              /* the toolbox's tools (TOOL_*), left to right: the box is cut in as many equal parts; two draw their icons at 2x, three at 1x */
+
+    /* ---- the keeper page ---- */
+    const badge_t *fish_badges;                                 /* an animal's six */
+    const badge_t *tank_badges; int n_tank_badges;              /* the tank's row ... */
+    bool (*tank_badge_shown)(const tank_t *t, int i);           /* ... which of them show (NULL: all) */
+    const icon_t *(*req_icon)(int kind);                        /* the art of a fry gate the shared pages do not draw (NULL: none) */
+    const char *(*tank_word)(const tank_t *t);                  /* the TANK row's title: "TANK", a terrarium's habitat's name */
+
+    /* ---- the shop ---- */
+    const icon_t *(*shop_icon)(int item);                       /* an item's picture */
+    int  (*shop_count)(const tank_t *t);                        /* the items its shop lists now (the FRY row apart) */
+    int  (*shop_item)(const tank_t *t, int i);                  /* the catalogue number of the i-th */
+
+    /* ---- the looks ---- */
+    int bowl_title_s;                                           /* MY TANKS's title scale on the round glass (the terrarium's is longer: a size down) */
+    world_look_t look;                                          /* the loading screen */
 
     /* ---- the critters' cards (render_stats_card with a RENDER_CARD_* index, render.h): the critters a world has; NULL hooks: it has none ---- */
     bool (*critter_here)(const tank_t *t, int card);            /* that critter is in the tank (its card would draw) */

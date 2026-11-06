@@ -15,12 +15,7 @@
 #include "setup.h"
 #include "version.h"
 #include "world_view.h"
-#if !PT_TERRARIUM
-#include "bodies/fish/fish.h"          /* the previews draw a fish of their own (until the pages ask the body: body.h) */
-#endif
-#if PT_TERRARIUM
-#include "bodies/lizard/lizard.h"       /* THE TERRARIUM: the lizards (the pages' stills and glyphs) */
-#endif
+#include "body.h"
 #include <stdint.h>
 #include <math.h>
 #include <string.h>
@@ -111,6 +106,7 @@ bool g_no_animals;                        /* THE EDITOR (0.3.9.4, Strato): a pla
 /* algae film on the glass, drawn over everything: dappled blobs per covered
  * grid cell, thicker film = bigger and greener. The keeper wipes it off. */
 void draw_algae(ctx_t *c, const tank_t *t) {
+    const uint32_t *film = world_view()->algae_rgb;
     for (int cy = 0; cy < ALGAE_ROWS; cy++)
         for (int cx = 0; cx < ALGAE_COLS; cx++) {
             int cov = t->algae[cy * ALGAE_COLS + cx];
@@ -123,8 +119,8 @@ void draw_algae(ctx_t *c, const tank_t *t) {
                 float oy = (float)((hb >> 5) % ALGAE_CELL);
                 float r = (1.5f + (float)((hb >> 10) % 3)) * (0.55f + 0.45f * cov / 255.0f)
                         + 2.2f * cov / 255.0f;
-                fill_ellipse(c, bx + ox, by + oy, r, r * 0.85f,   /* algae's greens; in the terrarium a dusty smudge (the sponge's all the same) */
-                             PT_TERRARIUM ? ((hb & 4) ? 0x9c8f7c : 0x857864) : (hb & 4) ? 0x3f7a45 : 0x35663d, 34 + cov * 96 / 255);
+                fill_ellipse(c, bx + ox, by + oy, r, r * 0.85f,   /* the world's film: the aquarium's algae greens, the terrarium's dusty smudge (the sponge's all the same) */
+                             (hb & 4) ? film[0] : film[1], 34 + cov * 96 / 255);
             }
         }
 }
@@ -722,14 +718,13 @@ void shade_box(ctx_t *c, int x, int y, int w, int h) {
 /* the toolbox's tools, by world (P2b): the aquarium's two - the sponge and the scissors, as pocket-tank's, their icons
  * at 2x in halves - and the terrarium's three, the mister third (P2a: the icons at 1x to fit). The fish do not shed:
  * no mister in their box (tank_set_tool refuses it too) */
-#define TOOLS_N    (PT_TERRARIUM ? 3 : 2)
-#define TOOL_BTN_W ((RENDER_TOOLS_W - 16 - 6 * (TOOLS_N - 1)) / TOOLS_N)
-#define TOOL_BTN_H (RENDER_TOOLS_H - 16)
 static void tools_draw(ctx_t *c, const tank_t *t) {
     const int X = RENDER_TOOLS_X, Y = RENDER_TOOLS_Y, W = RENDER_TOOLS_W, H = RENDER_TOOLS_H;
     shade_box(c, X, Y, W, H);
     rect_edge(c, X, Y, W, H, 0x9fd8e2); rect_edge(c, X + 1, Y + 1, W - 2, H - 2, 0x1c2f36);
-    static const int TOOL[3] = { TOOL_SPONGE, TOOL_SCISSORS, TOOL_MISTER };
+    const world_view_t *w = world_view();
+    const int *TOOL = w->tools, TOOLS_N = w->n_tools;          /* the world's tools, left to right */
+    const int TOOL_BTN_W = (RENDER_TOOLS_W - 16 - 6 * (TOOLS_N - 1)) / TOOLS_N, TOOL_BTN_H = RENDER_TOOLS_H - 16;
     const int s = TOOLS_N == 2 ? 2 : 1;                       /* the icons' scale */
     for (int k = 0; k < TOOLS_N; k++) {
         int bx = X + 8 + k * (TOOL_BTN_W + 6), by = Y + 8;
@@ -800,8 +795,9 @@ bool render_lock_hit(float x, float y) {
 int render_tools_hit(float x, float y) {
     const int X = RENDER_TOOLS_X, W = RENDER_TOOLS_W;
     if (y < RENDER_TOOLS_Y || x < X - RENDER_CARD_HIT_SIDE || x >= X + W + RENDER_SIDE_GAP / 2) return -1;   /* (the right: half the gap, the lock has the rest) */
-    if (TOOLS_N == 2) return x < X + W / 2 ? TOOL_SPONGE : TOOL_SCISSORS;                                     /* the aquarium's halves */
-    return x < X + W / 3 ? TOOL_SPONGE : x < X + 2 * W / 3 ? TOOL_SCISSORS : TOOL_MISTER;                   /* the terrarium's thirds (the mister, P2a) */
+    const world_view_t *w = world_view();                                                                   /* the box in equal parts, one a tool (the aquarium's halves, the terrarium's thirds) */
+    for (int k = 0; k < w->n_tools - 1; k++) if (x < X + (k + 1) * W / w->n_tools) return w->tools[k];
+    return w->tools[w->n_tools - 1];
 }
 
 /* the chip: the tool at 1x and DONE, top left where the card would be */
@@ -1025,34 +1021,20 @@ void render_glyph(uint16_t *fb, int stride, int x, int y, int scale, uint32_t rg
                 for (int yy = 0; yy < scale; yy++)
                     span(&c, x + k * scale, x + k * scale + scale - 1, y + r * scale + yy, &col, 255);
 }
-#if PT_TERRARIUM
-static void lizard_still(ctx_t *c, float x, float y, float size, const fish_t *f, const fish_t *form, double clock, float room);   /* below */
-#endif
-static void draw_still(uint16_t *fb, int stride, float x, float y, float size, fish_t *f, const fish_t *form, double clock, float room) {
-    ctx_t c = ctx_page(fb, stride);
-#if PT_TERRARIUM
-    lizard_still(&c, x, y, size, f, form, clock, room);
-#else
-    f->heading = 0; f->speed = 40;
-    f->hunger = 4; f->stress = 0; f->goal.id = GOAL_W_EXPLORE;
-    if (form) { f->shape = form->shape; f->fins = form->fins; f->pattern = form->pattern; }
-    if (room > 0) fish_fit(f, x, y, size, room); else { f->x = x; f->y = y; f->size = size; }
-    tank_fish_face(f);                           /* side-on, facing right */
-    draw_fish_core(&c, f, tank_phase(clock, tank_fish_beat_rate(f)), false, f->size, 1e9f);   /* (a still's pace never changes: the clock's) */
-#endif
+/* the species the pages draw: the world's default pack (the keeper page, the shop's offers, the setup's portraits) - and its body type's
+   art (body.h): a page asks the body, never which world it is */
+static const species_t *page_species(void) { return species_get(SPECIES_DEFAULT); }
+static const body_ops_t *page_body(void) { return body_of(page_species()); }
+const body_ops_t *body_of(const species_t *sp) {
+    const world_view_t *w = world_view();
+    for (int i = 0; i < w->n_bodies; i++) if (sp && w->bodies[i]->plan == sp->plan) return w->bodies[i];
+    return w->bodies[0];
 }
-#if PT_TERRARIUM
-/* a lizard's portrait (THE TERRARIUM: a card, the keeper page's rows, the setup's colours): side-on, standing, facing right,
-   blinking and flicking its tongue now and then on the page's clock - its morph by its body colour (f), its stage, its shed
-   and its markings' seed (form, the lizard itself, when there is one). Its whole reach - the tail's tip to the snout's with
-   the tongue out (lizard_reach) - is LZ_STILL_K x the box a classic fish of its stage takes at that size (fish_box), centred
-   on that box, inside the room's (a classic elder's box x room, as fish_fit's): the keeper page's zones are drawn round the
-   fish's box (ms_anim: the GROW gate's cell is 40 px for a fish of 29) */
-#define LZ_STILL_K 1.15f
+const body_ops_t *tank_body(const tank_t *t, int i) { (void)i; return body_of(tank_species(t)); }
 /* the box a CLASSIC fish of a stage takes (bodies/fish fish_box(SHAPE_CLASSIC, FINS_CLASSIC, stage)): b = x0, x1, y0, y1 in its local px - the
    unit the pages' portrait zones are laid out in, so any body fits the room a fish has. Its outline and its classic fins as fish_fins draws
    them at rest (the tail, and the grown fish's dorsal crest, the elder's both longer) */
-static void ref_box(stage_t stage, float b[4]) {
+void ref_box(stage_t stage, float b[4]) {
     static const float BX[10] = { 16, 10, 2, -8, -15, -18, -15, -8, 2, 10 }, BY[10] = { 0, -7, -10, -9, -6, 0, 6, 9, 10, 7 };
     const float R = -11, H = 10, FH = 10, K = 1.0f;
     const bool elder = stage == STAGE_ELDER, grown = stage >= STAGE_ADULT;
@@ -1072,40 +1054,11 @@ static void ref_box(stage_t stage, float b[4]) {
         }
     }
 }
-static void lizard_page_mark(void *user, int x0, int x1, int y) {   /* (the page's own coordinates: its box - the keeper page's moving things - and the frame's touched mask) */
-    const ctx_t *c = (const ctx_t *)user;
-    bb_add(x0, x1, y); touch_span_f(x0 - c->ox, x1 - c->ox, y - c->oy);
+static void draw_still(uint16_t *fb, int stride, float x, float y, float size, fish_t *f, const fish_t *form, double clock, float room) {
+    ctx_t c = ctx_page(fb, stride);
+    const species_t *sp = page_species();
+    body_of(sp)->still(&c, sp, x, y, size, f, form, clock, room);
 }
-static void lizard_still(ctx_t *c, float x, float y, float size, const fish_t *f, const fish_t *form, double clock, float room) {
-    const species_t *sp = species_get(SPECIES_DEFAULT);
-    if (!sp || sp->plan != PLAN_LIZARD) return;
-    const fish_t *who = form ? form : f;
-    const morph_t flat = { "", f->color, f->color };            /* a silhouette (the keeper page's not-yet, the empty places: one colour
-                                                                   given for all three) is the lizard in that colour, not in its morph's */
-    const bool silhouette = f->color == f->fin && f->fin == f->accent;
-    lizard_look_t lk = { &sp->geom, silhouette ? &flat : lizard_morph_of(sp, f), &sp->pattern[f->stage & 3], (uint8_t)f->stage, who->uid ? who->uid : f->color };
-    float r[4], e[4]; ref_box((stage_t)f->stage, r); ref_box(STAGE_ELDER, e);
-    float w = LZ_STILL_K * (r[1] - r[0]) * size;
-    if (room > 0 && w > room * (e[1] - e[0]) * size) w = room * (e[1] - e[0]) * size;
-    float scale = w / sp->geom.length_px, back, ahead;
-    for (int i = 0; i < 4; i++) { lizard_reach(&sp->geom, scale, &back, &ahead); scale *= w / (back + ahead); }   /* (the reach's ends do not
-                                                                                                  scale with it: a few steps settle it) */
-    lizard_reach(&sp->geom, scale, &back, &ahead);
-    const float len = sp->geom.length_px * scale, mid = x + 0.5f * (r[0] + r[1]) * size + 0.5f * (back - ahead);
-    lizard_pose_t p = lizard_pose(LZ_POSE_STAND, 1);
-    const float a = (float)fmod(clock, 60.0);
-    const float bt = fmodf(a, 4.3f), tt = fmodf(a + 1.7f, 6.1f);
-    p.blink = bt < 0.18f ? 1 - fabsf(bt / 0.09f - 1) : 0;
-    p.tongue = tt < 0.26f ? sinf(3.14159265f * tt / 0.26f) : 0;
-    p.fat = who->lz_fat > 0 ? who->lz_fat : 0.6f; p.clock = a;
-    p.shed = who->shed == SHED_CLEAN ? SHED_NORMAL : who->shed;
-    if (p.shed == SHED_SHEDDING) p.shed_k = clampf(1 - who->shed_s / (sp->shed_window_s > 0 ? sp->shed_window_s : 1), 0, 1);
-    lz_canvas_t cv; memset(&cv, 0, sizeof cv);
-    cv.fb = c->fb; cv.stride = c->stride; cv.ox = c->ox; cv.oy = c->oy; cv.w = c->w; cv.h = c->h; cv.dim = 1.0f;
-    cv.mark = lizard_page_mark; cv.user = c;
-    draw_lizard(&cv, &lk, &p, mid, y + 0.07f * len, scale);          /* (its feet a little under the portrait's middle) */
-}
-#endif
 void render_fish_preview(uint16_t *fb, int stride, float x, float y, float size,
                          uint32_t body, uint32_t fin, uint32_t accent, const fish_t *form, float room, double clock) {
     fish_t f; memset(&f, 0, sizeof f);
@@ -1243,80 +1196,25 @@ void render_battery_info(uint16_t *fb, int stride, const bat_info_t *bi, double 
  * in the cap above them, the other two side by side at the foot. */
 /* (the page's numbers, MSP_*: render.h) */
 
-typedef struct { uint32_t bit; const icon_t *icon; } badge_t;
-#if PT_TERRARIUM
-/* THE TERRARIUM's badges (P5, progression.c MS_NAMES / TMS_NAMES): a lizard's row - a meal from the keeper, the hand, a
-   cricket caught, a bask, a clean shed, a dig; the terrarium's row - a quiet night, a stuck shed fixed, CLEAN_RUN_N clean
-   sheds in a row, the first adult, a dig together, a wiped glass, a change of heart, then the first sale once earned.
-   The fish's other badges (the seagrass, a follow, a feeding, a trim, the bought creatures', a mutation) are never shown
-   here: notice.c keeps them silent too */
-static const badge_t FISH_BADGES[6] = {
-    { MS_FIRST_MEAL_FROM_YOU, &icon_ms_first_meal_terr },  { MS_FIRST_HOLD_APPROACH, &icon_ms_first_hold_approach_terr },
-    { MS_FIRST_CATCH, &icon_ms_first_feeding_terr },       { MS_FIRST_BUBBLES, &icon_ms_first_bubbles_terr },   /* crickets; a bask */
-    { MS_FIRST_SHED, &icon_ms_first_shed_terr },           { MS_FIRST_DART, &icon_ms_first_dart_terr },         /* the shed skin; a dig */
-};
-#define TANK_BADGE_N 8
-static const badge_t TANK_BADGES[TANK_BADGE_N] = {
-    { TMS_FIRST_FULL_NIGHT, &icon_ms_first_quiet_night_terr }, { TMS_SHED_HELPED, &icon_ms_shed_helped_terr },     /* the mister on a gecko */
-    { TMS_CLEAN_RUN, &icon_ms_clean_run_terr },             { TMS_FIRST_ADULT, &icon_ms_first_adult_terr },       /* three skins; a big one */
-    { TMS_FIRST_PLAY_SESSION, &icon_ms_first_play_session_terr }, { TMS_FIRST_CLEANING, &icon_ms_first_glass_cleaning_terr },
-    { TMS_CHANGED_SOMEONE, &icon_ms_tank_changed_someone_terr }, { TMS_FIRST_SALE, &icon_ms_first_sale_terr },   /* (once earned) */
-};
-#else
-/* the badges a world draws its own way (WORLD_ICON: the terrarium's geckos, crickets, hides and rocks, P3b); the
-   bought things' badges (school, reef, seahorse, crab) stay the shop's own pictures for as long as the shop sells them */
-static const badge_t FISH_BADGES[6] = {
-    { MS_FIRST_MEAL_FROM_YOU, &icon_ms_first_meal },  { MS_FIRST_HOLD_APPROACH, &icon_ms_first_hold_approach },
-    { MS_FIRST_GRASS, &icon_ms_first_seagrass },      { MS_FIRST_BUBBLES, &icon_ms_first_bubbles },   /* (the third was "first reef" until 0.3.0) */
-    { MS_FIRST_FOLLOW, &icon_ms_first_follow },       { MS_FIRST_DART, &icon_ms_first_dart },
-};
-#define TANK_BADGE_N 12                         /* (11 lost the crab's badge off the row: 0.4's FIRST_MUTATION met 0.3.9's CRAB_FIND at the merge) */
-static const badge_t TANK_BADGES[TANK_BADGE_N] = {
-    { TMS_FIRST_FEEDING, &icon_ms_first_feeding },    { TMS_FIRST_TRIM, &icon_ms_first_trimming },
-    { TMS_FIRST_CLEANING, &icon_ms_first_glass_cleaning }, { TMS_FIRST_FULL_NIGHT, &icon_ms_first_quiet_night },
-    { TMS_FIRST_PLAY_SESSION, &icon_ms_first_play_session }, { TMS_CHANGED_SOMEONE, &icon_ms_tank_changed_someone },
-    { TMS_FULL_SCHOOL, &icon_ms_full_school },        /* 2026-09-30: only once the shrimp are bought (tank_badge_shown) */
-    { TMS_FIRST_REEF, &icon_ms_first_reef },          /* 2026-10-02: only once the reef cluster is bought */
-    { TMS_FIRST_MUTATION, &icon_ms_first_mutation },  /* 0.4 (Strato's helix): only once the tank has bred - a trio */
-    { TMS_FIRST_SALE, &icon_ms_first_sale },          /* 0.3.5: a fish sold - the shop's fry */
-    { TMS_SEAHORSE_FED, &icon_ms_seahorse_fed },      /* 0.3.6: only once the seahorse is bought (Strato: "visible and gray once purchased") */
-    { TMS_CRAB_FIND, &icon_ms_crab_find },            /* 0.3.9: only once the crab is bought - its first sand dollar, taken */
-};
-#endif
 /* the tank row's pages (2026-09-30, the seventh badge): six badges a page;
    with more, a small arrow at the row's right end (or a sideways swipe along
    the row) flips to the next page, pointing back from the last. */
 static int g_ms_tpage;                  /* the tank row's page (kept while a modal opens and closes; 0 on leaving the page) */
-/* which tank badges show: a bought thing's badge only once the thing is
-   bought (the shrimp school's, the reef cluster's) - and, once earned, for
-   good, whatever was sold since; the first sale's only once earned */
-static bool tank_badge_shown(const tank_t *t, int i) {
-    uint32_t bit = TANK_BADGES[i].bit;
-    if (bit == TMS_FULL_SCHOOL) return (t->sd_unlocks & SD_ITEM_SHRIMP)  || (t->tank_ms_bits & bit);
-    if (bit == TMS_FIRST_REEF)  return (t->sd_unlocks & SD_ITEM_CLUSTER) || (t->tank_ms_bits & bit);
-    if (bit == TMS_FIRST_MUTATION) return (t->tank_ms_bits & (TMS_TRIO | bit)) != 0;
-    if (bit == TMS_FIRST_SALE)  return (t->tank_ms_bits & bit) != 0;   /* 0.3.5: once earned (its notice says what it opened) */
-    if (bit == TMS_SEAHORSE_FED) return (t->sd_unlocks & SD_ITEM_SEAHORSE) || (t->tank_ms_bits & bit);
-    if (bit == TMS_CRAB_FIND)   return (t->sd_unlocks & SD_ITEM_CRAB)     || (t->tank_ms_bits & bit);
-    return true;
-}
+/* which tank badges show: the world's rule (a bought thing's badge only once the thing is bought, ...); all of them when it has none */
+static bool tank_badge_shown(const tank_t *t, int i) { const world_view_t *w = world_view(); return !w->tank_badge_shown || w->tank_badge_shown(t, i); }
 static int tank_badge_n(const tank_t *t) {
     int n = 0;
-    for (int i = 0; i < TANK_BADGE_N; i++) n += tank_badge_shown(t, i);
+    for (int i = 0; i < world_view()->n_tank_badges; i++) n += tank_badge_shown(t, i);
     return n;
 }
 /* the k-th badge that shows (k < tank_badge_n) */
 static const badge_t *tank_badge(const tank_t *t, int k) {
-    for (int i = 0; i < TANK_BADGE_N; i++)
-        if (tank_badge_shown(t, i) && k-- == 0) return &TANK_BADGES[i];
-    return &TANK_BADGES[0];
+    const world_view_t *w = world_view();
+    for (int i = 0; i < w->n_tank_badges; i++)
+        if (tank_badge_shown(t, i) && k-- == 0) return &w->tank_badges[i];
+    return &w->tank_badges[0];
 }
 static int tank_pages(const tank_t *t) { return (tank_badge_n(t) + MSP_PER_ROW - 1) / MSP_PER_ROW; }
-#if PT_TERRARIUM
-static const char *const STAGE_WORDS[4] = { "HATCHLING", "JUVENILE", "ADULT", "ELDER" };
-#else
-static const char *const STAGE_WORDS[4] = { "FRY", "JUVENILE", "ADULT", "ELDER" };
-#endif
 /* the detail modal (a tap on a badge / name / strip): what to show until
  * the next tap. caption[0] == 0 means no modal. */
 static char g_ms_caption[72], g_ms_title[16];
@@ -1704,32 +1602,6 @@ void blit_icon_scaled(ctx_t *c, int x, int y, const icon_t *ic, int s, bool lit)
                 }
         }
 }
-/* a tiny fish glyph facing right (the growth and population strips) */
-static void fish_glyph(ctx_t *c, float cx, float cy, float r, uint32_t rgb) {
-    float xs[3] = { cx - r * 1.2f, cx - r * 2.3f, cx - r * 2.3f }, ys[3] = { cy, cy - r * 0.9f, cy + r * 0.9f };
-    fill_poly(c, xs, ys, 3, rgb);
-    fill_ellipse(c, cx, cy, r * 1.6f, r, rgb, 255);
-}
-/* ... and the terrarium's: a tiny gecko facing right, about the fish's box - a long low body, the head ahead of it, a
-   tapering tail behind and four short legs */
-static void lizard_glyph(ctx_t *c, float cx, float cy, float r, uint32_t rgb) {
-    const float s = r * 0.8f;
-    fill_ellipse(c, cx, cy, s * 1.25f, s * 0.5f, rgb, 255);                          /* the body */
-    fill_ellipse(c, cx + s * 1.45f, cy - s * 0.15f, s * 0.6f, s * 0.42f, rgb, 255);   /* the head */
-    float xs[3] = { cx - s * 0.9f, cx - s * 3.1f, cx - s * 0.9f }, ys[3] = { cy - s * 0.4f, cy + s * 0.15f, cy + s * 0.4f };
-    fill_poly(c, xs, ys, 3, rgb);                                                     /* the tail */
-    const int lw = s > 3 ? 2 : 1, lh = (int)(s * 0.55f + 1.5f);
-    for (int k = 0; k < 2; k++) rect_fill(c, (int)(cx + (k ? s * 0.7f : -s * 0.85f)), (int)(cy + s * 0.3f), lw, lh, rgb);   /* the near legs */
-}
-static void strip_glyph(ctx_t *c, float cx, float cy, float r, uint32_t rgb) { if (PT_TERRARIUM) lizard_glyph(c, cx, cy, r, rgb); else fish_glyph(c, cx, cy, r, rgb); }
-/* a lizard's growth strip wears its morph's body colour (the accent's gene draws nothing on it); the fish's, its accent */
-static uint32_t strip_rgb(const fish_t *f) {
-#if PT_TERRARIUM
-    const morph_t *m = lizard_morph_of(species_get(SPECIES_DEFAULT), f);
-    if (m) return m->body;
-#endif
-    return f->accent;
-}
 static void badge(ctx_t *c, int x, int y, const icon_t *ic, bool on, bool fresh) {
     if (on) blit_icon(c, x, y, ic, 255); else blit_icon_locked(c, x, y, ic);
     if (on && fresh) {
@@ -1749,10 +1621,7 @@ static const icon_t *fry_req_icon(int kind) {
     case FRY_REQ_CHANGE: return WORLD_ICON(icon_ms_tank_changed_someone);
     case FRY_REQ_GRASS:  return &icon_ms_first_trimming;
     case FRY_REQ_GLASS:  return WORLD_ICON(icon_ms_first_glass_cleaning);
-#if PT_TERRARIUM
-    case FRY_REQ_SHED:   return &icon_ms_first_shed_terr;      /* (the clean-shed badge's own art) */
-#endif
-    default:             return NULL;
+    default:             return world_view()->req_icon ? world_view()->req_icon(kind) : NULL;   /* (the terrarium's clean-shed badge's own art) */
     }
 }
 /* a gate as a badge in a 32 px cell: lit when met, the silhouette until then */
@@ -1788,14 +1657,9 @@ static int ms_group(const tank_t *t, int nreq, int *idx) {
 static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
                    const fry_req_t *req, int nreq, bool staged);
 static void ms_close(void);
-/* a fish card's second line (0.4): its form - what it is, or will grow into; a lizard's is its morph (render_lizard.h) */
+/* a fish card's second line (0.4): its form - what it is, or will grow into (its body type's words: body.h) */
 static void ms_genes_line(const fish_t *f) {
-#if PT_TERRARIUM
-    const species_t *sp = species_get(SPECIES_DEFAULT); const int m = lizard_morph_index(sp, f);
-    snprintf(g_ms_caption2, sizeof g_ms_caption2, "%s MORPH", m >= 0 ? sp->morphs[m].name : "?");
-#else
-    snprintf(g_ms_caption2, sizeof g_ms_caption2, "%s  %s  %s", SHAPE_NAMES[f->shape % SHAPE_N], FINS_NAMES[f->fins % FINS_N], PATTERN_NAMES[f->pattern % PATTERN_N]);
-#endif
+    page_body()->genes_line(page_species(), f, g_ms_caption2, sizeof g_ms_caption2);
 }
 /* the modal's box: a gate's and a fish's card are taller (a button row at the
    foot) and stand higher, clear of the CLOSE button */
@@ -1914,12 +1778,6 @@ static void ms_fry_label(ctx_t *c, int top, const ms_box_t *clip) {
     }
     draw_text(&cw, 92, top + 2, 2, MSP_TEAL, WORLD_STR("NEW FRY", "NEW EGG"));   /* (the terrarium's next arrival hatches from an egg) */
 }
-/* the terrarium's next arrival on the keeper page (the NEW EGG row, its modal): an upright leathery egg, lit up-left, in
-   the fry-to-be's colour - teal once every gate is met, the silhouette's grey before */
-static void egg_glyph(ctx_t *c, float cx, float cy, float s, uint32_t rgb) {
-    fill_ellipse(c, cx, cy, 6.5f * s, 9.0f * s, rgb, 255);
-    fill_ellipse(c, cx - 2.2f * s, cy - 3.6f * s, 2.0f * s, 3.0f * s, 0xffffff, 80);
-}
 /* the moving things, in the page's order: each fish's portrait, the NEW FRY row's fry, the GROW gate's fish. Draws
    thing k (false: there is no thing k) and gives its zone (where nothing still is drawn) */
 static bool ms_anim(const tank_t *t, uint16_t *fb, int stride, int k, const fry_req_t *req, int nreq, bool staged, ms_box_t *zone) {
@@ -1934,8 +1792,7 @@ static bool ms_anim(const tank_t *t, uint16_t *fb, int stride, int k, const fry_
     int top = MSP_ROW_Y0 + t->n_fish * MSP_ROW_H;
     if (k == t->n_fish) {
         uint32_t fry_rgb = staged ? MSP_TEAL : MSP_DIM;
-        if (PT_TERRARIUM) { ctx_t c = ctx_page(fb, stride); egg_glyph(&c, MSP_FISH_X, top + MSP_ROW_MID, 1.0f, fry_rgb); }
-        else render_fish_preview(fb, stride, MSP_FISH_X, top + MSP_ROW_MID, 0.55f, fry_rgb, fry_rgb, fry_rgb, NULL, FISH_ROOM_ROW, t->clock);
+        page_body()->unborn(fb, stride, MSP_FISH_X, top + MSP_ROW_MID, fry_rgb, t->clock);
         return true;
     }
     for (int g = 0; g < nreq; g++)
@@ -2040,12 +1897,12 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
         MS_ANIM(i);                                  /* the portrait */
         draw_text(&c, 92, top + 2, 2, 0xffffff, f->name);
         static const int GX[4] = { 96, 111, 129, 151 };   /* each glyph's own pitch: a 4 px gap as they grow */
-        const uint32_t grown = PT_TERRARIUM ? strip_rgb(f) : f->accent;
+        const uint32_t grown = page_body()->strip_rgb(page_species(), f);
         for (int s = 0; s < 4; s++)          /* growth strip: fry -> elder, lit up to the stage reached */
-            strip_glyph(&c, GX[s], top + MSP_ROW_STRIP, 2.2f + s * 0.9f, s <= (int)f->stage ? grown : MSP_DIM);
+            page_body()->glyph(&c, GX[s], top + MSP_ROW_STRIP, 2.2f + s * 0.9f, s <= (int)f->stage ? grown : MSP_DIM);
         for (int k = 0; k < 6; k++) {
-            uint32_t bit = FISH_BADGES[k].bit;
-            badge(&c, MSP_BADGE_X0 + k * MSP_BADGE_DX, top + MSP_ROW_BADGE, FISH_BADGES[k].icon,
+            uint32_t bit = world_view()->fish_badges[k].bit;
+            badge(&c, MSP_BADGE_X0 + k * MSP_BADGE_DX, top + MSP_ROW_BADGE, world_view()->fish_badges[k].icon,
                   (f->ms_bits & bit) != 0, (f->ms_seen & bit) == 0);
         }
     }
@@ -2072,9 +1929,9 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
     }
     /* the tank's row (its sand dollar and balance went to the foot's UPGRADES, 0.4) */
     for (int x = 24; x < PAGE_W - 24; x++) px_blend(&c, x, MSP_TANK_Y - 4, MSP_DIM, 200);
-    draw_text(&c, 92, MSP_TANK_Y + 2, 2, MSP_TEAL, PT_TERRARIUM ? tank_habitat(t)->name : "TANK");   /* (the terrarium's row: its habitat, DESERT) */
+    draw_text(&c, 92, MSP_TANK_Y + 2, 2, MSP_TEAL, world_view()->tank_word(t));   /* (the terrarium's row: its habitat, DESERT) */
     for (int k = 0; k < progression_pop_cap(t); k++)     /* population strip: who is here, who could still arrive */
-        strip_glyph(&c, 96 + k * 14, MSP_TANK_Y + 30, 2.8f, k < t->n_fish ? MSP_TEAL : MSP_DIM);
+        page_body()->glyph(&c, 96 + k * 14, MSP_TANK_Y + 30, 2.8f, k < t->n_fish ? MSP_TEAL : MSP_DIM);
     int nb = tank_badge_n(t), np = tank_pages(t);
     if (g_ms_tpage >= np) g_ms_tpage = 0;
     for (int j = 0; j < MSP_PER_ROW; j++) {
@@ -2134,7 +1991,7 @@ void render_milestones(const tank_t *t, uint16_t *fb, int stride) {
             int worth = progression_fish_value(t, g_ms_row);
             if (!can) g_ms_sell_armed = false; else g_ms_sell_asked = false;
             snprintf(g_ms_title, sizeof g_ms_title, "%s", f->name);
-            snprintf(g_ms_caption, sizeof g_ms_caption, "%s", STAGE_WORDS[f->stage & 3]);
+            snprintf(g_ms_caption, sizeof g_ms_caption, "%s", page_body()->stage_words[f->stage & 3]);
             ms_genes_line(f);                    /* its form under its stage (0.4) */
 #if PT_NET
             char gl[sizeof g_ms_sub];
@@ -2336,13 +2193,13 @@ static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
         } else return MS_TAP_NONE;
     } else if (tank_row) {
         if (k < 0) {
-            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", PT_TERRARIUM ? tank_habitat(t)->name : "TANK");   /* (a pack's name is up to 23: the title holds 15) */
+            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", world_view()->tank_word(t));   /* (a pack's name is up to 23: the title holds 15) */
             snprintf(g_ms_caption, sizeof g_ms_caption, WORLD_STR("%d OF %d FISH SO FAR", "%d OF %d LIZARDS SO FAR"), t->n_fish, progression_pop_cap(t));
             g_ms_lit = true; g_ms_icon = NULL; g_ms_fish = -1;
         } else {
             uint32_t bit = tank_badge(t, k)->bit; bool on = (t->tank_ms_bits & bit) != 0;
             g_ms_tpage = k / MSP_PER_ROW;            /* the arrows can cross pages: the row follows */
-            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", on ? (PT_TERRARIUM ? tank_habitat(t)->name : "TANK") : "NOT YET");
+            snprintf(g_ms_title, sizeof g_ms_title, "%.15s", on ? (world_view()->tank_word(t)) : "NOT YET");
             snprintf(g_ms_caption, sizeof g_ms_caption, "%s", TMS_NAMES[bit_index(bit)]);
             g_ms_lit = on; g_ms_icon = tank_badge(t, k)->icon; g_ms_fish = -1;
         }
@@ -2350,14 +2207,14 @@ static int ms_open(const tank_t *t, int row, bool tank_row, bool fry_row, int k,
         const fish_t *f = &t->fish[row];
         if (k < 0) {
             snprintf(g_ms_title, sizeof g_ms_title, "%s", f->name);
-            snprintf(g_ms_caption, sizeof g_ms_caption, "%s", STAGE_WORDS[f->stage & 3]);
+            snprintf(g_ms_caption, sizeof g_ms_caption, "%s", page_body()->stage_words[f->stage & 3]);
             ms_genes_line(f);                    /* its form under its stage (0.4) */
             g_ms_lit = true; g_ms_icon = NULL; g_ms_fish = row;
         } else {
-            uint32_t bit = FISH_BADGES[k].bit; bool on = (f->ms_bits & bit) != 0;
+            uint32_t bit = world_view()->fish_badges[k].bit; bool on = (f->ms_bits & bit) != 0;
             snprintf(g_ms_title, sizeof g_ms_title, "%s", on ? f->name : "NOT YET");
             snprintf(g_ms_caption, sizeof g_ms_caption, "%s", MS_NAMES[bit_index(bit)]);
-            g_ms_lit = on; g_ms_icon = FISH_BADGES[k].icon; g_ms_fish = -1;
+            g_ms_lit = on; g_ms_icon = world_view()->fish_badges[k].icon; g_ms_fish = -1;
         }
     }
     return MS_TAP_KEPT;
@@ -2665,10 +2522,10 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
         rect_fill(&c, PX + 4, PY + 4, 7, PH - 8, 0xf25b65);
     } else if (kind == 2) {                                   /* NOTICE_STAGE */
         if (f) { snprintf(title, sizeof title, "%s", f->name);
-                 snprintf(caption, sizeof caption, "IS NOW %s %s", f->stage == STAGE_ADULT || f->stage == STAGE_ELDER ? "AN" : "A", STAGE_WORDS[f->stage & 3]);
+                 snprintf(caption, sizeof caption, "IS NOW %s %s", f->stage == STAGE_ADULT || f->stage == STAGE_ELDER ? "AN" : "A", page_body()->stage_words[f->stage & 3]);
                  render_fish_preview(fb, stride, X + W / 2, Y + 48, f->size * 1.6f, f->color, f->fin, f->accent, f, FISH_ROOM_CARD, t->clock); }
     } else if (kind == 1) {                                   /* NOTICE_TANK_MILESTONE */
-        for (int k = 0; k < TANK_BADGE_N; k++) if (TANK_BADGES[k].bit == bit) ic = TANK_BADGES[k].icon;
+        for (int k = 0; k < world_view()->n_tank_badges; k++) if (world_view()->tank_badges[k].bit == bit) ic = world_view()->tank_badges[k].icon;
         int bi = 0; while (bi < 31 && !(bit & (1u << bi))) bi++;
         snprintf(caption, sizeof caption, "%s", bi < TMS_COUNT ? TMS_NAMES[bi] : "");
         if (bit == TMS_FIRST_SALE) caption2 = WORLD_STR("FRY NOW IN THE SHOP", "HATCHLINGS NOW IN THE SHOP");   /* what the sale opened (0.3.5) */
@@ -2677,7 +2534,7 @@ void render_notice(const tank_t *t, uint16_t *fb, int stride, int kind, int fish
             render_fish_preview(fb, stride, X + W / 2, Y + 48, n->size * 1.6f, n->color, n->fin, n->accent, n, FISH_ROOM_CARD, t->clock);
         }
     } else {                                                  /* NOTICE_MILESTONE */
-        for (int k = 0; k < 6; k++) if (FISH_BADGES[k].bit == bit) ic = FISH_BADGES[k].icon;
+        for (int k = 0; k < 6; k++) if (world_view()->fish_badges[k].bit == bit) ic = world_view()->fish_badges[k].icon;
         int bi = 0; while (bi < 31 && !(bit & (1u << bi))) bi++;
         if (f) snprintf(title, sizeof title, "%s", f->name);
         snprintf(caption, sizeof caption, "%s", bi < MS_FISH_COUNT ? MS_NAMES[bi] : "");
@@ -2709,18 +2566,7 @@ static double g_shp_open_clock;      /* the tank clock when a row opened its mod
                                         same double tap (0.4 rc: a kid's double tap on rows 3-4 opened the modal, then its
                                         second tap landed on BUY, which stands where those rows do) */
 static bool shp_fresh(const tank_t *t) { double d = t->clock - g_shp_open_clock; return d >= 0 && d < MSP_SELL_WAIT_S; }
-static const icon_t *shop_icon(int item) {
-#if PT_TERRARIUM   /* the terrarium's own items (progression.h SD_TERR_FIRST): the moss for the humid hide, the basking bulb, the worm farm */
-    if (item == SD_TERR_FIRST) return &icon_shop_moss_terr;
-    if (item == SD_TERR_FIRST + 1) return &icon_shop_bulb_terr;
-    if (item == SD_TERR_FIRST + 2) return &icon_shop_farm_terr;
-    if (tank_deco_index(item) >= 0) {                          /* the decorations (P5b) */
-        static const icon_t *const SHOP[TERR_DECO_N] = { &icon_shop_saguaro_terr, &icon_shop_skull_terr, &icon_shop_driftwood_terr, &icon_shop_pot_terr };
-        return SHOP[tank_deco_index(item)];
-    }
-#endif
-    return item == 0 ? &icon_shop_plant : item == 1 ? &icon_shop_snail : item == 2 ? &icon_shop_castle : item == 3 ? &icon_shop_coral : item == 4 ? &icon_shop_cluster : item == 5 ? &icon_shop_shrimp : item == 6 ? &icon_shop_urchin : item == 7 ? &icon_shop_seahorse : item == 8 ? &icon_shop_pumpkin : item == 9 ? &icon_shop_volcano : &icon_shop_crab;
-}
+static const icon_t *shop_icon(int item) { return world_view()->shop_icon(item); }
 /* pages (2026-09-23, the fourth item): SHP_PER_PAGE rows fit between the
  * coin and the foot buttons once the filler caption went (HOW TO EARN says
  * the same). With more items than a page holds, arrows at the header's
@@ -2745,23 +2591,12 @@ static void price_tag(ctx_t *c, int x, int y, int price, uint32_t rgb) {   /* th
 #define SHP_MODAL_FRY 99             /* g_shp_modal: the fry's modal */
 static int g_shp_fry_pick;           /* the fry picked in its modal */
 static bool shp_fry(const tank_t *t) { return progression_fry_for_sale(t); }
-/* the terrarium sells its own items (SD_TERR_FIRST..), after the hatchlings' row once a lizard was sold */
-static int  shp_rows(const tank_t *t) { return PT_TERRARIUM ? SD_TERR_COUNT + shp_fry(t) : SD_ITEM_COUNT + shp_fry(t) - !progression_pumpkin_offered(t); }   /* the pumpkin, the last item, only while this build sells it (or owned) */
+/* the world's shop lists its own items (the aquarium's, the terrarium's SD_TERR_FIRST ..), after the FRY row once a fish was sold */
+static int  shp_rows(const tank_t *t) { return world_view()->shop_count(t) + shp_fry(t); }
 static int  shp_pages(const tank_t *t) { return (shp_rows(t) + SHP_PER_PAGE - 1) / SHP_PER_PAGE; }
-static int  shp_item(const tank_t *t, int row) {                                       /* -1 = the FRY row; the pumpkin's row (8) is skipped while it is out of the shop */
+static int  shp_item(const tank_t *t, int row) {                                       /* -1 = the FRY row; the world's items after it */
     int i = shp_fry(t) ? row - 1 : row;
-    if (PT_TERRARIUM) return i < 0 ? -1 : SD_TERR_FIRST + i;
-    if (i >= 8 && !progression_pumpkin_offered(t)) i++;
-    return i;
-}
-/* an offered young one in a word: the fish's body shape, the lizard's morph */
-static const char *offer_word(const fry_offer_t *o) {
-#if PT_TERRARIUM
-    fish_t f; memset(&f, 0, sizeof f); f.color = o->body;
-    const morph_t *m = lizard_morph_of(species_get(SPECIES_DEFAULT), &f);
-    if (m) return m->name;
-#endif
-    return SHAPE_NAMES[o->shape % SHAPE_N];
+    return i < 0 ? -1 : world_view()->shop_item(t, i);
 }
 static void fry_hours(char *out, size_t n) {   /* "NEW FRY IN 14 H" / "IN 40 MIN" */
     float s = progression_fry_new_in_s();
@@ -2808,7 +2643,7 @@ static void shop_fry_modal(ctx_t *c, const tank_t *t, uint16_t *fb, int stride) 
         fry_draw(fb, stride, bx + SHP_FRY_BOX_W / 2, by + 34, 1.5f, &o, t->clock + k * 0.7f);
         /* its body in words, where the color squares were (the adult shows its colors) - the body alone, Strato 11-01: the fins and
            the pattern were too tiny to read, "and we can leave a bit of mystery there" */
-        draw_text(c, bx + (SHP_FRY_BOX_W - text_w(offer_word(&o), 2)) / 2, by + SHP_FRY_BOX_H - 20, 2, lit ? 0xffffff : 0x9fd8e2, offer_word(&o));
+        draw_text(c, bx + (SHP_FRY_BOX_W - text_w(page_body()->offer_word(page_species(), &o), 2)) / 2, by + SHP_FRY_BOX_H - 20, 2, lit ? 0xffffff : 0x9fd8e2, page_body()->offer_word(page_species(), &o));
     }
     bool room = progression_fry_room_to_buy(t), can = t->sd_balance >= SD_PRICE_FRY;
     fry_offer_t pk; progression_fry_offer(g_shp_fry_pick, &pk);
@@ -3995,7 +3830,7 @@ static void sh_lock_btn(ctx_t *c, int x, int y, bool locked) {
 }
 /* MY TANKS's title: the terrarium's is longer - in the round glass's narrow cap, beside the padlock, it is drawn a size down */
 #define SH_TITLE   WORLD_STR("MY TANKS", "MY TERRARIUMS")
-#define SH_TITLE_S (PT_TERRARIUM && PAGE_BOWL ? 2 : 3)
+#define SH_TITLE_S (PAGE_BOWL ? world_view()->bowl_title_s : 3)
 #define SH_TITLE_DY (SH_TITLE_S == 2 ? 4 : 0)
 static void sh_lock_xy(int *x, int *y) {                   /* by the title: at the shelves' right edge, or beside the title on the round glass and the watch */
 #if PAGE_BOWL || defined(TANK_WATCH)
@@ -4429,8 +4264,9 @@ void render_shelf_remove(uint16_t *fb, int stride, const shelf_slot_t *s, int re
  * so a board that asks the internet shows one screen whose words change, not two */
 void render_loading(uint16_t *fb, int stride, const char *name, double clock, const char *line) {
     ctx_t c = ctx_frame(fb, stride);
+    const world_look_t *lk = &world_view()->look;
     for (int y = 0; y < TANK_H; y++) {                     /* deep water, a little lighter at the top (the terrarium's: a desert dusk) */
-        uint32_t col = PT_TERRARIUM ? sh_mix(0x4a3020, 0x140c07, y * 256 / TANK_H) : sh_mix(0x0e3a4c, 0x04121a, y * 256 / TANK_H);
+        uint32_t col = sh_mix(lk->bg[0], lk->bg[1], y * 256 / TANK_H);
         rect_fill(&c, 0, y, TANK_W, 1, col);
     }
     const int cx = TANK_W / 2, cy = TANK_H / 2 - 24, R = 40;
@@ -4440,12 +4276,11 @@ void render_loading(uint16_t *fb, int stride, const char *name, double clock, co
         int bx = cx + (int)lroundf(cosf(a) * R), by = cy + (int)lroundf(sinf(a) * R);
         int age = (lead - k + 8) % 8;                      /* 0 = the bright one, then its trail */
         int r = age == 0 ? 11 : age == 1 ? 10 : 9;
-        uint32_t rim = PT_TERRARIUM ? (age == 0 ? 0xffe6b8 : age == 1 ? 0xe9b98c : age == 2 ? 0xb07e52 : 0x5e3e28)   /* (a sand pebble) */
-                                    : (age == 0 ? 0xe2f6fa : age == 1 ? 0x9fd8e2 : age == 2 ? 0x5f9fae : 0x2c5a66);
+        uint32_t rim = age == 0 ? lk->rim[0] : age == 1 ? lk->rim[1] : age == 2 ? lk->rim[2] : lk->rim[3];
         for (int dy = -r; dy <= r; dy++) for (int dx = -r; dx <= r; dx++) {
             int d = dx * dx + dy * dy;
             if (d > r * r) continue;
-            px(&c, bx + dx, by + dy, src_color(d >= (r - 2) * (r - 2) ? rim : sh_mix(rim, PT_TERRARIUM ? 0x2a180c : 0x0a2a36, 150), 1.0f).v);   /* a bubble: its rim bright */
+            px(&c, bx + dx, by + dy, src_color(d >= (r - 2) * (r - 2) ? rim : sh_mix(rim, lk->rim_dark, 150), 1.0f).v);   /* a bubble: its rim bright */
         }
         if (age == 0) rect_fill(&c, bx - 4, by - 4, 2, 2, 0xffffff);         /* (its glint) */
     }

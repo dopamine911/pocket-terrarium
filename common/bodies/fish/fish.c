@@ -4,7 +4,9 @@
  * previews' fit. draw_fish is the tank's (the aquarium's scene calls it), draw_fish_core the one the previews call too. */
 #include "render_core.h"
 #include "bodies/fish/fish.h"
+#include "body.h"
 #include "pt_util.h"
+#include <stdio.h>
 #include <stdlib.h>
 
 /* the turn (2026-09-29, was a roll that flattened the fish to a line): the
@@ -348,3 +350,36 @@ void draw_fish(ctx_t *c, const tank_t *t, const fish_t *f) {
     draw_fish_core(&cf, f, f->beat, asleep, 1.0f, FISH_FLOOR_Y);
 }
 float render_fish_beat(const tank_t *t, int i) { return t->fish[i].beat + t->fish[i].wander; }   /* (draw_fish_core's) */
+
+/* ---- the pages' fish (body.h): its portrait, its glyph, the silhouette of a fry to come, its form in words ---- */
+static void fish_still(ctx_t *c, const species_t *sp, float x, float y, float size, fish_t *f, const fish_t *form, double clock, float room) {
+    (void)sp;
+    f->heading = 0; f->speed = 40;
+    f->hunger = 4; f->stress = 0; f->goal.id = GOAL_W_EXPLORE;
+    if (form) { f->shape = form->shape; f->fins = form->fins; f->pattern = form->pattern; }
+    if (room > 0) fish_fit(f, x, y, size, room); else { f->x = x; f->y = y; f->size = size; }
+    tank_fish_face(f);                           /* side-on, facing right */
+    draw_fish_core(c, f, tank_phase(clock, tank_fish_beat_rate(f)), false, f->size, 1e9f);   /* (a still's pace never changes: the clock's) */
+}
+/* a tiny fish glyph facing right (the growth and population strips) */
+static void fish_glyph(ctx_t *c, float cx, float cy, float r, uint32_t rgb) {
+    float xs[3] = { cx - r * 1.2f, cx - r * 2.3f, cx - r * 2.3f }, ys[3] = { cy, cy - r * 0.9f, cy + r * 0.9f };
+    fill_poly(c, xs, ys, 3, rgb);
+    fill_ellipse(c, cx, cy, r * 1.6f, r, rgb, 255);
+}
+static void fish_unborn(uint16_t *fb, int stride, float x, float y, uint32_t rgb, double clock) {
+    render_fish_preview(fb, stride, x, y, 0.55f, rgb, rgb, rgb, NULL, FISH_ROOM_ROW, clock);
+}
+static uint32_t fish_strip_rgb(const species_t *sp, const fish_t *f) { (void)sp; return f->accent; }
+static void fish_genes_line(const species_t *sp, const fish_t *f, char *out, size_t n) {
+    (void)sp;
+    snprintf(out, n, "%s  %s  %s", SHAPE_NAMES[f->shape % SHAPE_N], FINS_NAMES[f->fins % FINS_N], PATTERN_NAMES[f->pattern % PATTERN_N]);
+}
+static const char *fish_offer_word(const species_t *sp, const fry_offer_t *o) { (void)sp; return SHAPE_NAMES[o->shape % SHAPE_N]; }
+
+const body_ops_t fish_body = {
+    .plan = PLAN_FISH, .name = "fish",
+    .stage_words = { "FRY", "JUVENILE", "ADULT", "ELDER" },
+    .still = fish_still, .glyph = fish_glyph, .unborn = fish_unborn,
+    .strip_rgb = fish_strip_rgb, .genes_line = fish_genes_line, .offer_word = fish_offer_word,
+};

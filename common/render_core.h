@@ -249,6 +249,7 @@ void  fill_poly(ctx_t *c, const float *xs, const float *ys, int n, uint32_t rgb)
 #if PT_NET
 void  link_badge_draw(ctx_t *c, int cx, int cy, int r, int badge, int a);   /* the link's badges (a visitor's over its fish: the aquarium's scene draws them) */
 #endif
+void  ref_box(stage_t stage, float b[4]);                     /* the box a classic fish of a stage takes: the unit the pages' portrait zones are laid out in (b = x0, x1, y0, y1, local px) */
 void  draw_algae(ctx_t *c, const tank_t *t);                  /* the film on the glass (both worlds' sponge wipes it) */
 
 /* ---- the pages' drawing primitives (render.c): the pixel font, boxes, rings, icons - the world scenes' cards and the body types' glyphs use them */
