@@ -25,8 +25,7 @@ set(SRCS "${COMMON}/tank.c" "${COMMON}/advisor.c" "${COMMON}/render.c" "${COMMON
 if(CONFIG_POCKET_TANK_WORLD_AQUARIUM)
     list(APPEND SRCS "${COMMON}/species/fish.c" "${COMMON}/habitat/freshwater.c")
 else()
-    list(APPEND SRCS "${COMMON}/species/gecko.c" "${COMMON}/habitat/desert.c"
-                     "${COMMON}/render_lizard.c" "${COMMON}/render_scene_desert.c")
+    list(APPEND SRCS "${COMMON}/species/gecko.c" "${COMMON}/habitat/desert.c")
 endif()
 # THE MODULES (issue #4 phase 3): this world's mechanics (common/worlds/<world>/), its body type's art (common/bodies/<body>/)
 # and the movement modules (common/locomotion/), found by directory

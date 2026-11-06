@@ -82,7 +82,7 @@ APP_SRCS  += ../common/terrain.c   # a habitat's ground laid out on a glass: the
 APP_SRCS  += selftest_packs.c selftest_ptpk.c selftest_caps.c selftest_l1.c   # the packs, heat, shed and mister (P2a); the PTPK format, loader and a tank without its packs (issue #4 phase 1); the capabilities, the model manifests and a pair that cannot run (phase 2); the L1 encoder against the Python fixture (R4)
 APP_SRCS  += selftest_walk.c  # the terrarium's walk, its goals and a free-running census (P2b)
 ifeq ($(WORLD),terrarium)
-APP_SRCS  += ../common/render_lizard.c ../common/render_scene_desert.c sheet_lizard.c   # this world's lizard/desert art; --lizard-sheet (P3a)
+APP_SRCS  += sheet_lizard.c   # --lizard-sheet (P3a; the lizard and desert art are the modules' below)
 APP_SRCS  += shot_terrarium.c   # the terrarium as render_tank draws it: --terr-shot, --terr-bench (P3b)
 endif
 # THE MODULES (issue #4 phase 3): this world's mechanics (common/worlds/<world>/, critters/ below it), its body type's art
