@@ -188,6 +188,40 @@ It prints goal shares, landmark time, crowding, zones per fish-minute, longest s
 decisions and survival overrides. There is no rule stub for the fish and no pass bar: a candidate is
 read against the fish model it replaces on the same tanks.
 
+**Results (2026-11-06, `chat-teacher` labels, 24,056 clean pairs, sha256 e7874137...; 14 runs, 3 seeds each,
+opportunistic mode, about 1 h 45 min).** The labels are not upstream's: seek_food is 55.6% (upstream's
+gemma4:26b: 35%), rest 24%, explore 11%, follow_friend 3.6%, inspect_reef 3.4%, visit_bubbles 1.7%. With
+food in view in 97% of the generator's states the teacher eats on 43-63% of the hunger 1-3 ones.
+
+- **No run passes every row, the 14M reference included**, so the table cannot say "the smallest size that
+  passes". The rows every run fails track the skew: F6 (seek_food | lonely, not hungry; the 14M reads 0.16-0.17
+  against <= 0.05), F13 (content: explore 0.45-0.54 against < 0.45) and F10 (bubbles kept: 0.25-0.57 against
+  >= 0.40, from 1.7% visit_bubbles labels). F5 (starving), F8 (bored explore), F11 (night rest) and F12 (no
+  flee) pass at every size and in both loss modes. Failing values out of 6 (3 seeds x 2 panels), summed over
+  the rows: 14M all-token 16, 14M decision-only 20, 384x4 26 / 19, 256x8 15 / 12, 256x6 13 / 11, 256x4 17 / 15,
+  192x6 14 / 18, 192x4 19 / 11 (all-token / decision-only). That spread is inside the seed noise.
+- **One size-linked failure.** 256x4 decision-only reads F1 (follow | social 9) = 0.05, 6 of 6 values failing,
+  against 0.54-0.65 for the 14M. 384x4 reads 0.33-0.39 on F1. The other sizes sit at 0.38-0.62.
+- **Goal NLL** is lower with the decision-only loss at every size (14M 0.258 against 0.280; 1.78M 0.243 against
+  0.276), but unlike the lizard sweep that does not carry over to the rows (the 14M decision-only run fails 20
+  values against 16).
+- **Speed on this machine** (q4 runner, 46-token fish prompt): 14M 125 tok/s, 7.1M 247, 6.4M 271, 4.8M 362,
+  3.2M 545, 2.7M 646, 1.78M 955-981. The lizard sweep's pendant speedups were 74% of the x86 ones (3.2M: 3.4x
+  against 4.6x), so about the same ratios should hold for the fish; none of this was measured on the pendant.
+- **Sim census** (`fish_census.py --minutes 5 --repeats 3`, selected seed of each run; 3 repeats of 300 s,
+  zero survival overrides everywhere): the 14M trained here differs from the shipped model more than any size
+  differs from the 14M. Goal share, shipped / this-data 14M: inspect_reef 27 / 6%, follow_friend 17 / 28%,
+  seek_food 2 / 13%, rest 0 / 2%, explore 36 / 32%, visit_bubbles 16 / 19%; time at a landmark 54 / 36%,
+  mean bored 4.6 / 2.8. Across the eight trained candidates inspect_reef is 4-15%, follow_friend 23-37%,
+  seek_food 4-15%, with no trend by size, and zones per fish-minute 3.6-4.4 against 3.4 shipped. The census
+  asks at the sim's own rhythm (108-133 asks per 300 s whatever the model's speed), so it does not model the
+  decision speed.
+- **What this supports.** Sizes down to 1.78M behave like the 14M trained on the same labels, on these probes
+  and this census, with 256x4 decision-only and 384x4 the exceptions on F1. It does not say a small model
+  would behave like the shipped fish model: the labels are what differ. Not run: any candidate on the pendant,
+  the shipped model's probe rows (its checkpoint is gone, so no student-side F rows exist for it), a mix with
+  re-encoded v2/v3 data, or labels from a balanced prompt.
+
 ## Extra tools
 
 - `model/prompt_check.py` — 7-minute teacher/prompt sanity check. **Run this
