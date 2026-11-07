@@ -218,9 +218,22 @@ food in view in 97% of the generator's states the teacher eats on 43-63% of the 
   decision speed.
 - **What this supports.** Sizes down to 1.78M behave like the 14M trained on the same labels, on these probes
   and this census, with 256x4 decision-only and 384x4 the exceptions on F1. It does not say a small model
-  would behave like the shipped fish model: the labels are what differ. Not run: any candidate on the pendant,
+  would behave like the shipped fish model: the labels are what differ. Not run: any candidate on the pendant
+  (item 5 of issue #14; no aquarium image was flashed, so no heap or on-device speed figure exists),
   the shipped model's probe rows (its checkpoint is gone, so no student-side F rows exist for it), a mix with
   re-encoded v2/v3 data, or labels from a balanced prompt.
+- **QEMU** (`firmware/qemu_models.sh`, the aquarium firmware's own q4 reader and decision path; 5 boots each,
+  median of the first decision): every model loads (`model dim .. vocab 54, schema v4`, 45/45 boots) and
+  decides. Emulated first-decision time, scalar kernels, so a ratio between models and nothing about the
+  pendant: shipped 2458 ms (17.9 tok/s), 14M trained here 2398 (18.3), 384x4 1420 (31.0), 256x8 1422 (30.9),
+  256x6 1195 (36.8), 256x4 821 (53.6), 192x6 756 (58.1), 192x4 502-517 (85-88). The 3.2M shape ran 2.9x
+  faster than the 14M here; the lizard 3.2M ran 3.4x faster on the pendant, so the emulator understates the
+  ratio. Only the first decision happens: a fresh tank waits in its first-run setup, and the director's
+  `setup off` cannot reach the emulator (it reads the USB-Serial-JTAG). Internal heap after the advisor reads
+  248-253 KB in this build (no panel buffers), which says nothing about the pendant's 1-7 KB (issue #11).
+  Getting the QEMU build to link and run needed three QEMU-only changes: touch-lock stubs in
+  `touch_port_stub.c`, `board_es7210_addr` in `display_port_stub.c`, signing off in `sdkconfig.qemu`, and the
+  scalar kernels (`-DCMAKE_C_FLAGS=-DPOCKET_TANK_NO_PIE`, as `q4_model.c` already says for QEMU).
 
 ## Extra tools
 

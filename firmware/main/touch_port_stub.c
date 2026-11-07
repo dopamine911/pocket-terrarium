@@ -53,3 +53,8 @@ bool touch_port_lift_said(void) { return false; }
 void touch_port_set_mirror(int m) { (void)m; }
 int  touch_port_mirror(void) { return 0; }
 void touch_port_raw_seen(int *x0, int *x1, int *y0, int *y1) { *x0 = *y0 = 0; *x1 = *y1 = -1; }
+/* the touch lock (0.3.9.3): no glass, no finger, nothing to lock */
+void touch_port_set_touch_lock(bool on) { (void)on; }
+bool touch_port_touch_lock(void) { return false; }
+bool touch_port_lock_hint(void) { return false; }
+bool touch_port_finger(float *x, float *y) { (void)x; (void)y; return false; }

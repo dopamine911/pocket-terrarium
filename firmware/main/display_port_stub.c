@@ -34,6 +34,7 @@ bool board_port_probed(void) { return true; }
 void display_port_set_madctl(uint8_t v) { (void)v; }
 uint8_t display_port_madctl(void) { return 0; }
 int  board_pwr_sense_pin(void) { return -1; }
+uint8_t board_es7210_addr(void) { return 0; }   /* no ES7210 to ask */
 void display_port_frame_origin(int *px, int *py) { *px = 0; *py = 0; }
 void display_port_set_view(int view) { (void)view; }
 int  display_port_view(void) { return DISPLAY_VIEW_FIT; }
